@@ -8,9 +8,11 @@
     "dev:client": "pnpm --filter @mmoexile/client dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "db:push": "pnpm --filter @mmoexile/db db:push"
+    "db:push": "pnpm --filter @mmoexile/db db:push",
+    "lint:deps": "depcruise apps packages --config .dependency-cruiser.cjs"
   },
   "devDependencies": {
+    "dependency-cruiser": "^18.4.0",
     "typescript": "^5.8.0"
   }
 }

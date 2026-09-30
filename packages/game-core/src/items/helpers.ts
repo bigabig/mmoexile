@@ -1,4 +1,4 @@
-import { getItemDefinition } from "./index.js";
+import { getItemDefinition } from "./registry.js";
 import { BUILTIN_VOXEL_MODELS } from "../voxels/models/index.js";
 import { voxelModelToDataUrl } from "../voxels/thumbnail.js";
 
