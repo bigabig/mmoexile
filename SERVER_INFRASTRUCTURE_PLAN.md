@@ -82,11 +82,11 @@ docs/                     ← ARCHITECTURE.md, addressing_architecture_critique.
 - GitHub Actions workflow: `pnpm install --frozen-lockfile`, `pnpm -r build`, `pnpm -r test`, `pnpm lint:deps`.
 
 ### Acceptance Criteria
-- [ ] `pnpm install && pnpm -r build && pnpm -r test` pass from a clean clone.
-- [ ] `pnpm dev` starts server and client; the game plays exactly as before.
-- [ ] `pnpm lint:deps` passes and fails if a rule is deliberately violated.
+- [x] `pnpm install && pnpm -r build && pnpm -r test` pass from a clean clone.
+- [x] `pnpm dev` starts server and client; the game plays exactly as before.
+- [x] `pnpm lint:deps` passes and fails if a rule is deliberately violated.
 - [ ] CI (added in S0.9) is green on GitHub.
-- [ ] No file under `packages/` imports from `apps/`.
+- [x] No file under `packages/` imports from `apps/`.
 
 ### Out of Scope
 Any behavior change, renaming `GameWorld` (Stage 1), Turborepo (revisit when builds get slow).
