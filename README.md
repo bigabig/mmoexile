@@ -43,7 +43,7 @@ mmoexile/
 pnpm install
 
 # Push SQLite schema
-pnpm --filter @mmoexile/server db:push
+pnpm db:push
 ```
 
 ### 3. Run Development Servers

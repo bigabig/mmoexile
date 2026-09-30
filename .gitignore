@@ -5,7 +5,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Local SQLite database (recreate with `pnpm --filter @mmoexile/server db:push`)
+# Local SQLite database (recreate with `pnpm db:push`)
 *.db
 *.db-journal
 

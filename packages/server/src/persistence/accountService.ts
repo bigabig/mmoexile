@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { Account, Character } from "@prisma/client";
+import { Account, Character } from "@mmoexile/db";
 import {
   CharacterData,
   createDefaultCharacter,

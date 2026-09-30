@@ -1,4 +1,4 @@
-import { Character as PrismaCharacter, Prisma } from "@prisma/client";
+import { Character as PrismaCharacter, Prisma } from "@mmoexile/db";
 import {
   CharacterData,
   computeEffectiveStats,

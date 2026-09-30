@@ -1,5 +1,5 @@
-import { Character, Prisma } from "@prisma/client";
-import { prisma } from "../connection.js";
+import { Character, Prisma } from "@mmoexile/db";
+import { prisma } from "@mmoexile/db";
 
 export class CharacterRepository {
   /**

@@ -2,7 +2,7 @@ import http from "http";
 import { WorldCluster } from "./cluster/index.js";
 import { WebSocketGateway } from "./gateway/index.js";
 import { persistenceService } from "./persistence/index.js";
-import { disconnectDatabase } from "./persistence/connection.js";
+import { disconnectDatabase } from "@mmoexile/db";
 
 const PORT = Number(process.env.PORT) || 3001;
 

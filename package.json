@@ -7,10 +7,10 @@
     "dev:server": "pnpm --filter @mmoexile/server dev",
     "dev:client": "pnpm --filter @mmoexile/client dev",
     "build": "pnpm -r build",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "db:push": "pnpm --filter @mmoexile/db db:push"
   },
   "devDependencies": {
     "typescript": "^5.8.0"
   }
 }
-
