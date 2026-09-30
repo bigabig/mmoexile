@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { STATIC_MAPS, Position, Health } from "@mmoexile/game-core";
-import { GameWorld } from "../simulation/GameWorld.js";
-import { InProcessWorldRunner } from "../cluster/runners/InProcessWorldRunner.js";
+import { GameWorld } from "../GameWorld.js";
 
 describe("Headless Vertical Slice Load Benchmark", () => {
   it("executes 100 active players and 500 monsters under 33.33ms tick deadline", async () => {

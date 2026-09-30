@@ -13,7 +13,7 @@ import {
   type WorldTickResult,
   type PlayerCommand,
   type SpawnPlayerOptions,
-} from "../simulation/index.js";
+} from "@mmoexile/simulation";
 import { InProcessWorldRunner } from "./runners/InProcessWorldRunner.js";
 import type { IWorldRunner } from "./runners/IWorldRunner.js";
 import {

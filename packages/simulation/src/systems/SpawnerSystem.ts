@@ -1,5 +1,4 @@
 import { query, hasComponent, addComponent } from "bitecs";
-import { randomUUID } from "crypto";
 import {
   SpawnerTag,
   Spawner,
@@ -33,7 +32,7 @@ export class SpawnerSystem implements ISystem {
     const childEid = instantiatePrefab(ecs, prefab, {
       Position: { x: spawnX, y: spawnY, angle: 0 },
       Velocity: prefab.components.Velocity ? { vx: 0, vy: 0 } : undefined,
-      Identity: { uuid: randomUUID() },
+      Identity: { uuid: crypto.randomUUID() },
       ...(prefab.components.AI
         ? {
             AI: {

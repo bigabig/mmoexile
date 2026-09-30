@@ -4,7 +4,7 @@ import type {
   ChatPayload,
   PlayerDeathPayload,
 } from "./IMessageBus.js";
-import type { PlayerCommand, WorldTickResult } from "../../simulation/index.js";
+import type { PlayerCommand, WorldTickResult } from "@mmoexile/simulation";
 
 export class InMemoryMessageBus implements IMessageBus {
   private commandHandlers: ((

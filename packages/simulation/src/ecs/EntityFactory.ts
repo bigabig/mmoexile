@@ -1,5 +1,4 @@
 import { addEntity, addComponent, hasComponent, type World } from "bitecs";
-import { randomUUID } from "crypto";
 import {
   COMPONENT_REGISTRY,
   Identity,
@@ -115,7 +114,7 @@ export function instantiatePrefab(
 
   if (hasComponent(world, eid, Identity)) {
     if (!Identity.uuid[eid]) {
-      Identity.uuid[eid] = randomUUID();
+      Identity.uuid[eid] = crypto.randomUUID();
     }
   }
 
@@ -196,7 +195,7 @@ export class EntityFactory {
     const eid = instantiatePrefab(world, prefab, {
       Position: { x, y, angle: 0 },
       Velocity: { vx: 0, vy: 0 },
-      Identity: { uuid: customId ?? randomUUID() },
+      Identity: { uuid: customId ?? crypto.randomUUID() },
       AI: {
         originX: x,
         originY: y,
@@ -237,7 +236,7 @@ export class EntityFactory {
         isTrigger: true,
       },
       Identity: {
-        uuid: options.id ?? randomUUID(),
+        uuid: options.id ?? crypto.randomUUID(),
         name: "Projectile",
         prefabId,
       },
@@ -279,7 +278,7 @@ export class EntityFactory {
 
     return instantiatePrefab(world, prefab, {
       Position: { x, y, angle: 0 },
-      Identity: { uuid: customId ?? randomUUID() },
+      Identity: { uuid: customId ?? crypto.randomUUID() },
       LootBag: {
         itemIds: [...itemIds],
         kind: bagKind,

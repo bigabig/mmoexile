@@ -1,4 +1,4 @@
-import type { PlayerCommand, WorldTickResult } from "../../simulation/index.js";
+import type { PlayerCommand, WorldTickResult } from "@mmoexile/simulation";
 import type { MapData } from "@mmoexile/game-core";
 
 export interface PlayerTransferPayload {

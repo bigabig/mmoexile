@@ -13,6 +13,7 @@
   "dependencies": {
     "@mmoexile/game-core": "workspace:*",
     "@mmoexile/protocol": "workspace:*",
+    "@mmoexile/simulation": "workspace:*",
     "@msgpack/msgpack": "^3.0.0",
     "@prisma/client": "^6.4.1",
     "bitecs": "^0.4.0",

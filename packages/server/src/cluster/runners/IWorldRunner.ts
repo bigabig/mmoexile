@@ -1,5 +1,5 @@
-import type { GameWorld } from "../../simulation/GameWorld.js";
-import type { WorldTickResult } from "../../simulation/tick/TickBuffer.js";
+import type { GameWorld } from "@mmoexile/simulation";
+import type { WorldTickResult } from "@mmoexile/simulation";
 
 export interface IWorldRunner {
   readonly world: GameWorld;
