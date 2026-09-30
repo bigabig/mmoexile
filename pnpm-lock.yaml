@@ -30,6 +30,9 @@ importers:
         specifier: ^0.174.0
         version: 0.174.0
     devDependencies:
+      '@mmoexile/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
       '@types/react':
         specifier: ^19.0.10
         version: 19.3.0
@@ -67,6 +70,9 @@ importers:
         specifier: ^8.18.0
         version: 8.21.3
     devDependencies:
+      '@mmoexile/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
       '@types/node':
         specifier: ^22.13.0
         version: 22.20.4
@@ -95,9 +101,14 @@ importers:
         specifier: ^0.4.0
         version: 0.4.0
     devDependencies:
+      '@mmoexile/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
       vitest:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.4)(jiti@2.7.0)(tsx@4.23.15)
+
+  packages/tsconfig: {}
 
 packages:
 

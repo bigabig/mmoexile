@@ -19,6 +19,7 @@
     "bitecs": "^0.4.0"
   },
   "devDependencies": {
+    "@mmoexile/tsconfig": "workspace:*",
     "vitest": "^3.0.0"
   }
 }

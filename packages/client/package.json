@@ -15,6 +15,7 @@
     "lucide-react": "^0.475.0"
   },
   "devDependencies": {
+    "@mmoexile/tsconfig": "workspace:*",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@types/three": "^0.174.0",

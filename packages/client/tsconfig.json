@@ -1,10 +1,10 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "@mmoexile/tsconfig/vite.json",
   "compilerOptions": {
-    "jsx": "react-jsx",
     "rootDir": "./src",
-    "outDir": "./dist",
-    "lib": ["DOM", "DOM.Iterable", "ESNext"]
+    "outDir": "./dist"
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ]
 }
