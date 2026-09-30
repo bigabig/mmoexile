@@ -12,14 +12,14 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
-  packages/client:
+  apps/client:
     dependencies:
       '@mmoexile/game-core':
         specifier: workspace:*
-        version: link:../game-core
+        version: link:../../packages/game-core
       '@mmoexile/protocol':
         specifier: workspace:*
-        version: link:../protocol
+        version: link:../../packages/protocol
       lucide-react:
         specifier: ^0.475.0
         version: 0.475.0(react@19.3.0)
@@ -35,7 +35,7 @@ importers:
     devDependencies:
       '@mmoexile/tsconfig':
         specifier: workspace:*
-        version: link:../tsconfig
+        version: link:../../packages/tsconfig
       '@types/react':
         specifier: ^19.0.10
         version: 19.3.0
@@ -54,6 +54,49 @@ importers:
       vite:
         specifier: ^6.2.0
         version: 6.4.3(@types/node@22.20.4)(jiti@2.7.0)(tsx@4.23.15)
+
+  apps/instance-server:
+    dependencies:
+      '@mmoexile/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@mmoexile/game-core':
+        specifier: workspace:*
+        version: link:../../packages/game-core
+      '@mmoexile/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@mmoexile/simulation':
+        specifier: workspace:*
+        version: link:../../packages/simulation
+      '@msgpack/msgpack':
+        specifier: ^3.0.0
+        version: 3.1.3
+      bitecs:
+        specifier: ^0.4.0
+        version: 0.4.0
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.3
+    devDependencies:
+      '@mmoexile/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@types/node':
+        specifier: ^22.13.0
+        version: 22.20.4
+      '@types/ws':
+        specifier: ^8.5.14
+        version: 8.18.1
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.15
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.4)(jiti@2.7.0)(tsx@4.23.15)
 
   packages/db:
     dependencies:
@@ -96,49 +139,6 @@ importers:
       '@mmoexile/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.7(@types/node@22.20.4)(jiti@2.7.0)(tsx@4.23.15)
-
-  packages/server:
-    dependencies:
-      '@mmoexile/db':
-        specifier: workspace:*
-        version: link:../db
-      '@mmoexile/game-core':
-        specifier: workspace:*
-        version: link:../game-core
-      '@mmoexile/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@mmoexile/simulation':
-        specifier: workspace:*
-        version: link:../simulation
-      '@msgpack/msgpack':
-        specifier: ^3.0.0
-        version: 3.1.3
-      bitecs:
-        specifier: ^0.4.0
-        version: 0.4.0
-      ws:
-        specifier: ^8.18.0
-        version: 8.21.3
-    devDependencies:
-      '@mmoexile/tsconfig':
-        specifier: workspace:*
-        version: link:../tsconfig
-      '@types/node':
-        specifier: ^22.13.0
-        version: 22.20.4
-      '@types/ws':
-        specifier: ^8.5.14
-        version: 8.18.1
-      tsx:
-        specifier: ^4.19.3
-        version: 4.23.15
-      typescript:
-        specifier: ^5.8.0
-        version: 5.9.3
       vitest:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.4)(jiti@2.7.0)(tsx@4.23.15)

@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "pnpm --parallel --filter @mmoexile/server --filter @mmoexile/client dev",
-    "dev:server": "pnpm --filter @mmoexile/server dev",
+    "dev": "pnpm --parallel --filter @mmoexile/instance-server --filter @mmoexile/client dev",
+    "dev:server": "pnpm --filter @mmoexile/instance-server dev",
     "dev:client": "pnpm --filter @mmoexile/client dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
