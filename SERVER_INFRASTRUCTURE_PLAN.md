@@ -53,11 +53,12 @@ docs/                     ← ARCHITECTURE.md, addressing_architecture_critique.
 **S0.3 Split `shared` into `game-core` + `protocol`**
 - `packages/protocol`: `packets.ts`, `snapshot.ts`, serialization. Depends on `game-core` (for `MapData`, `DamageEvent`).
 - `packages/game-core`: everything else (math, maps, items, prefabs, characters, combat, components, voxels).
+- `ProjectileState` moves from `protocol/snapshot.ts` to `game-core/combat/projectile.ts`: it is the deterministic projectile description used by the shared shooting formulas, and leaving it in `protocol` would create a `game-core ⇄ protocol` import cycle. `EntityState` (the replication shape) stays in `protocol`.
 - Both keep the "source-first" exports (`"main": "./src/index.ts"`), as today, so no build step is needed during development.
 
 **S0.4 Extract `packages/simulation`**
 - Move `packages/server/src/simulation/**` to `packages/simulation/src/**`.
-- Dependencies: `bitecs`, `@mmoexile/game-core`. **No** `ws`, `prisma`, or Node-only imports (verified by the boundary check in S0.7).
+- Dependencies: `bitecs`, `@mmoexile/game-core`, `@mmoexile/protocol` (the AOI system builds `EntityState` snapshots; `protocol` is pure types + serialization, so this keeps the simulation I/O-free). **No** `ws`, `prisma`, or Node-only imports (verified by the boundary check in S0.7).
 - Move simulation-only tests and `simulation.bench.test.ts` along with it.
 
 **S0.5 Extract `packages/db`**

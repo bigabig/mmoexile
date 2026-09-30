@@ -1,5 +1,5 @@
 {
-  "name": "@mmoexile/shared",
+  "name": "@mmoexile/game-core",
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -15,7 +15,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@msgpack/msgpack": "^3.0.0",
     "bitecs": "^0.4.0"
   },
   "devDependencies": {

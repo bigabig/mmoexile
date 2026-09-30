@@ -1,0 +1,25 @@
+{
+  "name": "@mmoexile/protocol",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mmoexile/game-core": "workspace:*",
+    "@msgpack/msgpack": "^3.0.0"
+  },
+  "devDependencies": {
+    "@mmoexile/tsconfig": "workspace:*",
+    "vitest": "^3.0.0"
+  }
+}

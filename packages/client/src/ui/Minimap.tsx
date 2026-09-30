@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from "react";
-import { EntityState, MapData, getPrefab } from "@mmoexile/shared";
+import { MapData, getPrefab } from "@mmoexile/game-core";
+import { EntityState } from "@mmoexile/protocol";
 
 interface MinimapProps {
   map: MapData | null;

@@ -1,15 +1,17 @@
 import {
-  ClientPacket,
-  ServerPacket,
-  deserializePacket,
-  serializePacket,
   MapData,
-  EntityState,
   ProjectileState,
   DamageEvent,
   isSolidTile,
   resolveCircleTileCollision,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
+import {
+  ClientPacket,
+  ServerPacket,
+  deserializePacket,
+  serializePacket,
+  EntityState,
+} from "@mmoexile/protocol";
 
 export interface NetworkCallbacks {
   onWelcome?: (playerId: string, worldId: string, map: MapData) => void;

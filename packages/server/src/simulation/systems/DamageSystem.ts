@@ -6,7 +6,7 @@ import {
   Identity,
   Dead,
   calculateDamage,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
 import type { ISystem } from "./ISystem.js";
 import type { GameWorld } from "../GameWorld.js";
 

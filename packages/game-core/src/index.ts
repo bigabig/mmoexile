@@ -4,8 +4,6 @@ export * from "./voxels/models/index.js";
 export * from "./maps/types.js";
 export * from "./maps/index.js";
 export * from "./prefabs/index.js";
-export * from "./protocol/snapshot.js";
-export * from "./protocol/packets.js";
 export * from "./items/index.js";
 export * from "./combat/index.js";
 export * from "./voxels/thumbnail.js";

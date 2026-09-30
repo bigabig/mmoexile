@@ -1,11 +1,13 @@
 import * as THREE from "three";
 import {
-  EntityState,
   getPrefab,
   Animation,
   type ComponentValue,
   type ProceduralAnimationType,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
+import {
+  EntityState,
+} from "@mmoexile/protocol";
 import { VoxelMeshBuilder } from "./VoxelMeshBuilder.js";
 
 interface RenderedEntity {

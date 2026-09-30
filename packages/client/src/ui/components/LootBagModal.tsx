@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { EntityState, getItemDefinition, getItemThumbnailDataUrl } from "@mmoexile/shared";
+import { getItemDefinition, getItemThumbnailDataUrl } from "@mmoexile/game-core";
+import { EntityState } from "@mmoexile/protocol";
 import { ItemTooltip, RARITY_COLORS } from "./ItemTooltip.js";
 import { Package, CornerDownRight, Layers } from "lucide-react";
 

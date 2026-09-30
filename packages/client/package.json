@@ -8,11 +8,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@mmoexile/shared": "workspace:*",
-    "three": "^0.174.0",
+    "@mmoexile/game-core": "workspace:*",
+    "@mmoexile/protocol": "workspace:*",
+    "lucide-react": "^0.475.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "lucide-react": "^0.475.0"
+    "three": "^0.174.0"
   },
   "devDependencies": {
     "@mmoexile/tsconfig": "workspace:*",

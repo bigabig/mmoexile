@@ -1,5 +1,5 @@
 import type { WebSocket } from "ws";
-import { serializePacket, type ServerPacket } from "@mmoexile/shared";
+import { serializePacket, type ServerPacket } from "@mmoexile/protocol";
 import type {
   ITransportSession,
   ITransportSocket,

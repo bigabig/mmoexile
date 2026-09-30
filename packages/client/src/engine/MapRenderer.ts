@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { MapData, TileType, WallType } from "@mmoexile/shared";
+import { MapData, TileType, WallType } from "@mmoexile/game-core";
 
 const TILE_COLORS: Record<TileType, THREE.Color> = {
   [TileType.VOID]: new THREE.Color("#090d16"),

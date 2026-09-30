@@ -1,6 +1,4 @@
-import type { PlayerEquipment, ProjectileShape } from "../components/index.js";
-
-export type { ProjectileShape, PlayerEquipment };
+import type { PlayerEquipment } from "@mmoexile/game-core";
 
 export type EntityType = "player" | "monster" | "portal" | "loot_bag";
 
@@ -35,22 +33,4 @@ export interface EntityState {
   targetWorldId?: string;
   itemIds?: string[];
   portalKind?: string;
-}
-
-export interface ProjectileState {
-  id: string;
-  ownerId: string;
-  isPlayer: boolean;
-  startX: number;
-  startY: number;
-  angle: number;
-  speed: number;
-  lifetime: number;
-  damage: number;
-  spawnTime: number;
-  color: string;
-  radius: number;
-  piercing: boolean;
-  prefabId?: string;
-  shape: ProjectileShape;
 }

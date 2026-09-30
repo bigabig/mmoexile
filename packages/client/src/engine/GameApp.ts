@@ -1,14 +1,16 @@
 import * as THREE from "three";
 import {
   MapData,
-  EntityState,
   ProjectileState,
   DamageEvent,
   vec2Dist,
   getItemDefinition,
   getWeaponAttackCooldown,
   PlayerEquipment,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
+import {
+  EntityState,
+} from "@mmoexile/protocol";
 import { VoxelMeshBuilder } from "./VoxelMeshBuilder.js";
 import { MapRenderer } from "./MapRenderer.js";
 import { EntityManager } from "./EntityManager.js";

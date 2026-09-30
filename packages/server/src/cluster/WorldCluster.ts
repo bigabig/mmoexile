@@ -7,7 +7,7 @@ import {
   Equipment,
   Inventory,
   Identity,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
 import {
   GameWorld,
   type WorldTickResult,

@@ -1,6 +1,6 @@
 import type { WebSocket } from "ws";
 import { randomUUID } from "crypto";
-import { serializePacket, type ServerPacket } from "@mmoexile/shared";
+import { serializePacket, type ServerPacket } from "@mmoexile/protocol";
 import { ClientSession } from "./ClientSession.js";
 import type { ITransportSocket } from "./transport/ITransportGateway.js";
 

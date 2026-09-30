@@ -1,4 +1,4 @@
-import type { ServerPacket } from "@mmoexile/shared";
+import type { ServerPacket } from "@mmoexile/protocol";
 import type { SessionManager } from "../SessionManager.js";
 
 /**

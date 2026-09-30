@@ -1,5 +1,5 @@
 import { query, hasComponent } from "bitecs";
-import { Vec2, vec2DistSq, Position, Collider, Health } from "@mmoexile/shared";
+import { Vec2, vec2DistSq, Position, Collider, Health } from "@mmoexile/game-core";
 import type { ISystem } from "./ISystem.js";
 import type { GameWorld } from "../GameWorld.js";
 

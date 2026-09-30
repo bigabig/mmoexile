@@ -1,7 +1,6 @@
 import { encode, decode } from "@msgpack/msgpack";
-import { EntityState, ProjectileState } from "./snapshot.js";
-import { DamageEvent } from "../combat/damage.js";
-import { MapData } from "../maps/types.js";
+import type { DamageEvent, MapData, ProjectileState } from "@mmoexile/game-core";
+import type { EntityState } from "./snapshot.js";
 
 export type PacketType =
   | "c2s_join"

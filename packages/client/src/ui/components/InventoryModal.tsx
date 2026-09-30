@@ -3,7 +3,7 @@ import {
   PlayerEquipment,
   getItemDefinition,
   getItemThumbnailDataUrl,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
 import { ItemTooltip, RARITY_COLORS } from "./ItemTooltip.js";
 import {
   Briefcase,

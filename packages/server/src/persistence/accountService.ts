@@ -5,7 +5,7 @@ import {
   createDefaultCharacter,
   getPrefab,
   CharacterClassPrefab,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
 import { accountRepo } from "./repositories/accountRepository.js";
 import { characterRepo } from "./repositories/characterRepository.js";
 import {

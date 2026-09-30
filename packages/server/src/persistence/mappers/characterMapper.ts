@@ -3,7 +3,7 @@ import {
   CharacterData,
   computeEffectiveStats,
   computeBaseStatsForLevel,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
 
 export interface CharacterUpdateState {
   hp: number;

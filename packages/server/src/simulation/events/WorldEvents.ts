@@ -1,4 +1,5 @@
-import type { ProjectileState, DamageEvent, EntityState } from "@mmoexile/shared";
+import type { ProjectileState, DamageEvent } from "@mmoexile/game-core";
+import type { EntityState } from "@mmoexile/protocol";
 
 export interface PlayerPersistenceSnapshot {
   hp: number;

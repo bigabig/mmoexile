@@ -1,5 +1,5 @@
 import React from "react";
-import { getItemDefinition, ItemDefinition } from "@mmoexile/shared";
+import { getItemDefinition, ItemDefinition } from "@mmoexile/game-core";
 import { Shield, Zap, Target, Gauge, Sparkles } from "lucide-react";
 
 export const RARITY_COLORS: Record<

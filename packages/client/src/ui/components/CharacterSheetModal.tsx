@@ -1,5 +1,5 @@
 import React from "react";
-import { PlayerEquipment, getItemDefinition } from "@mmoexile/shared";
+import { PlayerEquipment, getItemDefinition } from "@mmoexile/game-core";
 import {
   User,
   X,

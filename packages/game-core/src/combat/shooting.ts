@@ -1,4 +1,4 @@
-import { ProjectileState } from "../protocol/snapshot.js";
+import type { ProjectileState } from "./projectile.js";
 import { WeaponItemDefinition } from "../items/types.js";
 
 /**

@@ -12,7 +12,7 @@ import {
   type ComponentValueMap,
   type PlayerEquipment,
   type ProjectileShape,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
 
 export interface SpawnPlayerOptions {
   id: string;

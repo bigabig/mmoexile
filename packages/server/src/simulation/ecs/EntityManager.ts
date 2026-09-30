@@ -5,7 +5,7 @@ import {
   Projectile,
   type ProjectileState,
   type ProjectileShape,
-} from "@mmoexile/shared";
+} from "@mmoexile/game-core";
 import {
   EntityFactory,
   type SpawnPlayerOptions,

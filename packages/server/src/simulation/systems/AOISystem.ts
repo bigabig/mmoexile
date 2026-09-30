@@ -17,8 +17,10 @@ import {
   PortalTag,
   LootBagTag,
   getXpForNextLevel,
+} from "@mmoexile/game-core";
+import {
   type EntityState,
-} from "@mmoexile/shared";
+} from "@mmoexile/protocol";
 import type { ISystem } from "./ISystem.js";
 import type { GameWorld } from "../GameWorld.js";
 

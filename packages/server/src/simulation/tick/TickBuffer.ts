@@ -1,4 +1,4 @@
-import type { ProjectileState, DamageEvent } from "@mmoexile/shared";
+import type { ProjectileState, DamageEvent } from "@mmoexile/game-core";
 import type {
   LootBagSpawnedEvent,
   LootBagDespawnedEvent,

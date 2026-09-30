@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { ProjectileState } from "@mmoexile/shared";
+import { ProjectileState } from "@mmoexile/game-core";
 
 interface ActiveBullet {
   state: ProjectileState;
