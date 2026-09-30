@@ -2,6 +2,7 @@
   "name": "mmoexile",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@12.5.1",
   "scripts": {
     "dev": "pnpm --parallel --filter @mmoexile/instance-server --filter @mmoexile/client dev",
     "dev:server": "pnpm --filter @mmoexile/instance-server dev",

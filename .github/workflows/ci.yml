@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main, server-infrastructure]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Uses the version pinned in package.json "packageManager"
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Also generates the Prisma client (packages/db postinstall)
+      - run: pnpm install --frozen-lockfile
+
+      # Server tests use the local SQLite database
+      - run: pnpm db:push
+
+      - run: pnpm lint:deps
+      - run: pnpm build
+      - run: pnpm test
