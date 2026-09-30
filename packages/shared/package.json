@@ -1,0 +1,24 @@
+{
+  "name": "@rotmg/shared",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.0.0",
+    "bitecs": "^0.4.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "@rotmg/server",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "start": "tsx src/index.ts",
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.0.0",
+    "@prisma/client": "^6.4.1",
+    "@rotmg/shared": "workspace:*",
+    "bitecs": "^0.4.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/ws": "^8.5.14",
+    "prisma": "^6.4.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "rotmg-voxel-mmo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel --filter @rotmg/server --filter @rotmg/client dev",
+    "dev:server": "pnpm --filter @rotmg/server dev",
+    "dev:client": "pnpm --filter @rotmg/client dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}
+
