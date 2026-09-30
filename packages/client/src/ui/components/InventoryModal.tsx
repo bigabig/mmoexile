@@ -3,7 +3,7 @@ import {
   PlayerEquipment,
   getItemDefinition,
   getItemThumbnailDataUrl,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import { ItemTooltip, RARITY_COLORS } from "./ItemTooltip.js";
 import {
   Briefcase,

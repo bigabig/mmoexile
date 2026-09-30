@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { VoxelModel, getVoxel, BUILTIN_VOXEL_MODELS } from "@rotmg/shared";
+import { VoxelModel, getVoxel, BUILTIN_VOXEL_MODELS } from "@mmoexile/shared";
 
 interface QuadDef {
   dir: [number, number, number];

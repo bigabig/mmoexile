@@ -1,4 +1,4 @@
-import type { ProjectileState, DamageEvent, EntityState } from "@rotmg/shared";
+import type { ProjectileState, DamageEvent, EntityState } from "@mmoexile/shared";
 
 export interface PlayerPersistenceSnapshot {
   hp: number;

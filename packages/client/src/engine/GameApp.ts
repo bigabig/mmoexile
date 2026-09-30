@@ -8,7 +8,7 @@ import {
   getItemDefinition,
   getWeaponAttackCooldown,
   PlayerEquipment,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import { VoxelMeshBuilder } from "./VoxelMeshBuilder.js";
 import { MapRenderer } from "./MapRenderer.js";
 import { EntityManager } from "./EntityManager.js";

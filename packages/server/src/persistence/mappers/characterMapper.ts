@@ -3,7 +3,7 @@ import {
   CharacterData,
   computeEffectiveStats,
   computeBaseStatsForLevel,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 
 export interface CharacterUpdateState {
   hp: number;

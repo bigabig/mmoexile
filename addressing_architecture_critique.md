@@ -1,6 +1,6 @@
 # Addressing Architecture Critique & Future Roadmap
 
-This document serves as an architectural assessment and follow-up plan based on the external developer review of the `@rotmg/server` architecture.
+This document serves as an architectural assessment and follow-up plan based on the external developer review of the `@mmoexile/server` architecture.
 
 ---
 

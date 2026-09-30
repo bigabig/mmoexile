@@ -10,7 +10,7 @@ import {
   S2C_DamagePacket,
   S2C_WorldTransferPacket,
   S2C_ChatPacket,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import { SessionManager } from "./SessionManager.js";
 import {
   WorldCluster,

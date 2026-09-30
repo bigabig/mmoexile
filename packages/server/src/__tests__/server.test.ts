@@ -33,7 +33,7 @@ import {
   Dead,
   SpawnedBy,
   Identity,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import { SpatialSystem } from "../simulation/systems/SpatialSystem.js";
 import { EntityFactory } from "../simulation/ecs/EntityFactory.js";
 import { GameWorld } from "../simulation/GameWorld.js";

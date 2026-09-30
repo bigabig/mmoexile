@@ -5,7 +5,7 @@ import {
   Projectile,
   type ProjectileState,
   type ProjectileShape,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import {
   EntityFactory,
   type SpawnPlayerOptions,

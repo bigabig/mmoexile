@@ -22,7 +22,7 @@ import {
   Identity,
   getPrefab,
   type PlayerInputItem,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import { EventBus } from "./events/EventBus.js";
 import type {
   WorldEventMap,

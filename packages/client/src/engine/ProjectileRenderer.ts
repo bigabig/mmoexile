@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { ProjectileState } from "@rotmg/shared";
+import { ProjectileState } from "@mmoexile/shared";
 
 interface ActiveBullet {
   state: ProjectileState;

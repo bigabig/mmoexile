@@ -1,6 +1,6 @@
 # Server Architecture: 4-Layer MMO Model
 
-This document outlines the architectural design, physical layer boundaries, execution lifecycle, and data flow of the `@rotmg/server` package.
+This document outlines the architectural design, physical layer boundaries, execution lifecycle, and data flow of the `@mmoexile/server` package.
 
 ---
 
@@ -22,7 +22,7 @@ flowchart TD
     G --> P["Layer 4: Persistence (src/persistence)"]
     C --> S["Layer 3: Simulation (src/simulation)"]
     C --> P
-    S --> SH["@rotmg/shared"]
+    S --> SH["@mmoexile/shared"]
     P --> SH
     C --> SH
     G --> SH
@@ -34,9 +34,9 @@ flowchart TD
 ```
 
 Strict dependency invariants enforced across the codebase:
-1. **Simulation (`src/simulation`)** has **ZERO** dependencies on `gateway`, `cluster`, or `persistence`. It depends strictly on bitECS and `@rotmg/shared`.
-2. **Cluster (`src/cluster`)** coordinates worlds and runners. It depends on `simulation`, `persistence`, and `@rotmg/shared`. It has no knowledge of WebSocket sockets.
-3. **Gateway (`src/gateway`)** terminates client connections and translates packets. It depends on `cluster`, `persistence`, and `@rotmg/shared`.
+1. **Simulation (`src/simulation`)** has **ZERO** dependencies on `gateway`, `cluster`, or `persistence`. It depends strictly on bitECS and `@mmoexile/shared`.
+2. **Cluster (`src/cluster`)** coordinates worlds and runners. It depends on `simulation`, `persistence`, and `@mmoexile/shared`. It has no knowledge of WebSocket sockets.
+3. **Gateway (`src/gateway`)** terminates client connections and translates packets. It depends on `cluster`, `persistence`, and `@mmoexile/shared`.
 4. **Persistence (`src/persistence`)** interacts with Prisma and Postgres. It has no dependencies on `gateway`, `cluster`, or `simulation`.
 
 ---
@@ -73,7 +73,7 @@ Pure, high-performance bitECS game simulation without external I/O.
 
 - **`GameWorld`**: The core simulation container for a world instance. Owns the bitECS world, spatial hash grid, tile map, entity manager, command queue, and tick buffer.
 - **`ecs/EntityManager`**: Centralizes entity lifecycle management (`createPlayer`, `createMonster`, `spawnLootBag`, `destroyEntity`), maintaining bidirectional mappings between entity IDs (`eid`) and UUIDs.
-- **`ecs/EntityFactory`**: Factory functions for instantiating entities according to declarative prefab definitions from `@rotmg/shared`.
+- **`ecs/EntityFactory`**: Factory functions for instantiating entities according to declarative prefab definitions from `@mmoexile/shared`.
 - **`commands/CommandQueue` & `CommandProcessingSystem`**: Buffers incoming player commands (movement, shooting, inventory swaps, portal entries) and executes them deterministically at the start of each simulation tick.
 - **`tick/TickBuffer`**: Accumulates all tick outputs (new projectiles, damage events, deaths, level-ups, portal transfers, loot bag spawns/despawns, snapshots) and returns a consolidated `WorldTickResult` at the end of each tick.
 - **`events/EventBus` & `WorldEvents`**: In-simulation typed event bus for decoupling system notifications.

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { EntityState, getItemDefinition, getItemThumbnailDataUrl } from "@rotmg/shared";
+import { EntityState, getItemDefinition, getItemThumbnailDataUrl } from "@mmoexile/shared";
 import { ItemTooltip, RARITY_COLORS } from "./ItemTooltip.js";
 import { Package, CornerDownRight, Layers } from "lucide-react";
 

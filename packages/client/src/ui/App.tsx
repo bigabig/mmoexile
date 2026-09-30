@@ -8,7 +8,7 @@ import { PermadeathModal } from "./components/PermadeathModal.js";
 import { CharacterSheetModal } from "./components/CharacterSheetModal.js";
 import { InventoryModal } from "./components/InventoryModal.js";
 import { LootBagModal } from "./components/LootBagModal.js";
-import { EntityState, PlayerEquipment } from "@rotmg/shared";
+import { EntityState, PlayerEquipment } from "@mmoexile/shared";
 
 export const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);

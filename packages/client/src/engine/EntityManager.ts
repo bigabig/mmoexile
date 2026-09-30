@@ -5,7 +5,7 @@ import {
   Animation,
   type ComponentValue,
   type ProceduralAnimationType,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import { VoxelMeshBuilder } from "./VoxelMeshBuilder.js";
 
 interface RenderedEntity {

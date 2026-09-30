@@ -13,7 +13,7 @@ import {
   createWeaponProjectiles,
   getWeaponAttackCooldown,
   type WeaponItemDefinition,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import type { ISystem } from "./ISystem.js";
 import type { GameWorld } from "../GameWorld.js";
 

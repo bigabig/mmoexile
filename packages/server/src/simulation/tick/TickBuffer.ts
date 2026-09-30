@@ -1,4 +1,4 @@
-import type { ProjectileState, DamageEvent } from "@rotmg/shared";
+import type { ProjectileState, DamageEvent } from "@mmoexile/shared";
 import type {
   LootBagSpawnedEvent,
   LootBagDespawnedEvent,

@@ -1,5 +1,5 @@
 {
-  "name": "@rotmg/client",
+  "name": "@mmoexile/client",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@rotmg/shared": "workspace:*",
+    "@mmoexile/shared": "workspace:*",
     "three": "^0.174.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

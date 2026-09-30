@@ -1,5 +1,5 @@
 {
-  "name": "@rotmg/server",
+  "name": "@mmoexile/server",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
   "dependencies": {
     "@msgpack/msgpack": "^3.0.0",
     "@prisma/client": "^6.4.1",
-    "@rotmg/shared": "workspace:*",
+    "@mmoexile/shared": "workspace:*",
     "bitecs": "^0.4.0",
     "ws": "^8.18.0"
   },

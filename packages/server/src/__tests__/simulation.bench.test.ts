@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { STATIC_MAPS, Position, Health } from "@rotmg/shared";
+import { STATIC_MAPS, Position, Health } from "@mmoexile/shared";
 import { GameWorld } from "../simulation/GameWorld.js";
 import { InProcessWorldRunner } from "../cluster/runners/InProcessWorldRunner.js";
 

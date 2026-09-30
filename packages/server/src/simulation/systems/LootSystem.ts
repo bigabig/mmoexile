@@ -10,7 +10,7 @@ import {
   Health,
   getItemDefinition,
   vec2Dist,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import type { ISystem } from "./ISystem.js";
 import type { GameWorld } from "../GameWorld.js";
 

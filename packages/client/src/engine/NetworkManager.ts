@@ -9,7 +9,7 @@ import {
   DamageEvent,
   isSolidTile,
   resolveCircleTileCollision,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 
 export interface NetworkCallbacks {
   onWelcome?: (playerId: string, worldId: string, map: MapData) => void;

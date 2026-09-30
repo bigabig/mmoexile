@@ -1,5 +1,5 @@
 import { hasComponent } from "bitecs";
-import { Player, Health, InputQueue } from "@rotmg/shared";
+import { Player, Health, InputQueue } from "@mmoexile/shared";
 import type { ISystem } from "./ISystem.js";
 import type { GameWorld } from "../GameWorld.js";
 

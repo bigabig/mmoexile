@@ -7,7 +7,7 @@ import {
   Equipment,
   Inventory,
   Identity,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import {
   GameWorld,
   type WorldTickResult,

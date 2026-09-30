@@ -14,7 +14,7 @@ import {
   computeEffectiveStats,
   Equipment,
   LootBag,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import type { ISystem } from "./ISystem.js";
 import type { GameWorld } from "../GameWorld.js";
 

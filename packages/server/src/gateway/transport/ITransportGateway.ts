@@ -1,4 +1,4 @@
-import type { ServerPacket } from "@rotmg/shared";
+import type { ServerPacket } from "@mmoexile/shared";
 import type { SessionManager } from "../SessionManager.js";
 
 /**

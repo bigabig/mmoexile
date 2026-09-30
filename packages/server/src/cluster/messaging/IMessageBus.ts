@@ -1,5 +1,5 @@
 import type { PlayerCommand, WorldTickResult } from "../../simulation/index.js";
-import type { MapData } from "@rotmg/shared";
+import type { MapData } from "@mmoexile/shared";
 
 export interface PlayerTransferPayload {
   playerId: string;

@@ -5,7 +5,7 @@ import {
   createDefaultCharacter,
   getPrefab,
   CharacterClassPrefab,
-} from "@rotmg/shared";
+} from "@mmoexile/shared";
 import { accountRepo } from "./repositories/accountRepository.js";
 import { characterRepo } from "./repositories/characterRepository.js";
 import {
