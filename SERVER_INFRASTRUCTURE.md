@@ -155,6 +155,7 @@ Today, everything runs in **one Node process** (`packages/server/src/index.ts`):
 | Public sharding | One Nexus for everyone | N Nexus copies with a player cap |
 | Instance lifecycle | Worlds live forever | creating → running → empty → closed |
 | Execution | Only `InProcessWorldRunner`; all worlds tick on the main thread (worker threads are not yet implemented) | Many processes/cores, many machines |
+| ECS isolation | **Broken for >1 world per process:** bitECS components are module-global arrays (`Health.current[eid]`), but every `GameWorld` calls `createWorld()` with its own entity index, so two worlds both hand out `eid = 1` and overwrite each other's component data | One shared entity index per process, so entity IDs never collide across instances |
 | Zone transfer | In-memory function call (`WorldCluster.transferPlayer`) | Save → release lease → ticket → reconnect → claim |
 | Client connection | One fixed `ws://host:3001/ws` for the whole session | Reconnects to whichever server hosts the instance |
 | Auth | Token stored in DB, looked up by the gateway | Signed session token, verifiable anywhere |
@@ -180,9 +181,121 @@ Today, everything runs in **one Node process** (`packages/server/src/index.ts`):
 
 ---
 
-## 7. Staged Migration Path
+## 7. Repository Structure
 
-Each stage is independently shippable.
+### The Core Rule: `apps/` vs. `packages/`
+
+- **`apps/`**: things you **deploy**. One app = one Docker image = one container type.
+- **`packages/`**: libraries imported by apps. Never deployed on their own.
+
+Three dependency rules:
+
+1. Apps may import packages.
+2. Packages never import apps.
+3. **Apps never import each other.** They only talk over the network (HTTP, WebSocket, message broker), using shared **contracts**.
+
+Rule 3 is what later allows every app to run in its own container, on its own machine, in its own region.
+
+### Code vs. Deployment Topology
+
+Not every concept in this document is code:
+
+| Concept | Code? | Where it lives |
+| :--- | :--- | :--- |
+| Account/Login, Orchestrator, Instance Server, Social, Economy, Website, Directory | **Yes**, each is an app | `apps/*` |
+| Database, Redis / NATS | **No**, off-the-shelf software we run | `infra/` (compose / k8s manifests) |
+| **Realm, Gateway, Node** | **No**, they describe *where and how many* copies run | `infra/environments/*` |
+
+A gateway is "a set of instance-server containers running in Frankfurt, labeled `region=eu`". The instance-server code is identical everywhere.
+
+### Target Layout
+
+```
+mmoexile/
+├── apps/                          # deployables: one Dockerfile each
+│   ├── client/                    # game client (Vite + Three.js + React) → static files on CDN/nginx
+│   ├── website/                   # landing page, account page, news (much later)
+│   ├── account-api/               # login, session tokens, character list/create/delete
+│   ├── orchestrator/              # instance registry, placement, transfer tickets, server heartbeats
+│   ├── instance-server/           # hosts N instances, WebSocket data plane, handoff
+│   ├── social/                    # chat routing, party, friends, guilds, presence
+│   ├── economy/                   # trade, market, stash: anything transactional with items
+│   └── directory/                 # realm & gateway list, ping endpoints (tiny, global)
+│
+├── packages/                      # libraries: never deployed alone
+│   ├── game-core/                 # today's `shared`: math, zones/maps, items, prefabs, formulas, ECS components
+│   ├── simulation/                # pure GameWorld + systems (zero I/O), extracted from server
+│   ├── protocol/                  # client ⇄ instance-server packets (MessagePack)
+│   ├── contracts/                 # service ⇄ service: HTTP API schemas, broker subjects & message types
+│   ├── auth/                      # sign/verify session tokens & transfer tickets
+│   ├── db/                        # Prisma schema, migrations, generated client
+│   ├── messaging/                 # broker abstraction + in-memory / Redis (/ NATS) implementations
+│   ├── service-kit/               # shared service plumbing: config, logging, /health, metrics, graceful shutdown
+│   └── tsconfig/                  # shared TS config presets
+│
+├── infra/
+│   ├── docker/                    # shared Dockerfile base / build helpers
+│   ├── compose/                   # docker-compose.yml: postgres, redis, all apps locally
+│   ├── k8s/                       # later: Deployments/Services (kustomize or helm)
+│   ├── agones/                    # later: Fleet + FleetAutoscaler for instance-server
+│   └── environments/              # topology: realm-dev, realm-intl/{gateway-eu, gateway-us}
+│
+├── tools/                         # load-test bots, seed scripts, admin CLI
+├── docs/                          # architecture docs, decision records
+├── package.json
+├── pnpm-workspace.yaml            # packages: ["apps/*", "packages/*", "tools/*"]
+└── turbo.json                     # optional: Turborepo for cached builds/tests across the graph
+```
+
+The npm scope becomes `@mmoexile/*` (replacing `@rotmg/*`).
+
+### Where Today's Code Moves
+
+| Today | Target |
+| :--- | :--- |
+| `packages/client` | `apps/client` |
+| `packages/shared` | Split into `packages/game-core` + `packages/protocol` |
+| `packages/server/src/simulation` | `packages/simulation` (already pure, so it becomes a library) |
+| `packages/server/src/gateway` + `cluster` | `apps/instance-server` |
+| `packages/server/src/persistence` + `prisma/` | `packages/db` (schema/client) + the services that own the data |
+| `packages/server/src/cluster/messaging` | Stays inside `apps/instance-server` (it is in-process plumbing); `packages/messaging` is the *inter-service* broker, introduced in Stage 2 |
+
+Pulling `simulation` into its own package means benchmarks, tests, bots, and potentially client-side prediction can use it without importing a server.
+
+### Inside One App
+
+Every app follows the same skeleton:
+
+```
+apps/instance-server/
+├── Dockerfile
+├── package.json                  # @mmoexile/instance-server
+└── src/
+    ├── main.ts                   # wiring only: config → dependencies → start
+    ├── config.ts                 # env vars, validated (PORT, REGION, ORCHESTRATOR_URL, …)
+    ├── host/InstanceHost.ts      # owns many GameWorld instances + their runners
+    ├── transport/                # WebSocket endpoint, ticket check on connect
+    ├── handoff/                  # lease claim/release, transfer out/in
+    ├── clients/orchestrator.ts   # typed client for the orchestrator API (from contracts)
+    └── lifecycle/                # Ready / Health / Shutdown, abstracted (Agones SDK later)
+```
+
+### Structural Decisions
+
+1. **Contracts are the only shared surface between services.** `packages/contracts` defines e.g. `POST /tickets` or the subject `chat.instance.<id>` with runtime-validated schemas (zod). Changing an API breaks the build of every caller.
+2. **One database, strict table ownership.** One Postgres and one `packages/db` schema, but every table has exactly one owning service (account-api: accounts, characters; economy: items, trades; social: friends, guilds). Others ask the owner instead of writing its tables. This keeps a later database split possible and prevents a "distributed monolith".
+3. **One multi-stage Dockerfile per app.** Install with pnpm, build only that app plus its package dependencies (`pnpm deploy --filter` or `turbo prune`), copy into a slim runtime image. `docker compose up` runs an entire realm locally.
+4. **Only `instance-server` becomes an Agones `GameServer`/`Fleet`.** It is the only stateful, "don't kill me while players are connected" component. Everything else is a plain Kubernetes `Deployment`. Because each server hosts many instances, we use Agones' high-density pattern (Counters/Lists for player and instance counts). The `lifecycle/` abstraction keeps the Agones SDK out of the game code until it is needed.
+5. **Folders appear when their stage arrives.** Empty services rot and obscure what is real. The layout above is the target map, not a scaffold to create up front.
+
+---
+
+## 8. Staged Migration Path
+
+Each stage is independently shippable. The detailed, task-level plan lives in [`SERVER_INFRASTRUCTURE_PLAN.md`](SERVER_INFRASTRUCTURE_PLAN.md).
+
+### Stage 0: Repository Restructure (no behavior change)
+- Move today's code into the `apps/` + `packages/` layout, rename the scope to `@mmoexile/*`.
 
 ### Stage 1: Real Instancing (single process)
 - Split zone templates from instance IDs; add an instance registry.
@@ -210,5 +323,8 @@ This is the point where it becomes a real distributed system.
 - Client-side latency probe to suggest a gateway.
 - Region-aware placement. Central services stay central.
 
-### Later Tooling (not needed yet)
-Docker, Kubernetes, and **Agones** (Kubernetes for game servers: fleets, allocation, player counts). Build the pieces by hand first; these tools make much more sense afterwards.
+### Stage 5: Kubernetes & Agones
+- Plain `Deployment`s for stateless apps; an Agones `Fleet` for instance servers.
+- The orchestrator allocates servers through the Agones allocator.
+
+Build the pieces by hand first; Kubernetes and Agones make much more sense afterwards.
