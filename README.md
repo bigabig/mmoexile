@@ -1,6 +1,6 @@
 # Realm of the Mad God (RotMG) Voxel MMO Clone
 
-A fast, server-authoritative, 3D isometric bullet-hell MMO clone built with **TypeScript**, **Three.js**, **React**, **Vite**, **Node.js (Worker Threads)**, **WebSockets**, and **Prisma SQLite**.
+A fast, server-authoritative, 3D isometric bullet-hell MMO clone built with **TypeScript**, **Three.js**, **React**, **Vite**, **Node.js**, **WebSockets**, **bitECS**, and **Prisma** (SQLite for now).
 
 ---
 
@@ -8,7 +8,7 @@ A fast, server-authoritative, 3D isometric bullet-hell MMO clone built with **Ty
 
 - **3D Isometric Voxel Graphics**: Procedural voxel characters, monsters, loot bags, and portals constructed from 3D arrays with high-performance exposed-face culling geometry and vertex coloring.
 - **Chunked Terrain System**: 32x32 chunked 2D grid rendering with 3D extruded obstacles and wall blocks (stone walls, trees, obsidian dungeon blocks, pillars).
-- **Multi-Threaded Server Architecture**: Node.js main thread routes WebSocket connections; dedicated Node.js **Worker Threads** run separate 30 Hz physics, collision, and bullet simulations for each active World (**Nexus**, **Realm**, **Dungeon**).
+- **Layered Server Architecture**: A WebSocket gateway, a world cluster, and out-of-band persistence wrap a pure, zero-I/O ECS simulation. Each world (**Nexus**, **Realm**, **Dungeon**) ticks at 30 Hz. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 - **Deterministic Bullet Hell Combat**: Client & server share projectile formulas. Projectiles animate at 60+ FPS locally while the server validates hits and resolves authoritative damage.
 - **Client-Side Prediction & Reconciliation**: Responsive WASD movement with local prediction against 2D tile collision maps, plus server reconciliation and entity interpolation.
 - **Authentic RotMG Camera**: 3D Isometric camera with **Q / R** rotation, ground plane mouse raycasting, and toggleable **Z** off-center view to anticipate incoming bullets.
@@ -19,13 +19,23 @@ A fast, server-authoritative, 3D isometric bullet-hell MMO clone built with **Ty
 
 ## Monorepo Architecture
 
+Deployables live in `apps/`, libraries in `packages/`. Apps never import each other; `pnpm lint:deps` enforces the boundaries.
+
 ```
 mmoexile/
+├── apps/
+│   ├── client/           # Vite + Three.js isometric renderer, React HUD, chat, minimap
+│   └── instance-server/  # WebSocket gateway, world cluster, persistence (game server)
 ├── packages/
-│   ├── shared/     # 2D vector & collision math, MessagePack packet protocol, static maps, voxel definitions
-│   ├── server/     # WebSocket server, Prisma SQLite database, 30Hz World Worker Threads (Nexus, Realm, Dungeon)
-│   └── client/     # Vite + Three.js isometric rendering engine + React HUD, Chat, Minimap
+│   ├── game-core/        # Math, maps, items, prefabs, progression, combat formulas, ECS components, voxels
+│   ├── protocol/         # Client ⇄ server packets and snapshots (MessagePack)
+│   ├── simulation/       # Pure bitECS GameWorld + systems (zero I/O)
+│   ├── db/               # Prisma schema and client
+│   └── tsconfig/         # Shared TypeScript presets
+└── docs/                 # Architecture documentation
 ```
+
+The target server infrastructure (realms, gateways, instances, orchestrator) is described in [`SERVER_INFRASTRUCTURE.md`](SERVER_INFRASTRUCTURE.md), and the migration plan in [`SERVER_INFRASTRUCTURE_PLAN.md`](SERVER_INFRASTRUCTURE_PLAN.md).
 
 ---
 
@@ -33,16 +43,16 @@ mmoexile/
 
 ### 1. Prerequisites
 
-- **Node.js**: v18+ (tested on v24)
-- **pnpm**: v9+ (or `corepack enable pnpm`)
+- **Node.js**: v20+ (tested on v24)
+- **pnpm**: tested on v12 (or `corepack enable pnpm`)
 
 ### 2. Install & Initialize
 
 ```bash
-# Install dependencies across all workspaces
+# Install dependencies across all workspaces (also generates the Prisma client)
 pnpm install
 
-# Push SQLite schema
+# Create the local SQLite database
 pnpm db:push
 ```
 
@@ -77,9 +87,12 @@ _(To test multiplayer, open a second tab or incognito window with a different ni
 ## Running Tests & Builds
 
 ```bash
-# Run all unit and integration tests across shared and server
-pnpm -r test
+# Run all unit and integration tests
+pnpm test
+
+# Check dependency boundaries between apps and packages
+pnpm lint:deps
 
 # Build all packages for production
-pnpm -r build
+pnpm build
 ```

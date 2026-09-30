@@ -146,7 +146,7 @@ This is what a PoE loading screen is. The original RotMG does the same via its `
 
 ## 6. Current State vs. Target
 
-Today, everything runs in **one Node process** (`packages/server/src/index.ts`): HTTP, WebSocket gateway, `WorldCluster`, all worlds, and persistence.
+Today, everything runs in **one Node process** (`apps/instance-server/src/index.ts`): HTTP, WebSocket gateway, `WorldCluster`, all worlds, and persistence. The repository already follows the target `apps/` + `packages/` layout (Stage 0).
 
 | Concern | Today | Target |
 | :--- | :--- | :--- |
@@ -249,9 +249,9 @@ mmoexile/
 
 The npm scope becomes `@mmoexile/*` (replacing `@rotmg/*`).
 
-### Where Today's Code Moves
+### Where the Original Code Moved (done in Stage 0)
 
-| Today | Target |
+| Before | After |
 | :--- | :--- |
 | `packages/client` | `apps/client` |
 | `packages/shared` | Split into `packages/game-core` + `packages/protocol` |

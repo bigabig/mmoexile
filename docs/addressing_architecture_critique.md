@@ -1,6 +1,8 @@
 # Addressing Architecture Critique & Future Roadmap
 
-This document serves as an architectural assessment and follow-up plan based on the external developer review of the `@mmoexile/server` architecture.
+> **Historical document.** Paths refer to the layout at the time of the review (`packages/server`, `packages/shared`, `packages/client`). Since Stage 0 these live in `apps/instance-server`, `packages/simulation`, `packages/game-core`, `packages/protocol`, and `apps/client`.
+
+This document serves as an architectural assessment and follow-up plan based on the external developer review of the `@rotmg/server` architecture.
 
 ---
 
