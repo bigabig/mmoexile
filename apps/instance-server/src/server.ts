@@ -8,7 +8,12 @@ import type { Logger } from "@mmoexile/service-kit";
 import { InstanceHost } from "./cluster/index.js";
 import { WebSocketGateway } from "./gateway/index.js";
 import { PersistenceService } from "./persistence/index.js";
-import { PartyService } from "./party/PartyService.js";
+import { PartyCache } from "./party/PartyCache.js";
+import {
+  SocialPartyDirectory,
+  type PartyDirectory,
+} from "./party/PartyDirectory.js";
+import { RedisPresence, type Presence } from "./presence/Presence.js";
 import { createHttpHandler } from "./http.js";
 import { gracefulShutdown } from "./shutdown.js";
 import { CharacterOwnership } from "./ownership/CharacterOwnership.js";
@@ -23,6 +28,10 @@ export interface InstanceServerDeps {
   db: PrismaClient;
   redis: Redis;
   broker: Broker;
+  /** Defaults to the social service at config.SOCIAL_URL. */
+  parties?: PartyDirectory;
+  /** Defaults to Redis presence. */
+  presence?: Presence;
 }
 
 export interface InstanceServer {
@@ -41,6 +50,8 @@ export async function createInstanceServer({
   db,
   redis,
   broker,
+  parties = new SocialPartyDirectory(config.SOCIAL_URL),
+  presence = new RedisPresence(redis, config.SERVER_ID),
 }: InstanceServerDeps): Promise<InstanceServer> {
   const placement = parseStaticPlacement(config.SERVERS, config.ZONE_PLACEMENT);
   const ticketKey = secretKey(config.TICKET_SECRET);
@@ -66,11 +77,13 @@ export async function createInstanceServer({
     ),
   );
 
-  const parties = new PartyService();
+  const partyCache = new PartyCache(broker);
+  await partyCache.start();
+
   const host = new InstanceHost({
     persistence,
     hostsZone,
-    getPartyId: (characterId) => parties.getPartyId(characterId),
+    getPartyId: (characterId) => partyCache.getPartyId(characterId),
     // Every zone change is a handoff with reconnect (decision D4).
     onPortalTransfer: (playerId, targetZoneId, via) => {
       lifecycle.handOff(playerId, targetZoneId, via).catch((err) =>
@@ -89,7 +102,17 @@ export async function createInstanceServer({
     leases,
     placement,
     ticketKey,
-    getPartyId: (characterId) => parties.getPartyId(characterId),
+    getPartyId: (characterId) => partyCache.getPartyId(characterId),
+    onAdmitted: (player) => {
+      void presence.set(player.characterId, player.name);
+      parties
+        .getParty(player.characterId)
+        .then((party) => partyCache.seed(player.characterId, party))
+        .catch((err) => logger.warn({ err }, "Could not load party"));
+    },
+    onDeparted: (characterId, name) => {
+      void presence.remove(characterId, name);
+    },
     sendReconnect: (...args) => gateway.sendReconnect(...args),
     kickSession: (...args) => gateway.kickSession(...args),
     log: (message, extra) => logger.info(extra ?? {}, message),
@@ -100,7 +123,21 @@ export async function createInstanceServer({
   const httpServer = http.createServer(
     createHttpHandler(host, { debugEndpoints: config.NODE_ENV !== "production" }),
   );
-  gateway = new WebSocketGateway(httpServer, host, parties, lifecycle);
+  gateway = new WebSocketGateway(httpServer, host, lifecycle, {
+    parties,
+    partyCache,
+    presence,
+    broker,
+  });
+  await gateway.subscribeToSharedChat();
+
+  // Keep presence entries of local players alive.
+  const presenceTimer = setInterval(() => {
+    for (const player of lifecycle.all()) {
+      void presence.set(player.characterId, player.name);
+    }
+  }, 20_000);
+  presenceTimer.unref();
 
   logger.info(
     {
@@ -122,6 +159,7 @@ export async function createInstanceServer({
         ),
       ),
     stop: async () => {
+      clearInterval(presenceTimer);
       leases.stop();
       await gracefulShutdown({
         gateway,

@@ -11,6 +11,8 @@ export const configSchema = baseConfigSchema.extend({
   ZONE_PLACEMENT: z.string().default(DEV_ZONE_PLACEMENT),
   TICKET_SECRET: z.string().min(32).default(DEV_TICKET_SECRET),
   REDIS_URL: z.string().default("redis://localhost:6379"),
+  /** apps/social, for party commands. */
+  SOCIAL_URL: z.string().default("http://localhost:3002"),
   LEASE_TTL_MS: z.coerce.number().int().positive().default(30_000),
 });
 

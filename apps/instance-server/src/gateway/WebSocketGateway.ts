@@ -25,36 +25,54 @@ import type {
 } from "../players/PlayerLifecycle.js";
 import type { ClientSession } from "./ClientSession.js";
 import type { ITransportGateway } from "./transport/ITransportGateway.js";
-import type { PartyChange, PartyService } from "../party/PartyService.js";
+import { channels } from "@mmoexile/contracts";
+import type { Broker } from "@mmoexile/messaging";
+import type { PartyDirectory } from "../party/PartyDirectory.js";
+import type { PartyCache, PartyUpdate } from "../party/PartyCache.js";
+import type { Presence } from "../presence/Presence.js";
 import { ChatCommands } from "../chat/ChatCommands.js";
+
+/** Cross-server social features the gateway relies on. */
+export interface GatewaySocial {
+  parties: PartyDirectory;
+  partyCache: PartyCache;
+  presence: Presence;
+  broker: Broker;
+}
 
 export class WebSocketGateway implements ITransportGateway {
   private readonly wss: WebSocketServer;
   public readonly sessionManager: SessionManager;
   public readonly host: InstanceHost;
-  public readonly parties: PartyService;
   public readonly messageBus: IMessageBus;
   private readonly commands: ChatCommands;
   private readonly lifecycle: PlayerLifecycle;
+  private readonly social: GatewaySocial;
 
   constructor(
     httpServer: HttpServer,
     host: InstanceHost,
-    parties: PartyService,
     lifecycle: PlayerLifecycle,
+    social: GatewaySocial,
     sessionManager: SessionManager = new SessionManager(),
     messageBus?: IMessageBus,
   ) {
     this.host = host;
-    this.parties = parties;
     this.lifecycle = lifecycle;
-    this.commands = new ChatCommands(host, parties);
+    this.social = social;
+    this.commands = new ChatCommands({
+      host,
+      parties: social.parties,
+      presence: social.presence,
+      broker: social.broker,
+      onError: (err) => console.error("[ChatCommands]", err),
+    });
     this.sessionManager = sessionManager;
     this.messageBus = messageBus ?? host.messageBus ?? new InMemoryMessageBus();
     this.wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
     this.setupHostHooks();
-    this.parties.onChange((change) => this.sendPartyUpdate(change));
+    social.partyCache.onUpdate((update) => void this.sendPartyUpdate(update));
     this.setupWebSocketListeners();
   }
 
@@ -146,22 +164,62 @@ export class WebSocketGateway implements ITransportGateway {
           this.sessionManager.broadcastToPlayers(instance.players, binary);
         }
       } else {
-        this.sessionManager.broadcastAll(binary);
+        // Global messages (logins, deaths) reach every server via the broker.
+        void this.social.broker.publish(channels.chatGlobal, {
+          senderName: sender,
+          text,
+          kind,
+        });
       }
       },
     );
   }
 
-  private sendPartyUpdate({ party, removed }: PartyChange): void {
+  /** Delivers cross-server chat to the players connected here. */
+  public async subscribeToSharedChat(): Promise<void> {
+    const toPacket = (
+      sender: string,
+      text: string,
+      kind: "system" | "player",
+      channel: "global" | "party",
+    ) =>
+      serializePacket({
+        type: "s2c_chat",
+        sender,
+        text,
+        kind,
+        channel,
+        timestamp: Date.now(),
+      });
+    await this.social.broker.subscribe(channels.chatGlobal, (m) =>
+      this.sessionManager.broadcastAll(
+        toPacket(m.senderName, m.text, m.kind, "global"),
+      ),
+    );
+    await this.social.broker.subscribe(channels.chatParty, (m) =>
+      this.sessionManager.broadcastToPlayers(
+        m.memberIds,
+        toPacket(m.senderName, m.text, m.kind, "party"),
+      ),
+    );
+  }
+
+  private async sendPartyUpdate({ party, removed }: PartyUpdate): Promise<void> {
     if (party) {
+      const members = await Promise.all(
+        party.members.map(async (id) => ({
+          id,
+          name:
+            this.host.getPlayerName(id) ??
+            (await this.social.presence.nameOf(id)) ??
+            "Offline",
+          isLeader: id === party.leaderId,
+        })),
+      );
       const packet: S2C_PartyUpdatePacket = {
         type: "s2c_party_update",
         partyId: party.id,
-        members: party.members.map((id) => ({
-          id,
-          name: this.host.getPlayerName(id) ?? "Unknown",
-          isLeader: id === party.leaderId,
-        })),
+        members,
       };
       this.sessionManager.broadcastToPlayers(party.members, packet);
     }
@@ -172,6 +230,30 @@ export class WebSocketGateway implements ITransportGateway {
         members: [],
       };
       this.sessionManager.broadcastToPlayers(removed, packet);
+    }
+  }
+
+  /** A disconnect (not a handoff or kick) leaves the party. */
+  private async leavePartyOnDisconnect(
+    characterId: string,
+    name: string,
+  ): Promise<void> {
+    try {
+      const before = await this.social.parties.getParty(characterId);
+      if (!before) return;
+      const result = await this.social.parties.leave(characterId);
+      const others = before.members.filter((id) => id !== characterId);
+      if (!result.ok || others.length === 0) return;
+      await this.social.broker.publish(channels.chatParty, {
+        senderName: "Party",
+        text: result.party
+          ? `${name} disconnected and left the party.`
+          : `${name} disconnected. Your party was disbanded.`,
+        kind: "system",
+        memberIds: others,
+      });
+    } catch (err) {
+      console.error("[WebSocketGateway] Leaving party failed:", err);
     }
   }
 
@@ -399,20 +481,10 @@ export class WebSocketGateway implements ITransportGateway {
 
       socket.on("close", () => {
         if (session.playerId) {
-          const change = this.parties.leave(session.playerId);
-          if (change) {
-            const remaining = change.party
-              ? change.party.members
-              : change.removed.filter((id) => id !== session.playerId);
-            this.messageBus.publishChat({
-              sender: "Party",
-              text: change.party
-                ? `${session.nickname ?? "A member"} disconnected and left the party.`
-                : `${session.nickname ?? "A member"} disconnected. Your party was disbanded.`,
-              kind: "system",
-              targetPlayerIds: remaining,
-            });
-          }
+          void this.leavePartyOnDisconnect(
+            session.playerId,
+            session.nickname ?? "A member",
+          );
           void this.lifecycle.leave(session.playerId);
         }
         this.sessionManager.removeSession(socket);

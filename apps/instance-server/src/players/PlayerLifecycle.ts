@@ -59,6 +59,10 @@ export interface PlayerLifecycleDeps {
   sendReconnect: (characterId: string, url: string, ticket: string, zoneId: string) => void;
   /** End a client session with a reason. */
   kickSession: (characterId: string, reason: KickReason) => void;
+  /** A character is now on this server (presence, party cache, …). */
+  onAdmitted?: (player: AdmittedPlayer) => void;
+  /** A character left this server for any reason. */
+  onDeparted?: (characterId: string, name: string) => void;
   /** How long a duplicate login waits for the old session before forcing. */
   takeoverWaitMs?: number;
   log?: (message: string, extra?: Record<string, unknown>) => void;
@@ -92,6 +96,17 @@ export class PlayerLifecycle {
 
   get(characterId: string): AdmittedPlayer | undefined {
     return this.players.get(characterId);
+  }
+
+  all(): AdmittedPlayer[] {
+    return [...this.players.values()];
+  }
+
+  /** Forgets a character locally and reports its departure. */
+  private depart(characterId: string): void {
+    const player = this.players.get(characterId);
+    this.players.delete(characterId);
+    if (player) this.deps.onDeparted?.(characterId, player.name);
   }
 
   // --- Admission ---
@@ -158,6 +173,7 @@ export class PlayerLifecycle {
       arrivedViaPortal: ticket.via !== undefined,
     };
     this.players.set(player.characterId, player);
+    this.deps.onAdmitted?.(player);
     this.log("Admitted", { characterId: player.characterId, instanceId: player.instanceId, ticketId: ticket.ticketId });
     return { ok: true, player };
   }
@@ -220,7 +236,7 @@ export class PlayerLifecycle {
 
     // 1. Freeze: take the character out of the simulation
     const detached = this.deps.host.detachPlayer(characterId);
-    this.players.delete(characterId);
+    this.depart(characterId);
     const ownership = this.deps.leases.untrack(characterId);
     if (!detached || !ownership) return false;
 
@@ -251,7 +267,7 @@ export class PlayerLifecycle {
 
   /** Client disconnected: save and release. */
   async leave(characterId: string): Promise<void> {
-    this.players.delete(characterId);
+    this.depart(characterId);
     const detached = this.deps.host.detachPlayer(characterId);
     const ownership = this.deps.leases.untrack(characterId);
     if (ownership && detached) {
@@ -271,7 +287,7 @@ export class PlayerLifecycle {
   /** Someone else owns the character now: drop it without saving. */
   dropFenced(characterId: string): void {
     if (!this.players.has(characterId)) return;
-    this.players.delete(characterId);
+    this.depart(characterId);
     this.deps.leases.untrack(characterId);
     this.deps.host.detachPlayer(characterId);
     this.deps.kickSession(characterId, "logged_in_elsewhere");

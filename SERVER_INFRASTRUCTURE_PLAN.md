@@ -338,7 +338,7 @@ Server A (source)                          Client                       Server B
 ### S2.9 Duplicate Login Policy: "Newest Login Wins" ✅
 - A new ticket for a character whose lease is held → the claiming server publishes `session.kick.<characterId>`. The holder saves, releases, and sends `s2c_kicked(logged_in_elsewhere)`. The claimer retries the lease for up to 5 s; if that fails, it force-takes by bumping the epoch (the old holder is then fenced).
 
-### S2.10 `apps/social`
+### S2.10 `apps/social` ✅
 - Owns parties (moved from the Stage 1 in-process `PartyService`), stored in Redis (parties are ephemeral).
 - HTTP API for party operations (called by instance servers when players type `/invite` etc.).
 - Publishes `party.updated.<partyId>`; instance servers forward it to affected clients as `s2c_party_update`.
@@ -346,6 +346,12 @@ Server A (source)                          Client                       Server B
 - **Presence:** `presence:<characterId> = { serverId, instanceId, zoneId }` in Redis (written by the lease holder), used for whispers and "join party member".
 
 The client keeps **one** connection (to its current instance server). Social features flow through it; the client never talks to `social` directly.
+
+*Implementation notes:*
+- *`social` keeps parties in Redis and serializes all changes through an in-process queue. That is safe for the single social process of Stage 2; running several would need Redis transactions.*
+- *Instance servers use a `PartyDirectory` (HTTP to social; an in-memory implementation with the same rules for tests), a `PartyCache` fed by `party.updated` for synchronous placement lookups, and a Redis `Presence` registry (`/invite <name>` across servers, refreshed every 20 s).*
+- *Rate limiting and mute lists are not implemented yet.*
+- *Disconnecting leaves the party; handoffs and kicks don't (the character is still online).*
 
 ### S2.11 `apps/instance-server` Changes ✅
 - Accepts connections only with valid tickets; no more login logic.

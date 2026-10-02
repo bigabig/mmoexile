@@ -1,183 +1,164 @@
 import { describe, it, expect } from "vitest";
-import { PartyService, type PartyChange } from "../party/PartyService.js";
-import { ChatCommands } from "../chat/ChatCommands.js";
+import { channels, type ChannelMessage } from "@mmoexile/contracts";
+import { InMemoryBroker } from "@mmoexile/messaging";
 import { InstanceHost, type ChatPayload } from "../cluster/index.js";
+import { ChatCommands } from "../chat/ChatCommands.js";
+import { InMemoryPartyDirectory } from "../party/PartyDirectory.js";
+import { PartyCache } from "../party/PartyCache.js";
+import { InMemoryPresence } from "../presence/Presence.js";
 
-describe("PartyService", () => {
-  it("forms a party on accept with the inviter as leader", () => {
-    const parties = new PartyService();
-    const changes: PartyChange[] = [];
-    parties.onChange((c) => changes.push(c));
-
-    expect(parties.invite("a", "b")).toEqual({ ok: true });
-    expect(parties.getPartyId("a")).toBeUndefined();
-
-    const result = parties.accept("b");
-    expect(result.ok).toBe(true);
-    const party = parties.getParty("a")!;
-    expect(party.leaderId).toBe("a");
-    expect(party.members).toEqual(["a", "b"]);
-    expect(parties.getPartyId("b")).toBe(party.id);
-    expect(changes).toHaveLength(1);
+/** One instance server's worth of party wiring, all in memory. */
+async function setup() {
+  const broker = new InMemoryBroker();
+  const parties = new InMemoryPartyDirectory(broker);
+  const cache = new PartyCache(broker);
+  await cache.start();
+  const presence = new InMemoryPresence();
+  const host = new InstanceHost({
+    sweepIntervalMs: 0,
+    getPartyId: (id) => cache.getPartyId(id),
   });
+  const commands = new ChatCommands({ host, parties, presence, broker });
 
-  it("rejects self-invites, members of other parties, and full parties", () => {
-    const parties = new PartyService({ maxSize: 2 });
-    expect(parties.invite("a", "a").ok).toBe(false);
+  const local: ChatPayload[] = [];
+  const partyChat: ChannelMessage<typeof channels.chatParty>[] = [];
+  const globalChat: ChannelMessage<typeof channels.chatGlobal>[] = [];
+  host.messageBus.onChat((c) => local.push(c));
+  await broker.subscribe(channels.chatParty, (m) => partyChat.push(m));
+  await broker.subscribe(channels.chatGlobal, (m) => globalChat.push(m));
 
-    parties.invite("a", "b");
-    parties.accept("b");
-    expect(parties.invite("c", "b").ok).toBe(false);
-    expect(parties.invite("a", "c")).toMatchObject({ ok: false });
-  });
+  const join = async (playerId: string, name: string) => {
+    const registered = host.registerPlayer({ playerId, name });
+    await presence.set(playerId, name);
+    return registered;
+  };
+  const { instanceId: nexusId } = await join("alice", "Alice");
+  await join("bob", "Bob");
 
-  it("expires invites", () => {
-    let clock = 0;
-    const parties = new PartyService({ inviteTtlMs: 1000, now: () => clock });
-    parties.invite("a", "b");
-    clock = 1000;
-    expect(parties.accept("b")).toMatchObject({ ok: false });
-  });
+  // Private replies and party notices, in arrival order
+  const log: { to: string[]; text: string }[] = [];
+  host.messageBus.onChat((c) => log.push({ to: c.targetPlayerIds ?? [], text: c.text }));
+  await broker.subscribe(channels.chatParty, (m) => log.push({ to: m.memberIds, text: m.text }));
+  /** The last private reply or party notice a player received. */
+  const lastTold = (id: string) =>
+    log.filter((entry) => entry.to.includes(id)).map((entry) => entry.text).at(-1);
 
-  it("hands leadership on and disbands a party of one", () => {
-    const parties = new PartyService();
-    parties.invite("a", "b");
-    parties.accept("b");
-    parties.invite("a", "c");
-    parties.accept("c");
+  return { broker, parties, cache, host, commands, nexusId, partyChat, globalChat, lastTold };
+}
 
-    const afterLeader = parties.leave("a")!;
-    expect(afterLeader.party!.leaderId).toBe("b");
-    expect(afterLeader.removed).toEqual(["a"]);
+const viaPortal = (sourceInstanceId: string) => ({
+  sourceInstanceId,
+  portalId: "portal_to_dungeon_1",
+});
 
-    const disband = parties.leave("b")!;
-    expect(disband.party).toBeNull();
-    expect(disband.removed.sort()).toEqual(["b", "c"]);
-    expect(parties.getPartyId("c")).toBeUndefined();
+describe("PartyCache", () => {
+  it("follows party.updated messages and seeds", async () => {
+    const broker = new InMemoryBroker();
+    const cache = new PartyCache(broker);
+    await cache.start();
+
+    cache.seed("x", { id: "p1", leaderId: "x", members: ["x", "y"] });
+    expect(cache.getPartyId("y")).toBe("p1");
+
+    await broker.publish(channels.partyUpdated, {
+      partyId: "p1",
+      party: null,
+      removed: ["x", "y"],
+    });
+    expect(cache.getPartyId("x")).toBeUndefined();
+    expect(cache.getParty("y")).toBeUndefined();
   });
 });
 
-describe("Party chat commands and shared instances", () => {
-  function setup() {
-    const parties = new PartyService();
-    const host = new InstanceHost({
-      sweepIntervalMs: 0,
-      getPartyId: (id) => parties.getPartyId(id),
-    });
-    const commands = new ChatCommands(host, parties);
-    const chat: ChatPayload[] = [];
-    host.messageBus.onChat((c) => chat.push(c));
-    const { instanceId: nexusId } = host.registerPlayer({
-      playerId: "alice",
-      name: "Alice",
-    });
-    host.registerPlayer({ playerId: "bob", name: "Bob" });
-    const told = (id: string) =>
-      chat.filter((c) => c.targetPlayerIds?.includes(id)).map((c) => c.text);
-    return { parties, host, commands, nexusId, told };
-  }
+describe("Party chat commands", () => {
+  it("/invite and /accept form a party, and members share the golem dungeon", async () => {
+    const { host, commands, cache, nexusId, lastTold } = await setup();
 
-  const viaPortal = (sourceInstanceId: string) => ({
-    sourceInstanceId,
-    portalId: "portal_to_dungeon_1",
-  });
-
-  it("/invite and /accept form a party, and members share the golem dungeon", () => {
-    const { parties, host, commands, nexusId, told } = setup();
-
-    expect(commands.handle("alice", "/invite bob")).toBe(true);
-    expect(told("bob").at(-1)).toMatch(/Alice invited you/);
-    commands.handle("bob", "/accept");
-    expect(parties.getPartyId("alice")).toBe(parties.getPartyId("bob"));
-    expect(told("alice").at(-1)).toMatch(/Bob joined the party/);
+    await commands.run("alice", "/invite bob");
+    expect(lastTold("bob")).toMatch(/Alice invited you/);
+    await commands.run("bob", "/accept");
+    expect(cache.getPartyId("alice")).toBeDefined();
+    expect(cache.getPartyId("alice")).toBe(cache.getPartyId("bob"));
+    expect(lastTold("alice")).toMatch(/Bob joined the party/);
 
     host.transferPlayer("alice", "golem_dungeon", viaPortal(nexusId));
     host.transferPlayer("bob", "golem_dungeon", viaPortal(nexusId));
     const dungeon = host.getInstanceForPlayer("alice")!;
     expect(host.getInstanceForPlayer("bob")!.id).toBe(dungeon.id);
-    expect(dungeon.ownerPartyId).toBe(parties.getPartyId("alice"));
+    expect(dungeon.ownerPartyId).toBe(cache.getPartyId("alice"));
     host.stop();
   });
 
-  it("matches names case-insensitively and reports unknown players", () => {
-    const { commands, parties, told } = setup();
-    commands.handle("alice", "/invite BOB");
-    commands.handle("bob", "/accept");
-    expect(parties.getPartyId("bob")).toBeDefined();
+  it("matches names case-insensitively and reports unknown players", async () => {
+    const { commands, cache, lastTold, host } = await setup();
+    await commands.run("alice", "/invite BOB");
+    await commands.run("bob", "/accept");
+    expect(cache.getPartyId("bob")).toBeDefined();
 
-    commands.handle("alice", "/invite Carol");
-    expect(told("alice").at(-1)).toMatch(/No player named Carol/);
+    await commands.run("alice", "/invite Carol");
+    expect(lastTold("alice")).toMatch(/No player named Carol/);
+    host.stop();
   });
 
-  it("/party lists members and /leave disbands a party of two", () => {
-    const { commands, parties, told } = setup();
-    commands.handle("alice", "/invite Bob");
-    commands.handle("bob", "/accept");
+  it("/party lists members and /leave disbands a party of two", async () => {
+    const { commands, cache, lastTold, host } = await setup();
+    await commands.run("alice", "/invite Bob");
+    await commands.run("bob", "/accept");
 
-    commands.handle("bob", "/party");
-    expect(told("bob").at(-1)).toBe("Party (2/6): Alice (leader), Bob");
+    await commands.run("bob", "/party");
+    expect(lastTold("bob")).toBe("Party (2/6): Alice (leader), Bob");
 
-    commands.handle("bob", "/leave");
-    expect(parties.getPartyId("alice")).toBeUndefined();
-    expect(told("alice").at(-1)).toMatch(/disbanded/);
+    await commands.run("bob", "/leave");
+    expect(cache.getPartyId("alice")).toBeUndefined();
+    expect(lastTold("alice")).toMatch(/disbanded/);
+    host.stop();
   });
 
-  it("does not treat normal chat as a command", () => {
-    const { commands } = setup();
+  it("does not treat normal chat as a command", async () => {
+    const { commands, host } = await setup();
     expect(commands.handle("alice", "hello /invite")).toBe(false);
+    host.stop();
   });
 });
 
-describe("Chat scopes", () => {
-  function setup() {
-    const parties = new PartyService();
-    const host = new InstanceHost({
-      sweepIntervalMs: 0,
-      getPartyId: (id) => parties.getPartyId(id),
-    });
-    const commands = new ChatCommands(host, parties);
-    const chat: ChatPayload[] = [];
-    host.messageBus.onChat((c) => chat.push(c));
-    const a = host.registerPlayer({ playerId: "alice", name: "Alice" });
-    host.registerPlayer({ playerId: "bob", name: "Bob" });
-    return { parties, host, commands, chat, nexusId: a.instanceId };
-  }
-
-  it("/g sends player chat to everyone", () => {
-    const { commands, chat } = setup();
-    commands.handle("alice", "/g hello world");
-    expect(chat.at(-1)).toMatchObject({
-      sender: "Alice",
+describe("Shared chat channels", () => {
+  it("/g publishes to everyone through the broker", async () => {
+    const { commands, globalChat, host } = await setup();
+    await commands.run("alice", "/g hello world");
+    expect(globalChat.at(-1)).toEqual({
+      senderName: "Alice",
       text: "hello world",
       kind: "player",
-      channel: "global",
     });
-    expect(chat.at(-1)?.targetPlayerIds).toBeUndefined();
-    expect(chat.at(-1)?.targetInstanceId).toBeUndefined();
+    host.stop();
   });
 
-  it("/p sends player chat to party members only", () => {
-    const { commands, chat } = setup();
-    commands.handle("alice", "/p anyone?");
-    expect(chat.at(-1)?.text).toMatch(/not in a party/);
+  it("/p reaches party members only", async () => {
+    const { commands, partyChat, lastTold, host } = await setup();
+    await commands.run("alice", "/p anyone?");
+    expect(lastTold("alice")).toMatch(/not in a party/);
 
-    commands.handle("alice", "/invite Bob");
-    commands.handle("bob", "/accept");
-    commands.handle("bob", "/p hi team");
-    expect(chat.at(-1)).toMatchObject({
-      sender: "Bob",
-      channel: "party",
-      targetPlayerIds: ["alice", "bob"],
+    await commands.run("alice", "/invite Bob");
+    await commands.run("bob", "/accept");
+    await commands.run("bob", "/p hi team");
+    expect(partyChat.at(-1)).toMatchObject({
+      senderName: "Bob",
+      kind: "player",
+      memberIds: ["alice", "bob"],
     });
+    host.stop();
   });
 
-  it("announces zone entries only inside the entered instance", () => {
-    const { host, chat, nexusId } = setup();
+  it("announces zone entries only inside the entered instance", async () => {
+    const { host } = await setup();
+    const chat: ChatPayload[] = [];
+    host.messageBus.onChat((c) => chat.push(c));
     host.transferPlayer("alice", "overworld");
     const overworld = host.getInstanceForPlayer("alice")!;
-    const entry = chat.find((c) => c.text === "Alice entered Realm of the Ancients");
+    const entry = chat.find(
+      (c) => c.text === "Alice entered Realm of the Ancients",
+    );
     expect(entry?.targetInstanceId).toBe(overworld.id);
-    expect(entry?.targetInstanceId).not.toBe(nexusId);
     host.stop();
   });
 });

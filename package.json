@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@12.5.1",
   "scripts": {
-    "dev": "pnpm --parallel --filter @mmoexile/account-api --filter @mmoexile/instance-server --filter @mmoexile/client dev",
+    "dev": "pnpm --parallel --filter @mmoexile/account-api --filter @mmoexile/social --filter @mmoexile/instance-server --filter @mmoexile/client dev",
     "dev:server": "pnpm --filter @mmoexile/instance-server dev",
     "dev:client": "pnpm --filter @mmoexile/client dev",
     "build": "pnpm -r build",
@@ -14,7 +14,8 @@
     "db:down": "docker compose -f infra/compose/docker-compose.yml down",
     "db:migrate": "pnpm --filter @mmoexile/db db:migrate",
     "db:deploy": "pnpm --filter @mmoexile/db db:deploy",
-    "dev:account": "pnpm --filter @mmoexile/account-api dev"
+    "dev:account": "pnpm --filter @mmoexile/account-api dev",
+    "dev:social": "pnpm --filter @mmoexile/social dev"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.4.0",

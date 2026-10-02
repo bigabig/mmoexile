@@ -16,6 +16,7 @@ import { createLogger } from "@mmoexile/service-kit";
 import { readConfig } from "../config.js";
 import { createInstanceServer, type InstanceServer } from "../server.js";
 import { CharacterOwnership } from "../ownership/CharacterOwnership.js";
+import { InMemoryPartyDirectory } from "../party/PartyDirectory.js";
 
 // --- Harness: two instance servers (a: nexus, b: overworld + dungeon) ---
 
@@ -25,6 +26,8 @@ let serverA: InstanceServer;
 let serverB: InstanceServer;
 let urls: Record<"a" | "b", string>;
 let redis: Redis;
+let sharedBroker: RedisBroker;
+let parties: InMemoryPartyDirectory;
 
 async function freePort(): Promise<number> {
   return new Promise((resolve) => {
@@ -51,18 +54,22 @@ async function startServer(serverId: "a" | "b", port: number, servers: string) {
     db: prisma,
     redis,
     broker,
+    // Stand-in for the social service, shared by both servers
+    parties,
   });
   await server.listen(port);
   return server;
 }
 
 beforeAll(async () => {
+  redis = new Redis(process.env.TEST_REDIS_URL!);
+  sharedBroker = new RedisBroker({ redis: new Redis(process.env.TEST_REDIS_URL!) });
+  parties = new InMemoryPartyDirectory(sharedBroker);
   const [pa, pb] = [await freePort(), await freePort()];
   urls = { a: `ws://127.0.0.1:${pa}/ws`, b: `ws://127.0.0.1:${pb}/ws` };
   const servers = `a=${urls.a},b=${urls.b}`;
   serverA = await startServer("a", pa, servers);
   serverB = await startServer("b", pb, servers);
-  redis = new Redis(process.env.TEST_REDIS_URL!);
 });
 
 afterAll(async () => {
@@ -72,6 +79,7 @@ afterAll(async () => {
     await c.broker.close();
     await c.redis.quit();
   }
+  await sharedBroker.close();
   await redis.quit();
 });
 
