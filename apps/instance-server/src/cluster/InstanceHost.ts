@@ -23,6 +23,12 @@ import {
   type InstanceId,
 } from "./Instance.js";
 import {
+  InstanceManager,
+  type CreateInstanceOptions,
+  type InstanceDirectory,
+  type InstancePool,
+} from "./InstanceManager.js";
+import {
   persistenceService,
   type CharacterUpdateState,
 } from "../persistence/index.js";
@@ -63,6 +69,8 @@ export interface RegisteredPlayer {
 
 export interface InstanceHostOptions {
   messageBus?: IMessageBus;
+  /** Placement policy; defaults to the zone access rules (InstanceManager). */
+  placement?: InstanceDirectory;
   generateId?: (zoneId: ZoneId) => InstanceId;
   now?: () => number;
 }
@@ -71,22 +79,27 @@ export interface InstanceHostOptions {
  * Hosts many instances inside this process: creates them, routes players and
  * commands to them, moves players between them, and persists player state.
  */
-export class InstanceHost {
+export class InstanceHost implements InstancePool {
   private instances = new Map<InstanceId, Instance>();
   private playerInstance = new Map<string, InstanceId>();
   private playerInfo = new Map<string, { name: string; charId: string }>();
   private readonly generateId: (zoneId: ZoneId) => InstanceId;
   private readonly now: () => number;
+  private readonly placement: InstanceDirectory;
   public readonly messageBus: IMessageBus;
 
   constructor(options: InstanceHostOptions = {}) {
     this.messageBus = options.messageBus ?? new InMemoryMessageBus();
     this.generateId = options.generateId ?? generateInstanceId;
     this.now = options.now ?? Date.now;
+    this.placement = options.placement ?? new InstanceManager(this);
 
-    // One instance per zone at startup; on-demand placement arrives in S1.3.
+    // Keep warm instances (e.g. one nexus) ready; everything else is created
+    // on demand by the placement policy.
     for (const zone of Object.values(ZONES)) {
-      this.createInstance(zone.id);
+      for (let i = 0; i < (zone.minWarmInstances ?? 0); i++) {
+        this.createInstance(zone.id);
+      }
     }
 
     this.messageBus.onCommand((playerId, command) => {
@@ -98,7 +111,7 @@ export class InstanceHost {
 
   public createInstance(
     zoneId: ZoneId,
-    options: { ownerPartyId?: string } = {},
+    options: CreateInstanceOptions = {},
   ): Instance {
     const zone = ZONES[zoneId];
     let id = this.generateId(zoneId);
@@ -118,6 +131,7 @@ export class InstanceHost {
       ),
       players: new Set(),
       ownerPartyId: options.ownerPartyId,
+      boundPortalKey: options.boundPortalKey,
       state: "creating",
       createdAt: this.now(),
       emptySince: this.now(),
@@ -146,15 +160,6 @@ export class InstanceHost {
     return instanceId ? this.instances.get(instanceId) : undefined;
   }
 
-  /**
-   * Picks the instance a player should enter for a zone.
-   * Temporary: the first instance of the zone, created if none exists.
-   * Replaced by policy-based placement (InstanceManager) in S1.3.
-   */
-  private resolveInstance(zoneId: ZoneId): Instance {
-    return this.getInstancesForZone(zoneId)[0] ?? this.createInstance(zoneId);
-  }
-
   private addPlayerToInstance(instance: Instance, playerId: string): void {
     this.playerInstance.set(playerId, instance.id);
     instance.players.add(playerId);
@@ -176,7 +181,10 @@ export class InstanceHost {
   private handleTick(instance: Instance, result: WorldTickResult): void {
     // 1. Portal transfers requested this tick
     for (const transfer of result.transfers) {
-      this.transferPlayer(transfer.playerId, transfer.targetZoneId);
+      this.transferPlayer(transfer.playerId, transfer.targetZoneId, {
+        sourceInstanceId: instance.id,
+        portalId: transfer.portalId,
+      });
     }
 
     // 2. Level ups
@@ -229,9 +237,15 @@ export class InstanceHost {
     const charId = options.charId ?? playerId;
     this.playerInfo.set(playerId, { name, charId });
 
+    // Players only log back into public zones; private and portal-bound
+    // instances can't be rejoined from the login screen.
     const zoneId: ZoneId =
-      options.zoneId && isZoneId(options.zoneId) ? options.zoneId : "nexus";
-    const instance = this.resolveInstance(zoneId);
+      options.zoneId &&
+      isZoneId(options.zoneId) &&
+      ZONES[options.zoneId].access.kind === "public_sharded"
+        ? options.zoneId
+        : "nexus";
+    const instance = this.placement.resolve({ zoneId, characterId: charId });
     this.addPlayerToInstance(instance, playerId);
 
     let inventory: (string | null)[] | undefined = undefined;
@@ -295,13 +309,27 @@ export class InstanceHost {
    * Moves a player into an instance of the target zone, preserving their
    * full session state.
    */
-  public transferPlayer(playerId: string, targetZoneId: string): boolean {
+  public transferPlayer(
+    playerId: string,
+    targetZoneId: string,
+    via?: { sourceInstanceId: InstanceId; portalId: string },
+  ): boolean {
     if (!isZoneId(targetZoneId)) return false;
     const source = this.getInstanceForPlayer(playerId);
     const info = this.playerInfo.get(playerId);
     if (!source || !info) return false;
 
-    const target = this.resolveInstance(targetZoneId);
+    let target: Instance;
+    try {
+      target = this.placement.resolve({
+        zoneId: targetZoneId,
+        characterId: info.charId,
+        via,
+      });
+    } catch (err) {
+      console.error(`[InstanceHost] Cannot place ${playerId}:`, err);
+      return false;
+    }
     if (target.id === source.id) return false;
 
     const eid = source.world.uuidToEid.get(playerId);

@@ -22,8 +22,10 @@ export interface Instance {
   readonly mapData: MapData;
   /** Characters currently inside this instance. */
   readonly players: Set<string>;
-  /** Party that owns a private instance (unset for public instances). */
+  /** Party that owns a party_private instance (solo players: "solo:<characterId>"). */
   readonly ownerPartyId?: string;
+  /** Portal a portal_bound instance belongs to: "<sourceInstanceId>/<portalId>". */
+  readonly boundPortalKey?: string;
   state: InstanceState;
   readonly createdAt: number;
   /** When the last player left; unset while players are inside. */

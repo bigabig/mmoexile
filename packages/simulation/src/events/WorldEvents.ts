@@ -57,6 +57,7 @@ export interface LootBagDespawnedEvent {
 export interface WorldTransferRequestedEvent {
   playerId: string;
   targetZoneId: string;
+  portalId: string;
 }
 
 export interface PlayerStatePersistEvent {

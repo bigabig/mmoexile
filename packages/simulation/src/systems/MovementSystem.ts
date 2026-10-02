@@ -133,6 +133,7 @@ export class MovementSystem implements ISystem {
         world.recordWorldTransfer({
           playerId: Identity.uuid[playerEid],
           targetZoneId: Portal.targetZoneId[portalEid],
+          portalId: Identity.uuid[portalEid],
         });
         break;
       }

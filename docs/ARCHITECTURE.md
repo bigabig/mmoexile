@@ -68,9 +68,14 @@ Network transport, decoupled from the concrete socket implementation.
 Hosts the instances of this process and routes players between them.
 
 - **`Instance`**: one live copy of a zone: `id` (`"<zoneId>:<6 hex>"`, e.g. `golem_dungeon:7f3a9c`), `zone`, the `GameWorld`, its runner, `players`, optional `ownerPartyId`, `state` (`creating`/`running`/`empty`/`closed`), `createdAt`, `emptySince`.
+- **`InstanceManager`** (implements `InstanceDirectory`): placement by the zone's access policy.
+  - `public_sharded` (nexus, overworld): a preferred instance if below the hard cap, else the fullest instance below the soft cap, else a new shard.
+  - `party_private` (golem dungeon): one instance per party; solo players are the party `solo:<characterId>`.
+  - `portal_bound`: one instance per `<sourceInstanceId>/<portalId>`, shared by everyone using that portal.
 - **`messaging/IMessageBus` + `InMemoryMessageBus`**: in-process publish/subscribe between gateway and host (commands in; tick results, transfers, chat, deaths out).
 - **`InstanceHost`**:
-  - Creates instances from zones (`createInstance(zoneId)`); at startup one instance per zone (`nexus`, `overworld`, `golem_dungeon`, from `ZONES` in `@mmoexile/game-core`). Policy-based placement follows in S1.3.
+  - Creates instances from zones (`createInstance(zoneId)`). At startup only warm instances exist (one `nexus`); everything else is created on demand.
+  - Delegates "which instance does this character enter?" to an `InstanceDirectory` (default: `InstanceManager`).
   - Registers and unregisters players (`registerPlayer({ playerId, name, zoneId, character })`), forwards their commands.
   - Moves players between instances (`transferPlayer(playerId, targetZoneId)`).
   - Queues periodic persistence every 150 ticks (5 s).
@@ -204,6 +209,7 @@ apps/instance-server/src/
 │   ├── runners/              # IWorldRunner, InProcessWorldRunner
 │   ├── Instance.ts
 │   ├── InstanceHost.ts
+│   ├── InstanceManager.ts
 │   └── index.ts
 ├── gateway/
 │   ├── transport/            # ITransportGateway interfaces

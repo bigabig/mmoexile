@@ -137,7 +137,7 @@ interface ZoneDefinition {
 - Rename in `apps/instance-server`: `WorldInstance` → `Instance`, `WorldCluster` → `InstanceHost`. `GameWorld` in `packages/simulation` keeps its name (it is the simulation of one instance) but its constructor takes `instanceId`.
 - `Instance` holds: `id`, `zone`, `world`, `runner`, `players: Set<CharacterId>`, `ownerPartyId?`, `state`, `createdAt`, `emptySince?`.
 
-### S1.3 `InstanceManager`: Placement Logic
+### S1.3 `InstanceManager`: Placement Logic ✅
 
 The in-process precursor of the orchestrator. It sits behind an interface so Stage 3 can replace it with a network client:
 
@@ -157,7 +157,8 @@ Rules:
 
 - **`public_sharded`**: if `preferInstanceId` is valid and below `hardCap`, use it (joining friends). Otherwise **fill-first**: choose the most populated instance still below `softCap`. If none, create a new one.
 - **`party_private`**: key = `(zoneId, partyId ?? soloPartyOf(characterId))`. Reuse if alive, otherwise create.
-- **`portal_bound`**: key = portal entity ID; the instance is created on first entry, shared by everyone who uses that portal.
+- **`portal_bound`**: key = `<sourceInstanceId>/<portalId>` (portal IDs come from map definitions, so they repeat across instances of the same zone); the instance is created on first entry, shared by everyone who uses that portal. Entering without a portal is refused.
+- Login only honors public zones; a character whose saved zone is private or portal-bound logs into the nexus (part of S1.9).
 
 ### S1.4 Instance Lifecycle
 

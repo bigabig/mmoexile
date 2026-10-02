@@ -20,6 +20,8 @@ export interface PlayerLevelUpRecord {
 export interface WorldTransferRecord {
   playerId: string;
   targetZoneId: string;
+  /** Entity UUID of the portal used; only unique within this instance. */
+  portalId: string;
 }
 
 export interface WorldTickResult {
