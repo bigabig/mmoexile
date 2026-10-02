@@ -161,10 +161,11 @@ Rules:
 
 ### S1.4 Instance Lifecycle
 
-- States: `creating → running → empty → closed`.
+- States: `creating → running → empty → closed` (plus `crashed`, see fault isolation below).
 - A sweeper (1 Hz, outside the tick loop) closes instances whose `emptySince + emptyTimeoutSec` has passed, except to keep `minWarmInstances`.
 - Closing stops the runner, destroys the world, and frees its entity IDs back to the shared index.
 - Uses an injectable clock so lifecycle tests run instantly.
+- **Per-instance fault isolation:** each instance's tick runs inside its own error boundary. If a tick throws, only that instance is closed (state `crashed`, logged with its instance ID and zone): its players' last good state is saved and they are moved to a nexus shard with a system message. All other instances in the process keep running. A failure inside the host itself (outside any tick) still crashes the process, which is what the container restart is for.
 
 ### S1.5 Parties (minimal)
 
@@ -210,6 +211,7 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 - Integration: two solo players entering the dungeon get **different** instances; after `/invite` + `/accept` they get the **same** one.
 - Integration: `softCap + 1` players in nexus → a second shard exists.
 - Regression: ECS isolation (S1.0); transfer preserves full state including MP.
+- Fault isolation: an instance whose tick throws is closed and its players land in the nexus, while a second instance in the same process keeps ticking.
 
 ### Acceptance Criteria
 - [ ] Two browser tabs, not partied → separate golem dungeons (each sees only their own monsters).
