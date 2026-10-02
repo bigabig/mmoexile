@@ -353,9 +353,9 @@ The client keeps **one** connection (to its current instance server). Social fea
 - Internal HTTP: the existing `/health` and `/debug/instances` (Stage 1) cover debugging; a separate `/internal/status` was not needed.
 - Implementation: `PlayerLifecycle` (admit, hand off, leave, kick, drop when fenced, shutdown), `FencedCharacterWriter` behind the batched `PersistenceService`, and a composition root `createInstanceServer()` that integration tests start twice in one process. The old in-game login (`c2s_join`, `accountService`, repositories) is gone; account-api owns accounts and characters.
 
-### S2.12 Client Changes (partly)
+### S2.12 Client Changes ✅
 
-*Done with the switch: quick join through account-api (stored refresh secret, newest living character or a new wizard), `c2s_hello`, following `s2c_reconnect` behind a loading overlay, and kick reasons on the join screen. Still open: the character select and create screen.*
+*Implemented: sign-in screen (skipped when the stored refresh secret still works), character select with create (wizard/knight), delete (two-click confirm) and a graveyard, `c2s_hello` with the ticket from `/play`, `s2c_reconnect` behind a loading overlay, and kick reasons shown on character select. Verified in headless Chrome.*
 - Login / character-select screens talk to `account-api` over HTTP.
 - `NetworkManager` supports `reconnect(url, ticket)`: tear down the socket, show a loading screen, connect, send `c2s_hello`, wait for `s2c_welcome`, and replace world state.
 - Handles `s2c_kicked` with a clear message.

@@ -5,6 +5,8 @@ import { Minimap } from "./Minimap.js";
 import { ChatBox, ChatMessage } from "./ChatBox.js";
 import { QuickJoinModal } from "./QuickJoinModal.js";
 import { AccountClient } from "../net/accountClient.js";
+import { CharacterSelectModal } from "./CharacterSelectModal.js";
+import type { CharacterSummary } from "@mmoexile/contracts";
 import type { KickReason } from "@mmoexile/protocol";
 
 const KICK_MESSAGES: Record<KickReason, string> = {
@@ -25,7 +27,10 @@ export const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameAppRef = useRef<GameApp | null>(null);
 
-  const [joined, setJoined] = useState(false);
+  // signin → select (character select) → playing
+  const [phase, setPhase] = useState<"signin" | "select" | "playing">("signin");
+  const joined = phase === "playing";
+  const [characters, setCharacters] = useState<CharacterSummary[]>([]);
   const [nickname, setNickname] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
@@ -113,7 +118,7 @@ export const App: React.FC = () => {
       },
       onKicked: (reason) => {
         setNotice(KICK_MESSAGES[reason]);
-        setJoined(false);
+        void showCharacterSelect();
       },
     });
 
@@ -172,23 +177,67 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  const handleJoin = async (chosenNick: string) => {
+  /** Runs an account action with a busy flag; errors become the notice. */
+  const withAccount = async (action: () => Promise<void>) => {
     setJoining(true);
-    setNotice(null);
     try {
-      const account = accountRef.current;
-      const { nickname: accountName } = await account.signIn(chosenNick);
-      const { url, ticket } = await account.quickPlay();
-      setNickname(accountName);
-      setJoined(true);
-      gameAppRef.current?.connect(url, ticket);
+      await action();
     } catch (err) {
-      setNotice(
-        `Could not join: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      setNotice(err instanceof Error ? err.message : String(err));
     } finally {
       setJoining(false);
     }
+  };
+
+  const showCharacterSelect = async () => {
+    const { characters } = await accountRef.current.listCharacters();
+    setCharacters(characters);
+    setPhase("select");
+  };
+
+  // Skip the name screen when a stored refresh secret still works.
+  useEffect(() => {
+    void withAccount(async () => {
+      const session = await accountRef.current.resume();
+      if (session) {
+        setNickname(session.nickname);
+        await showCharacterSelect();
+      }
+    });
+  }, []);
+
+  const handleJoin = (chosenNick: string) =>
+    withAccount(async () => {
+      setNotice(null);
+      const { nickname: accountName } = await accountRef.current.signIn(chosenNick);
+      setNickname(accountName);
+      await showCharacterSelect();
+    });
+
+  const handlePlay = (characterId: string) =>
+    withAccount(async () => {
+      setNotice(null);
+      const { url, ticket } = await accountRef.current.play(characterId);
+      setPhase("playing");
+      gameAppRef.current?.connect(url, ticket);
+    });
+
+  const handleCreateCharacter = (classId: "wizard" | "knight") =>
+    withAccount(async () => {
+      await accountRef.current.createCharacter(classId);
+      await showCharacterSelect();
+    });
+
+  const handleDeleteCharacter = (characterId: string) =>
+    withAccount(async () => {
+      await accountRef.current.deleteCharacter(characterId);
+      await showCharacterSelect();
+    });
+
+  const handleSignOut = () => {
+    accountRef.current.forget();
+    setNotice(null);
+    setPhase("signin");
   };
 
   const handleSendMessage = (text: string) => {
@@ -260,8 +309,21 @@ export const App: React.FC = () => {
     >
       <canvas ref={canvasRef} style={{ width: "100%", height: "100%" }} />
 
-      {!joined && (
+      {phase === "signin" && (
         <QuickJoinModal onJoin={handleJoin} notice={notice} busy={joining} />
+      )}
+
+      {phase === "select" && (
+        <CharacterSelectModal
+          accountName={nickname}
+          characters={characters}
+          notice={notice}
+          busy={joining}
+          onPlay={handlePlay}
+          onCreate={handleCreateCharacter}
+          onDelete={handleDeleteCharacter}
+          onSignOut={handleSignOut}
+        />
       )}
 
       {joined && loadingZone && (

@@ -112,14 +112,14 @@ export const QuickJoinModal: React.FC<QuickJoinModalProps> = ({
                 marginBottom: 6,
               }}
             >
-              HERO NAME
+              ACCOUNT NAME
             </label>
             <input
               type="text"
               maxLength={16}
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
-              placeholder="Enter character name..."
+              placeholder="Enter your name..."
               style={{
                 width: "100%",
                 backgroundColor: "#1e293b",
@@ -154,7 +154,7 @@ export const QuickJoinModal: React.FC<QuickJoinModalProps> = ({
             }}
           >
             <Play size={18} />
-            ENTER THE NEXUS
+            CONTINUE
           </button>
         </form>
 

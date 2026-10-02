@@ -30,6 +30,23 @@ export class AccountClient {
     token: () => this.sessionToken,
   });
 
+  /** Signs in with the stored refresh secret only; null if there is none. */
+  async resume(): Promise<{ nickname: string } | null> {
+    const refreshSecret = stored(REFRESH_SECRET_KEY);
+    if (!refreshSecret) return null;
+    try {
+      const session = await this.call(accountApi.refresh, { refreshSecret });
+      this.sessionToken = session.sessionToken;
+      return { nickname: session.nickname };
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 401) {
+        store(REFRESH_SECRET_KEY, undefined);
+        return null;
+      }
+      throw err;
+    }
+  }
+
   /** Signs in with the stored refresh secret, or creates a guest account. */
   async signIn(nickname: string): Promise<{ nickname: string }> {
     const refreshSecret = stored(REFRESH_SECRET_KEY);
@@ -66,14 +83,6 @@ export class AccountClient {
   /** Where to connect, with a ticket for that server. */
   play(characterId: string) {
     return this.call(accountApi.play, { characterId });
-  }
-
-  /** Quick join: newest living character (or a new wizard), then play. */
-  async quickPlay(): Promise<{ url: string; ticket: string }> {
-    const { characters } = await this.listCharacters();
-    const alive = characters.find((c) => c.isAlive);
-    const character = alive ?? (await this.createCharacter("wizard")).character;
-    return this.play(character.id);
   }
 
   forget(): void {
