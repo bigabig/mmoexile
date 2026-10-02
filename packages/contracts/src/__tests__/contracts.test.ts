@@ -4,30 +4,7 @@ import {
   channels,
   createHttpClient,
   HttpError,
-  parseStaticPlacement,
-  serverForZone,
 } from "../index.js";
-
-describe("static placement", () => {
-  const placement = parseStaticPlacement(
-    "a=ws://localhost:7001/ws, b=ws://localhost:7002/ws",
-    "nexus:a,overworld:b,golem_dungeon:b",
-  );
-
-  it("maps zones to server URLs", () => {
-    expect(serverForZone(placement, "nexus")).toEqual({
-      serverId: "a",
-      url: "ws://localhost:7001/ws",
-    });
-    expect(serverForZone(placement, "golem_dungeon").serverId).toBe("b");
-  });
-
-  it("rejects zones placed on unknown servers and malformed entries", () => {
-    expect(() => parseStaticPlacement("a=ws://x", "nexus:z")).toThrow(/unknown server/);
-    expect(() => parseStaticPlacement("a", "nexus:a")).toThrow(/Invalid entry/);
-    expect(() => serverForZone(placement, "moon")).toThrow(/No server/);
-  });
-});
 
 describe("createHttpClient", () => {
   function fakeFetch(status: number, body: unknown) {

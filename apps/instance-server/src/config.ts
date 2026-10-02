@@ -1,14 +1,11 @@
 import { z } from "zod";
 import { baseConfigSchema, loadConfig } from "@mmoexile/service-kit";
 import { DEV_TICKET_PUBLIC_KEY } from "@mmoexile/auth";
-import { DEV_SERVER_URLS, DEV_ZONE_PLACEMENT } from "@mmoexile/contracts";
 
 export const configSchema = baseConfigSchema.extend({
   PORT: z.coerce.number().int().nonnegative().default(3001),
-  /** This server's id in SERVERS / ZONE_PLACEMENT. */
+  /** Unique within the fleet; any server can host any zone. */
   SERVER_ID: z.string().min(1).default("a"),
-  SERVERS: z.string().default(DEV_SERVER_URLS),
-  ZONE_PLACEMENT: z.string().default(DEV_ZONE_PLACEMENT),
   /** Ed25519 public key tickets are verified with (base64 PEM body). */
   TICKET_PUBLIC_KEY: z.string().min(1).default(DEV_TICKET_PUBLIC_KEY),
   REDIS_URL: z.string().default("redis://localhost:6379"),

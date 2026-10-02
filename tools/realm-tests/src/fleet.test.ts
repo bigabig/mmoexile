@@ -17,9 +17,10 @@ describe("Fleet registration and heartbeats", () => {
   it("every server registers, becomes ready and reports its instances", async () => {
     await until(() => ["s1", "s2", "s3"].every((id) => state(id) === "ready"), 5000, "ready");
     for (const id of ["s1", "s2", "s3"]) {
-      const reported = [...realm.orchestrator.registry.get(id)!.instances.keys()];
-      const actual = realm.servers.get(id)!.host.getAllInstances().map((i) => i.id);
-      expect(reported).toEqual(actual);
+      const reported = [...realm.orchestrator.registry.get(id)!.instances.values()];
+      // Servers are generic: each keeps one warm nexus, the rest is allocated.
+      expect(reported.map((i) => i.zoneId)).toEqual(["nexus"]);
+      expect(reported[0].id).toBe(realm.servers.get(id)!.host.getAllInstances()[0].id);
     }
   });
 

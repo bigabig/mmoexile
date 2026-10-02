@@ -83,8 +83,6 @@ export interface InstanceHostOptions {
   messageBus?: IMessageBus;
   /** Where character state is saved; defaults to a no-op. */
   persistence?: CharacterPersistence;
-  /** Zones this server hosts (static placement); defaults to all. */
-  hostsZone?: (zoneId: ZoneId) => boolean;
   /**
    * Called when a player uses a portal. Defaults to an in-process transfer;
    * the instance server replaces it with a handoff (reconnect + ticket).
@@ -119,7 +117,6 @@ export class InstanceHost implements InstancePool {
   private readonly placement: InstanceDirectory;
   private readonly getPartyId: (characterId: string) => string | undefined;
   private readonly persistence: CharacterPersistence;
-  private readonly hostsZone: (zoneId: ZoneId) => boolean;
   private readonly onPortalTransfer: NonNullable<
     InstanceHostOptions["onPortalTransfer"]
   >;
@@ -136,7 +133,6 @@ export class InstanceHost implements InstancePool {
     this.placement = options.placement ?? new InstanceManager(this);
     this.getPartyId = options.getPartyId ?? (() => undefined);
     this.persistence = options.persistence ?? NO_PERSISTENCE;
-    this.hostsZone = options.hostsZone ?? (() => true);
     this.onInstancesChanged = options.onInstancesChanged ?? (() => {});
     this.onPortalTransfer =
       options.onPortalTransfer ??
@@ -146,7 +142,6 @@ export class InstanceHost implements InstancePool {
     // Keep warm instances (e.g. one nexus) ready; everything else is created
     // on demand by the placement policy.
     for (const zone of Object.values(ZONES)) {
-      if (!this.hostsZone(zone.id)) continue;
       for (let i = 0; i < (zone.minWarmInstances ?? 0); i++) {
         this.createInstance(zone.id);
       }
@@ -418,10 +413,6 @@ export class InstanceHost implements InstancePool {
     if (allocated && allocated.zone.id === zoneId && allocated.state !== "closed") {
       instance = allocated;
     } else {
-      if (!this.hostsZone(zoneId)) {
-        this.playerInfo.delete(playerId);
-        throw new Error(`Zone ${zoneId} is not hosted on this server`);
-      }
       try {
         instance = this.placement.resolve({
           zoneId,

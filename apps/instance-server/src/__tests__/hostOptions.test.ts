@@ -63,18 +63,26 @@ describe("InstanceHost options for the instance server", () => {
     host.stop();
   });
 
-  it("only hosts the zones placed on this server", () => {
-    const host = new InstanceHost({
-      sweepIntervalMs: 0,
-      hostsZone: (zoneId) => zoneId !== "nexus",
+  it("enters the instance named on the ticket, or recreates one if it is gone", () => {
+    const host = new InstanceHost({ sweepIntervalMs: 0 });
+    const allocated = host.createInstance("overworld", { id: "overworld:a110c8" });
+    const entered = host.registerPlayer({
+      playerId: "a",
+      name: "A",
+      zoneId: "overworld",
+      instanceId: "overworld:a110c8",
     });
-    expect(host.getAllInstances()).toEqual([]); // no warm nexus here
+    expect(entered.instanceId).toBe(allocated.id);
 
-    expect(() =>
-      host.registerPlayer({ playerId: "a", name: "A", zoneId: "nexus" }),
-    ).toThrow(/not hosted/);
-    const ok = host.registerPlayer({ playerId: "b", name: "B", zoneId: "overworld" });
-    expect(ok.zoneId).toBe("overworld");
+    // Closed in the meantime: local placement for the same zone takes over
+    const gone = host.registerPlayer({
+      playerId: "b",
+      name: "B",
+      zoneId: "overworld",
+      instanceId: "overworld:999999",
+    });
+    expect(gone.zoneId).toBe("overworld");
+    expect(gone.instanceId).not.toBe("overworld:999999");
     host.stop();
   });
 

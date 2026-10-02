@@ -1,11 +1,6 @@
 import type { Character, PrismaClient } from "@mmoexile/db";
 import type { Redis, Broker } from "@mmoexile/messaging";
-import {
-  channels,
-  redisKeys,
-  serverForZone,
-  type StaticPlacement,
-} from "@mmoexile/contracts";
+import { channels, redisKeys } from "@mmoexile/contracts";
 import {
   InvalidTokenError,
   verifyTicket,
@@ -52,7 +47,6 @@ export interface PlayerLifecycleDeps {
   broker: Broker;
   ownership: CharacterOwnership;
   leases: LeaseKeeper;
-  placement: StaticPlacement;
   /** Public key for verifying tickets; only the orchestrator can sign. */
   ticketKey: TicketKey;
   /** Where zone changes are placed (the orchestrator). */
@@ -128,12 +122,7 @@ export class PlayerLifecycle {
       if (err instanceof InvalidTokenError) return { ok: false, reason: "invalid_ticket" };
       throw err;
     }
-    if (
-      !isZoneId(ticket.zoneId) ||
-      // Tickets from the orchestrator name an instance; the static table is a fallback.
-      (!ticket.instanceId &&
-        serverForZone(this.deps.placement, ticket.zoneId).serverId !== this.deps.serverId)
-    ) {
+    if (!isZoneId(ticket.zoneId)) {
       return { ok: false, reason: "invalid_ticket" };
     }
     if (!(await this.claimTicket(ticket))) {

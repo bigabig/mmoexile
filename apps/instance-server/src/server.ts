@@ -3,7 +3,6 @@ import type { AddressInfo } from "net";
 import type { PrismaClient } from "@mmoexile/db";
 import type { Broker, Redis } from "@mmoexile/messaging";
 import { ticketVerificationKey } from "@mmoexile/auth";
-import { parseStaticPlacement, serverForZone } from "@mmoexile/contracts";
 import type { Logger } from "@mmoexile/service-kit";
 import { InstanceHost } from "./cluster/index.js";
 import { WebSocketGateway } from "./gateway/index.js";
@@ -70,10 +69,7 @@ export async function createInstanceServer({
     ? new OrchestratorAllocator(config.ORCHESTRATOR_URL)
     : NO_ALLOCATOR,
 }: InstanceServerDeps): Promise<InstanceServer> {
-  const placement = parseStaticPlacement(config.SERVERS, config.ZONE_PLACEMENT);
   const ticketKey = await ticketVerificationKey(config.TICKET_PUBLIC_KEY);
-  const hostsZone = (zoneId: string) =>
-    placement.zones.get(zoneId) === config.SERVER_ID;
 
   const ownership = new CharacterOwnership({
     redis,
@@ -103,7 +99,6 @@ export async function createInstanceServer({
   const host = new InstanceHost({
     persistence,
     onInstancesChanged: () => fleet?.reportSoon(),
-    hostsZone,
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
     // Every zone change is a handoff with reconnect (decision D4).
     onPortalTransfer: (playerId, targetZoneId, via) => {
@@ -121,7 +116,6 @@ export async function createInstanceServer({
     broker,
     ownership,
     leases,
-    placement,
     ticketKey,
     allocator,
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
@@ -167,11 +161,7 @@ export async function createInstanceServer({
   presenceTimer.unref();
 
   logger.info(
-    {
-      serverId: config.SERVER_ID,
-      zones: [...placement.zones].filter(([, s]) => s === config.SERVER_ID).map(([z]) => z),
-      nexus: serverForZone(placement, "nexus").serverId,
-    },
+    { serverId: config.SERVER_ID, orchestrator: config.ORCHESTRATOR_URL || null },
     "Instance server ready",
   );
 

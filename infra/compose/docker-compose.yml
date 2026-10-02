@@ -15,8 +15,6 @@ x-realm-env: &realm-env
   DATABASE_URL: postgresql://mmoexile:mmoexile@postgres:5432/mmoexile
   REDIS_URL: redis://redis:6379
   SOCIAL_URL: http://social:3002
-  SERVERS: a=ws://localhost:7001/ws,b=ws://localhost:7002/ws
-  ZONE_PLACEMENT: nexus:a,overworld:b,golem_dungeon:b
   ORCHESTRATOR_URL: http://orchestrator:3003
   SESSION_SECRET: ${SESSION_SECRET:-compose-local-session-secret-change-me-0001}
   TICKET_PUBLIC_KEY: ${TICKET_PUBLIC_KEY:-MCowBQYDK2VwAyEA5x4WebokiBgXkMaoYISP5jTRPohe07UOHtwHccapyJw=}

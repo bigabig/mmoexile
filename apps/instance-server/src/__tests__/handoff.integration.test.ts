@@ -53,11 +53,9 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function startServer(serverId: "a" | "b", port: number, servers: string) {
+async function startServer(serverId: "a" | "b", port: number) {
   const config = readConfig({
     SERVER_ID: serverId,
-    SERVERS: servers,
-    ZONE_PLACEMENT: "nexus:a,overworld:b,golem_dungeon:b",
     REDIS_URL: process.env.TEST_REDIS_URL,
     INTERNAL_PORT: "0",
     ORCHESTRATOR_URL: "",
@@ -85,9 +83,8 @@ beforeAll(async () => {
   parties = new InMemoryPartyDirectory(sharedBroker);
   const [pa, pb] = [await freePort(), await freePort()];
   urls = { a: `ws://127.0.0.1:${pa}/ws`, b: `ws://127.0.0.1:${pb}/ws` };
-  const servers = `a=${urls.a},b=${urls.b}`;
-  serverA = await startServer("a", pa, servers);
-  serverB = await startServer("b", pb, servers);
+  serverA = await startServer("a", pa);
+  serverB = await startServer("b", pb);
 });
 
 afterAll(async () => {
@@ -290,9 +287,8 @@ describe("Fencing", () => {
 
 describe("Shutdown", () => {
   it("saves, releases and kicks every character", async () => {
-    const [pa, pb] = [await freePort(), await freePort()];
-    const servers = `a=ws://127.0.0.1:${pa}/ws,b=ws://127.0.0.1:${pb}/ws`;
-    const temp = await startServer("a", pa, servers);
+    const pa = await freePort();
+    const temp = await startServer("a", pa);
     const c = await newCharacter();
     const client = new TestClient(`ws://127.0.0.1:${pa}/ws`, await loginTicket(c));
     await client.next("s2c_welcome");
