@@ -162,6 +162,8 @@ export interface TicketClaims {
 export interface VerifiedTicket extends TicketClaims {
   /** Unique ticket ID; claim it once to prevent replays. */
   ticketId: string;
+  /** When the orchestrator issued it (ms), e.g. to measure handoff time. */
+  issuedAt: number;
   expiresAt: number;
 }
 
@@ -225,6 +227,7 @@ export async function verifyTicket(
       typeof via.portalId === "string"
         ? via
         : undefined,
+    issuedAt: (typeof p.iat === "number" ? p.iat : p.exp - 30) * 1000,
     expiresAt: p.exp * 1000,
   };
 }

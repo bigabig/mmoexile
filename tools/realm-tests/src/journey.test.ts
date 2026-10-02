@@ -58,6 +58,16 @@ describe("A player's journey through the orchestrator", () => {
     expect(serverOf(character.id)!.host.getInstanceForPlayer(character.id)?.id).toBe(
       overworld.instanceId,
     );
+    // Both handoffs show up in the metrics
+    const targetServer = serverOf(character.id)!;
+    const scrape = async (url: string) => (await fetch(url)).text();
+    const serverMetrics = await scrape(`http://127.0.0.1:${targetServer.internalPort}/metrics`);
+    expect(serverMetrics).toMatch(/mmoexile_handoff_duration_seconds_count\{[^}]*kind="zone_change"[^}]*\} 1/);
+    expect(serverMetrics).toMatch(/mmoexile_players\{[^}]*\} 1/);
+    expect(serverMetrics).toContain("mmoexile_tick_duration_seconds_bucket");
+    const orchestratorMetrics = await scrape(`${realm.orchestratorUrl}/metrics`);
+    expect(orchestratorMetrics).toMatch(/mmoexile_allocation_duration_seconds_count\{[^}]*\} \d+/);
+    expect(orchestratorMetrics).toMatch(/mmoexile_fleet_servers\{[^}]*state="ready"[^}]*\} 2/);
     client.close();
   });
 });

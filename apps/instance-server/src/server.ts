@@ -27,6 +27,7 @@ import {
   OrchestratorAllocator,
   type ZoneAllocator,
 } from "./fleet/ZoneAllocator.js";
+import { InstanceServerMetrics } from "./metrics.js";
 import type { Config } from "./config.js";
 
 export interface InstanceServerDeps {
@@ -81,10 +82,15 @@ export async function createInstanceServer({
 }: InstanceServerDeps): Promise<InstanceServer> {
   const ticketKey = await ticketVerificationKey(config.TICKET_PUBLIC_KEY);
 
+  // Late-bound: metrics need the host, the host reports into metrics.
+  let metrics!: InstanceServerMetrics;
+
   const ownership = new CharacterOwnership({
     redis,
     db,
     leaseTtlMs: config.LEASE_TTL_MS,
+    onLeaseConflict: () => metrics.leaseConflicts.inc(),
+    onFencedWrite: () => metrics.fencedWrites.inc(),
   });
 
   // Late-bound: the lifecycle and gateway need each other.
@@ -109,6 +115,7 @@ export async function createInstanceServer({
   const host = new InstanceHost({
     persistence,
     onInstancesChanged: () => fleet?.reportSoon(),
+    onTickDuration: (ms) => metrics?.tickDuration.observe(ms / 1000),
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
     // Every zone change is a handoff with reconnect (decision D4).
     onPortalTransfer: (playerId, targetZoneId, via) => {
@@ -117,6 +124,8 @@ export async function createInstanceServer({
       );
     },
   });
+
+  metrics = new InstanceServerMetrics(config.SERVER_ID, host);
 
   lifecycle = new PlayerLifecycle({
     serverId: config.SERVER_ID,
@@ -129,13 +138,18 @@ export async function createInstanceServer({
     ticketKey,
     allocator,
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
-    onAdmitted: (player) => {
+    onAdmitted: (player, ticket) => {
+      metrics.handoffDuration.observe(
+        { kind: player.arrivedViaPortal ? "zone_change" : "login" },
+        Math.max(0, Date.now() - ticket.issuedAt) / 1000,
+      );
       void presence.set(player.characterId, player.name);
       parties
         .getParty(player.characterId)
         .then((party) => partyCache.seed(player.characterId, party))
         .catch((err) => logger.warn({ err }, "Could not load party"));
     },
+    onRejected: (reason) => metrics.ticketRejections.inc({ reason }),
     onDeparted: (characterId, name) => {
       void presence.remove(characterId, name);
     },
@@ -159,6 +173,7 @@ export async function createInstanceServer({
   const internalApi = buildInternalApi({
     logger,
     host,
+    metrics: metrics.registry,
     acceptsInstances: () => !fleet || fleet.currentState === "ready",
   });
 

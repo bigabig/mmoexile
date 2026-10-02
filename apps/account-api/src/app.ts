@@ -17,7 +17,7 @@ import {
   type AllocateRequest,
   type AllocateResponse,
 } from "@mmoexile/contracts";
-import { createHttpService, type Logger } from "@mmoexile/service-kit";
+import { Counter, createHttpService, createMetrics, type Logger } from "@mmoexile/service-kit";
 import type { Config } from "./config.js";
 import { newCharacterData, toSummary } from "./characters.js";
 
@@ -43,8 +43,23 @@ export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInst
   const orchestrator = createHttpClient({ baseUrl: config.ORCHESTRATOR_URL });
   allocate ??= (request) => orchestrator(orchestratorApi.allocate, request);
 
+  const metrics = createMetrics("account-api");
+  const logins = new Counter({
+    name: "mmoexile_logins_total",
+    help: "Guest accounts created and sessions refreshed",
+    labelNames: ["kind"],
+    registers: [metrics],
+  });
+  const plays = new Counter({
+    name: "mmoexile_play_requests_total",
+    help: "/play requests by outcome",
+    labelNames: ["result"],
+    registers: [metrics],
+  });
+
   const app = createHttpService({
     logger,
+    metrics,
     isReady: async () => {
       await db.$queryRaw`SELECT 1`;
       return true;
@@ -85,6 +100,7 @@ export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInst
       const account = await db.account.create({
         data: { nickname, refreshSecretHash: hashSecret(refreshSecret) },
       });
+      logins.inc({ kind: "guest" });
       return {
         accountId: account.id,
         nickname: account.nickname,
@@ -103,6 +119,7 @@ export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInst
         where: { refreshSecretHash: hashSecret(refreshSecret) },
       });
       if (!account) return reply.code(401).send({ error: "Unknown account" });
+      logins.inc({ kind: "refresh" });
       return {
         accountId: account.id,
         nickname: account.nickname,
@@ -182,10 +199,12 @@ export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInst
       try {
         const allocation = await allocate({ zoneId: LOGIN_ZONE, characterId, accountId });
         logger.info({ characterId, ticketId: allocation.ticketId, serverId: allocation.serverId }, "Play");
+        plays.inc({ result: "ok" });
         return { url: allocation.url, ticket: allocation.ticket };
       } catch (err) {
         logger.warn({ err, characterId }, "Allocation for login failed");
         const busy = err instanceof HttpError && err.status === 503;
+        plays.inc({ result: busy ? "fleet_full" : "unavailable" });
         return reply.code(503).send({
           error: busy ? "All servers are full, try again soon" : "Game servers are unavailable",
         });

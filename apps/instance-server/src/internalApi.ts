@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { createHttpService, type Logger } from "@mmoexile/service-kit";
+import { createHttpService, type Logger, type Registry } from "@mmoexile/service-kit";
 import { instanceServerApi } from "@mmoexile/contracts";
 import { isZoneId } from "@mmoexile/game-core";
 import type { InstanceHost } from "./cluster/index.js";
@@ -9,6 +9,8 @@ export interface InternalApiDeps {
   host: InstanceHost;
   /** False while draining or stopping: no new instances. */
   acceptsInstances: () => boolean;
+  /** Served on GET /metrics. */
+  metrics?: Registry;
 }
 
 /**
@@ -19,8 +21,9 @@ export function buildInternalApi({
   logger,
   host,
   acceptsInstances,
+  metrics,
 }: InternalApiDeps): FastifyInstance {
-  const app = createHttpService({ logger });
+  const app = createHttpService({ logger, metrics });
 
   app.setErrorHandler(
     (error: Error & { statusCode?: number; validation?: unknown }, _req, reply) => {

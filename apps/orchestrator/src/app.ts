@@ -11,6 +11,7 @@ import type { Redis } from "@mmoexile/messaging";
 import { Registry } from "./Registry.js";
 import { RegistryMirror } from "./RegistryMirror.js";
 import { Allocator } from "./Allocator.js";
+import { OrchestratorMetrics } from "./metrics.js";
 import type { Config } from "./config.js";
 
 export interface OrchestratorDeps {
@@ -24,6 +25,7 @@ export interface Orchestrator {
   app: FastifyInstance;
   registry: Registry;
   allocator: Allocator;
+  metrics: OrchestratorMetrics;
   /** Loads the Redis mirror and starts dead-server detection. */
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -45,17 +47,21 @@ export function createOrchestrator({
     deadAfterMs: config.HEARTBEAT_INTERVAL_MS * 3,
   });
   const mirror = new RegistryMirror(redis);
+  const metrics = new OrchestratorMetrics(registry);
   const ticketKey = ticketSigningKey(config.TICKET_PRIVATE_KEY);
   ticketKey.catch(() => {}); // reported by start()
   const allocator = new Allocator({
     registry,
     logger,
     signTicket: async (claims) => signTicket(claims, await ticketKey),
+    onAllocated: (ms, created) =>
+      metrics.allocationDuration.observe({ created: String(created) }, ms / 1000),
   });
   let sweepTimer: NodeJS.Timeout | undefined;
 
   const app = createHttpService({
     logger,
+    metrics: metrics.registry,
     isReady: async () => (await redis.ping()) === "PONG",
   });
 
@@ -127,7 +133,15 @@ export function createOrchestrator({
   app.post(
     orchestratorApi.allocate.path,
     { schema: { body: orchestratorApi.allocate.body } },
-    async (request) => allocator.allocate(request.body as AllocateRequest),
+    async (request) => {
+      try {
+        return await allocator.allocate(request.body as AllocateRequest);
+      } catch (err) {
+        const status = (err as { statusCode?: number }).statusCode ?? 500;
+        metrics.allocationFailures.inc({ status: String(status) });
+        throw err;
+      }
+    },
   );
 
   app.get(orchestratorApi.listServers.path, async () => ({
@@ -145,6 +159,7 @@ export function createOrchestrator({
     app,
     registry,
     allocator,
+    metrics,
     async start() {
       await ticketKey; // fail fast on a malformed key
       const restored = await mirror.load();

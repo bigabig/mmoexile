@@ -34,6 +34,9 @@ export interface CharacterOwnershipOptions {
   redis: Redis;
   db: PrismaClient;
   leaseTtlMs?: number;
+  /** For metrics: someone else held the lease / a write was fenced. */
+  onLeaseConflict?: () => void;
+  onFencedWrite?: () => void;
 }
 
 // Renew/release only if the lease still holds exactly our value.
@@ -52,11 +55,15 @@ export class CharacterOwnership {
   public readonly leaseTtlMs: number;
   private readonly redis: Redis;
   private readonly db: PrismaClient;
+  private readonly onLeaseConflict: () => void;
+  private readonly onFencedWrite: () => void;
 
   constructor(options: CharacterOwnershipOptions) {
     this.redis = options.redis;
     this.db = options.db;
     this.leaseTtlMs = options.leaseTtlMs ?? 30_000;
+    this.onLeaseConflict = options.onLeaseConflict ?? (() => {});
+    this.onFencedWrite = options.onFencedWrite ?? (() => {});
   }
 
   /** Takes ownership if nobody holds the lease. */
@@ -75,6 +82,7 @@ export class CharacterOwnership {
       "NX",
     );
     if (reserved !== "OK") {
+      this.onLeaseConflict();
       return { ok: false, heldBy: await this.currentHolder(characterId) };
     }
 
@@ -144,6 +152,7 @@ export class CharacterOwnership {
       where: { id: ownership.characterId, ownerEpoch: ownership.epoch },
       data,
     });
+    if (count !== 1) this.onFencedWrite();
     return count === 1;
   }
 

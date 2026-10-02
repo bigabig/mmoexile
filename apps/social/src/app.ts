@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { channels, socialApi } from "@mmoexile/contracts";
 import type { Broker, Redis } from "@mmoexile/messaging";
-import { createHttpService, type Logger } from "@mmoexile/service-kit";
+import { createHttpService, createMetrics, type Logger } from "@mmoexile/service-kit";
 import { PartyStore } from "./PartyStore.js";
 
 export interface AppDeps {
@@ -21,6 +21,7 @@ export function buildApp({ logger, redis, broker }: AppDeps): FastifyInstance {
 
   const app = createHttpService({
     logger,
+    metrics: createMetrics("social"),
     isReady: async () => (await redis.ping()) === "PONG",
   });
 

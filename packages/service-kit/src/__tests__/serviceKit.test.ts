@@ -6,6 +6,8 @@ import {
   createLogger,
   handleShutdownSignals,
   loadConfig,
+  createMetrics,
+  Counter,
 } from "../index.js";
 
 const silent = createLogger("test", "silent");
@@ -70,6 +72,21 @@ describe("createHttpService", () => {
 
     const generated = await app.inject("/health");
     expect(generated.headers["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
+    await app.close();
+  });
+});
+
+describe("metrics", () => {
+  it("serves Prometheus metrics labeled with the service", async () => {
+    const metrics = createMetrics("test-service");
+    const logins = new Counter({ name: "test_logins_total", help: "Logins", registers: [metrics] });
+    logins.inc(2);
+    const app = createHttpService({ logger: silent, metrics });
+
+    const response = await app.inject("/metrics");
+    expect(response.headers["content-type"]).toMatch(/text\/plain/);
+    expect(response.body).toContain('test_logins_total{service="test-service"} 2');
+    expect(response.body).toContain("mmoexile_process_cpu_user_seconds_total");
     await app.close();
   });
 });

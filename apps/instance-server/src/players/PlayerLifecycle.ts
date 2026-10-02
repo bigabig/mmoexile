@@ -58,9 +58,11 @@ export interface PlayerLifecycleDeps {
   /** End a client session with a reason. */
   kickSession: (characterId: string, reason: KickReason) => void;
   /** A character is now on this server (presence, party cache, …). */
-  onAdmitted?: (player: AdmittedPlayer) => void;
+  onAdmitted?: (player: AdmittedPlayer, ticket: VerifiedTicket) => void;
   /** A character left this server for any reason. */
   onDeparted?: (characterId: string, name: string) => void;
+  /** Admission refused (metrics). */
+  onRejected?: (reason: KickReason) => void;
   /** How long a duplicate login waits for the old session before forcing. */
   takeoverWaitMs?: number;
   log?: (message: string, extra?: Record<string, unknown>) => void;
@@ -111,6 +113,12 @@ export class PlayerLifecycle {
   // --- Admission ---
 
   async admit(ticketToken: string, protocolVersion: number): Promise<AdmitResult> {
+    const result = await this.tryAdmit(ticketToken, protocolVersion);
+    if (!result.ok) this.deps.onRejected?.(result.reason);
+    return result;
+  }
+
+  private async tryAdmit(ticketToken: string, protocolVersion: number): Promise<AdmitResult> {
     if (protocolVersion !== PROTOCOL_VERSION) {
       return { ok: false, reason: "version_mismatch" };
     }
@@ -173,7 +181,7 @@ export class PlayerLifecycle {
       arrivedViaPortal: ticket.via !== undefined,
     };
     this.players.set(player.characterId, player);
-    this.deps.onAdmitted?.(player);
+    this.deps.onAdmitted?.(player, ticket);
     this.log("Admitted", { characterId: player.characterId, instanceId: player.instanceId, ticketId: ticket.ticketId });
     return { ok: true, player };
   }

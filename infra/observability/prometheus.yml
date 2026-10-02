@@ -1,0 +1,21 @@
+# Scrapes every realm service in docker-compose (pnpm realm:up).
+# Instance servers expose metrics on their internal port 9001.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: orchestrator
+    static_configs:
+      - targets: ["orchestrator:3003"]
+  - job_name: account-api
+    static_configs:
+      - targets: ["account-api:3000"]
+  - job_name: social
+    static_configs:
+      - targets: ["social:3002"]
+  - job_name: instance-servers
+    static_configs:
+      - targets:
+          - instance-server-a:9001
+          - instance-server-b:9001

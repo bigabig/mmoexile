@@ -7,11 +7,14 @@ import {
 } from "fastify";
 import type { ZodType } from "zod";
 import type { Logger } from "./logger.js";
+import type { Registry } from "./metrics.js";
 
 export interface HttpServiceOptions {
   logger: Logger;
   /** Readiness check for /ready, e.g. "database and Redis reachable". */
   isReady?: () => boolean | Promise<boolean>;
+  /** Served as Prometheus text on `GET /metrics`. */
+  metrics?: Registry;
 }
 
 /** Header that carries the request ID across services (and in logs). */
@@ -23,6 +26,7 @@ export const REQUEST_ID_HEADER = "x-request-id";
  * - a request ID taken from `x-request-id` or generated, echoed back
  * - `GET /health` (liveness: the process runs) and
  *   `GET /ready` (readiness: dependencies are reachable)
+ * - `GET /metrics` for Prometheus, if a metrics registry is given
  */
 export function createHttpService(
   options: HttpServiceOptions,
@@ -51,6 +55,13 @@ export function createHttpService(
     const ready = options.isReady ? await options.isReady() : true;
     return reply.code(ready ? 200 : 503).send({ ready });
   });
+
+  const metrics = options.metrics;
+  if (metrics) {
+    app.get("/metrics", async (_request, reply) =>
+      reply.header("content-type", metrics.contentType).send(await metrics.metrics()),
+    );
+  }
 
   return app;
 }

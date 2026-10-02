@@ -102,6 +102,8 @@ export interface InstanceHostOptions {
   now?: () => number;
   /** An instance was created or closed (the fleet agent reports it at once). */
   onInstancesChanged?: () => void;
+  /** Every tick's duration, for metrics. */
+  onTickDuration?: (ms: number) => void;
 }
 
 /**
@@ -122,6 +124,7 @@ export class InstanceHost implements InstancePool {
   >;
   private sweepTimer: NodeJS.Timeout | null = null;
   private readonly onInstancesChanged: () => void;
+  private readonly onTickDuration: (ms: number) => void;
   public readonly messageBus: IMessageBus;
   /** Tick durations of every instance in this process. */
   public readonly tickStats = new TickStats();
@@ -134,6 +137,7 @@ export class InstanceHost implements InstancePool {
     this.getPartyId = options.getPartyId ?? (() => undefined);
     this.persistence = options.persistence ?? NO_PERSISTENCE;
     this.onInstancesChanged = options.onInstancesChanged ?? (() => {});
+    this.onTickDuration = options.onTickDuration ?? (() => {});
     this.onPortalTransfer =
       options.onPortalTransfer ??
       ((playerId, targetZoneId, via) =>
@@ -189,7 +193,10 @@ export class InstanceHost implements InstancePool {
         30,
         (result) => this.handleTick(instance, result),
         (error) => this.handleInstanceCrash(instance, error),
-        (ms) => this.tickStats.record(ms),
+        (ms) => {
+          this.tickStats.record(ms);
+          this.onTickDuration(ms);
+        },
       ),
       players: new Set(),
       ownerPartyId: options.ownerPartyId,
