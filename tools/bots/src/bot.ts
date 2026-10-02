@@ -41,8 +41,12 @@ export class Bot {
   position: Point | null = null;
   hp = 0;
   kicked: KickReason | null = null;
+  /** The connection dropped without a kick or reconnect (server died). */
+  disconnected = false;
   readonly packets: ServerPacket[] = [];
-  readonly stats = { welcomes: 0, reconnects: 0, kicks: 0, errors: 0 };
+  readonly stats = { welcomes: 0, reconnects: 0, kicks: 0, errors: 0, disconnects: 0 };
+  /** Welcomes per server URL: where this bot was placed. */
+  readonly servers = new Map<string, number>();
 
   private readonly call;
   private sessionToken: string | undefined;
@@ -85,6 +89,7 @@ export class Bot {
       characterId: this.characterId,
     });
     this.kicked = null;
+    this.disconnected = false;
     await this.connect(url, ticket);
   }
 
@@ -93,8 +98,16 @@ export class Bot {
     const deadline = Date.now() + timeoutMs;
     const startZone = this.zoneId;
     let path: Point[] = [];
+    let welcomes = this.stats.welcomes;
     while (this.zoneId !== zoneId) {
+      // Moved (e.g. a drain sent us to another shard of the same zone): new spawn, new path
+      if (this.stats.welcomes !== welcomes) {
+        welcomes = this.stats.welcomes;
+        path = [];
+      }
       if (this.kicked) throw new Error(`${this.name} was kicked: ${this.kicked}`);
+      if (this.disconnected) throw new Error(`${this.name} lost its connection`);
+      if (this.hp <= 0) throw new Error(`${this.name} died`);
       if (Date.now() > deadline) {
         throw new Error(`${this.name} did not reach ${zoneId} from ${startZone}`);
       }
@@ -157,8 +170,15 @@ export class Bot {
       this.handle(deserializePacket<ServerPacket>(data)),
     );
     socket.on("error", () => this.stats.errors++);
+    socket.on("close", () => {
+      // Our own disconnect() removes listeners first; anything else is a drop.
+      if (this.socket === socket && this.kicked === null) {
+        this.disconnected = true;
+        this.stats.disconnects++;
+      }
+    });
     return this.waitFor(
-      () => this.stats.welcomes > welcomesBefore || this.kicked !== null,
+      () => this.stats.welcomes > welcomesBefore || this.kicked !== null || this.disconnected,
       15_000,
     );
   }
@@ -169,6 +189,7 @@ export class Bot {
     switch (packet.type) {
       case "s2c_welcome":
         this.stats.welcomes++;
+        this.servers.set(this.serverUrl, (this.servers.get(this.serverUrl) ?? 0) + 1);
         this.zoneId = packet.zoneId;
         this.instanceId = packet.instanceId;
         this.map = packet.map;
@@ -189,6 +210,12 @@ export class Bot {
         this.position = null;
         this.map = null;
         void this.connect(packet.url, packet.ticket).catch(() => this.stats.errors++);
+        break;
+      case "s2c_chat":
+        // Deaths are only announced in chat (permadeath), not as a packet.
+        if (packet.sender === "Graveyard" && packet.text.startsWith(`${this.name} was slain`)) {
+          this.hp = 0;
+        }
         break;
       case "s2c_kicked":
         this.stats.kicks++;

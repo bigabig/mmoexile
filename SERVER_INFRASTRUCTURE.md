@@ -146,7 +146,7 @@ This is what a PoE loading screen is. The original RotMG does the same via its `
 
 ## 6. Current State vs. Target
 
-Stages 0–2 are complete. A realm now runs as several cooperating processes (`pnpm realm:up` starts them in Docker): `account-api` (login, characters, tickets), `social` (parties), two `instance-server`s with a static zone placement (server A: nexus; server B: overworld and golem dungeon), Postgres and Redis. Characters move between servers with the ticket and lease handoff. Stage 3 replaces the static placement with an orchestrator.
+Stages 0–3 are complete. A realm runs as several cooperating processes (`pnpm realm:up` starts them in Docker): `account-api` (login, characters), `social` (parties), the `orchestrator` (fleet registry, allocation, the only ticket issuer), three generic `instance-server`s that host any zone, Postgres, Redis, Prometheus and Grafana. Characters move between servers with the ticket and lease handoff; the orchestrator decides where every new instance runs, notices dead servers, and drains servers before they stop. Stage 4 adds regions.
 
 | Concern | Today | Target |
 | :--- | :--- | :--- |
@@ -154,15 +154,17 @@ Stages 0–2 are complete. A realm now runs as several cooperating processes (`p
 | Private instances | **Done (S1.3):** one golem dungeon per party (solo players count as a party of one); `portal_bound` zones are supported but unused | Per-party, owned, with timeout |
 | Public sharding | **Done (S1.3):** fill-first placement below the soft cap, new shard when all are full, preferred shard up to the hard cap | N Nexus copies with a player cap |
 | Instance lifecycle | **Done (S1.4):** a 1 Hz sweeper closes instances empty longer than their zone's timeout (keeping warm hub instances); a tick that throws closes only its own instance and moves its players to the nexus | creating → running → empty → closed |
-| Execution | **Stage 2:** one instance-server process per container (N containers × 1 process); each process hosts many instances on its main thread | Many processes/cores, many machines |
+| Execution | **Stage 2/3:** one instance-server process per container (N containers × 1 process); each process hosts many instances on its main thread; empty instances sleep (no ticks) until someone enters | Many processes/cores, many machines |
 | ECS isolation | **Fixed in S1.0:** all `GameWorld`s in a process allocate entity IDs from one shared index (`processEntityIndex`), so the module-global component arrays (`Health.current[eid]`) are never written by two worlds; `destroy()` releases a world's IDs | One shared entity index per process |
 | Zone transfer | **Done (S2.8):** every zone change is a handoff (fenced save → release lease → ticket → reconnect → claim), also within one server (decision D4) | Save → release lease → ticket → reconnect → claim |
-| Client connection | **Done (S2.6/S2.12):** the client gets a server URL and ticket from `account-api`, and follows `s2c_reconnect` to whichever server hosts the next zone | Reconnects to whichever server hosts the instance |
-| Auth | **Done (S2.3/S2.5):** signed session tokens (JWT) from `account-api`; signed, single-use transfer tickets (30 s) required by every instance server; refresh secrets stored only as hashes | Signed session token, verifiable anywhere |
+| Client connection | **Done (S2.6/S2.12):** the client gets a server URL and ticket from `account-api` (which asks the orchestrator), and follows `s2c_reconnect` to whichever server hosts the next instance | Reconnects to whichever server hosts the instance |
+| Auth | **Done (S2.3/S2.5/S3.4):** signed session tokens (JWT, HS256) from `account-api`; single-use transfer tickets (30 s, Ed25519) issued only by the orchestrator and verified with its public key by every instance server; refresh secrets stored only as hashes | Signed session token, verifiable anywhere |
 | Message bus | **Done (S2.4/S2.10):** Redis pub/sub between services (global and party chat, party updates, kicks); `InMemoryMessageBus` remains for in-process plumbing | Redis / NATS |
 | Database | **Done (S1.8):** Postgres via docker-compose, Prisma migrations; tests use Testcontainers | Central Postgres |
 | Ownership | **Done (S2.7):** Redis lease plus Postgres fencing epoch per character; newest login wins | One owner per character |
-| Placement across servers | **Stage 2:** static table (`ZONE_PLACEMENT`); Stage 3 adds the orchestrator | Load-based, dynamic |
+| Placement across servers | **Done (S3.1–S3.5):** the orchestrator applies each zone's access policy across the fleet and creates new instances on the least loaded server (players, instances, tick p95, event loop utilization); registry rebuilt from heartbeats | Load-based, dynamic |
+| Server lifecycle | **Done (S3.2/S3.6):** `starting → ready → draining → stopped`, plus `dead` after 6 s without heartbeats; SIGTERM drains (hubs move at once, dungeons get a timeout) | Matches Agones |
+| Observability | **Done (S3.7):** Prometheus metrics in every service, Grafana "Realm Overview"; ticket IDs correlate a handoff across logs | Metrics, dashboards, traces |
 | Regions | None | Gateways |
 
 ### Foundations Already in Place
@@ -318,8 +320,10 @@ This is the point where it becomes a real distributed system.
 
 ### Stage 3: Orchestrator & Fleet
 - Instance servers register with the orchestrator and send heartbeats.
-- Load-aware placement of new instances.
+- Load-aware placement of new instances; the orchestrator becomes the only ticket issuer.
 - Failure handling: a crashed server loses its instances, but characters are safe up to their last save.
+- Draining: a server that is told to stop moves its players away first.
+- Metrics and a dashboard, so the fleet's load is visible.
 
 ### Stage 4: Regions
 - Region tag on instance servers.

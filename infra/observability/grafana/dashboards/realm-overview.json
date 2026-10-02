@@ -2,7 +2,7 @@
   "title": "Realm Overview",
   "uid": "realm-overview",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 3,
   "time": {
     "from": "now-15m",
     "to": "now"
@@ -50,7 +50,8 @@
           },
           "expr": "sum(mmoexile_players)"
         }
-      ]
+      ],
+      "id": 1
     },
     {
       "type": "stat",
@@ -90,7 +91,8 @@
           },
           "expr": "sum(mmoexile_instances)"
         }
-      ]
+      ],
+      "id": 2
     },
     {
       "type": "stat",
@@ -130,7 +132,8 @@
           },
           "expr": "sum(mmoexile_fleet_servers{state=\"ready\"}) or vector(0)"
         }
-      ]
+      ],
+      "id": 3
     },
     {
       "type": "stat",
@@ -170,7 +173,8 @@
           },
           "expr": "sum(mmoexile_fleet_servers{state=~\"draining|dead\"}) or vector(0)"
         }
-      ]
+      ],
+      "id": 4
     },
     {
       "type": "timeseries",
@@ -219,7 +223,8 @@
           "expr": "sum by (server) (mmoexile_players)",
           "legendFormat": "{{server}}"
         }
-      ]
+      ],
+      "id": 5
     },
     {
       "type": "timeseries",
@@ -268,7 +273,8 @@
           "expr": "sum by (server) (mmoexile_instances)",
           "legendFormat": "{{server}}"
         }
-      ]
+      ],
+      "id": 6
     },
     {
       "type": "timeseries",
@@ -333,7 +339,8 @@
           "expr": "histogram_quantile(0.95, sum by (server, le) (rate(mmoexile_tick_duration_seconds_bucket[1m])))",
           "legendFormat": "{{server}}"
         }
-      ]
+      ],
+      "id": 7
     },
     {
       "type": "timeseries",
@@ -382,7 +389,8 @@
           "expr": "sum by (zone) (mmoexile_instances)",
           "legendFormat": "{{zone}}"
         }
-      ]
+      ],
+      "id": 8
     },
     {
       "type": "timeseries",
@@ -394,7 +402,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 28,
         "w": 8,
         "h": 8
       },
@@ -431,7 +439,8 @@
           "expr": "histogram_quantile(0.95, sum by (kind, le) (rate(mmoexile_handoff_duration_seconds_bucket[5m])))",
           "legendFormat": "{{kind}}"
         }
-      ]
+      ],
+      "id": 9
     },
     {
       "type": "timeseries",
@@ -443,7 +452,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 20,
+        "y": 28,
         "w": 8,
         "h": 8
       },
@@ -480,7 +489,8 @@
           "expr": "histogram_quantile(0.95, sum by (created, le) (rate(mmoexile_allocation_duration_seconds_bucket[5m])))",
           "legendFormat": "new instance: {{created}}"
         }
-      ]
+      ],
+      "id": 10
     },
     {
       "type": "timeseries",
@@ -492,7 +502,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 20,
+        "y": 28,
         "w": 8,
         "h": 8
       },
@@ -538,7 +548,8 @@
           "expr": "sum by (status) (rate(mmoexile_allocation_failures_total[1m]))",
           "legendFormat": "failed {{status}}"
         }
-      ]
+      ],
+      "id": 11
     },
     {
       "type": "timeseries",
@@ -550,7 +561,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 36,
         "w": 12,
         "h": 8
       },
@@ -605,7 +616,8 @@
           "expr": "sum by (reason) (rate(mmoexile_ticket_rejections_total[5m]))",
           "legendFormat": "ticket rejected: {{reason}}"
         }
-      ]
+      ],
+      "id": 12
     },
     {
       "type": "timeseries",
@@ -617,7 +629,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 28,
+        "y": 36,
         "w": 12,
         "h": 8
       },
@@ -654,7 +666,140 @@
           "expr": "max by (service, instance) (mmoexile_nodejs_eventloop_lag_p99_seconds)",
           "legendFormat": "{{service}} {{instance}}"
         }
-      ]
+      ],
+      "id": 13
+    },
+    {
+      "type": "timeseries",
+      "title": "Event loop utilization per server",
+      "description": "All instances of a server share one thread. Near 100% means ticks start late even if each tick is fast; the orchestrator avoids servers above 60%.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (server) (mmoexile_event_loop_utilization)",
+          "legendFormat": "{{server}}"
+        }
+      ],
+      "id": 14
+    },
+    {
+      "type": "timeseries",
+      "title": "Tick interval p99 per server",
+      "description": "Time between two ticks of the same instance. 33 ms when the server keeps up; above the red line (40 ms) ticks start late because the event loop is busy, even if each tick is fast.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.04
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (server, le) (rate(mmoexile_tick_interval_seconds_bucket[1m])))",
+          "legendFormat": "{{server}}"
+        }
+      ],
+      "id": 15
     }
   ],
   "annotations": {

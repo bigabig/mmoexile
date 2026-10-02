@@ -116,39 +116,59 @@ services:
       <<: *health
       test: ["CMD", "node", "-e", "fetch('http://localhost:3003/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 
-  instance-server-a:
+  # Three interchangeable instance servers (any zone, placed by the
+  # orchestrator). Each needs its own published port, because clients
+  # connect to instance servers directly. `docker compose stop` sends
+  # SIGTERM: the server drains (dungeons get DRAIN_TIMEOUT_SEC to finish)
+  # before Docker would kill it.
+  instance-server-1:
     <<: *node-service
+    restart: on-failure  # a drained server exits 0 and stays stopped
     build: &instance-build
       context: ../..
       dockerfile: infra/docker/node.Dockerfile
       args: { APP: instance-server }
-    # `docker compose stop` sends SIGTERM: the server drains (dungeons get
-    # DRAIN_TIMEOUT_SEC to finish) before Docker would kill it.
     stop_grace_period: 2m
     environment:
       <<: *realm-env
       DRAIN_TIMEOUT_SEC: "60"
-      SERVER_ID: a
+      SERVER_ID: s1
       PORT: "7001"
       PUBLIC_URL: ws://localhost:7001/ws
-      INTERNAL_URL: http://instance-server-a:9001
+      INTERNAL_URL: http://instance-server-1:9001
     ports: ["7001:7001"]
     healthcheck: &instance-health
       <<: *health
       test: ["CMD", "node", "-e", "fetch('http://localhost:'+process.env.PORT+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 
-  instance-server-b:
+  instance-server-2:
     <<: *node-service
+    restart: on-failure  # a drained server exits 0 and stays stopped
     build: *instance-build
     stop_grace_period: 2m
     environment:
       <<: *realm-env
       DRAIN_TIMEOUT_SEC: "60"
-      SERVER_ID: b
+      SERVER_ID: s2
       PORT: "7002"
       PUBLIC_URL: ws://localhost:7002/ws
-      INTERNAL_URL: http://instance-server-b:9001
+      INTERNAL_URL: http://instance-server-2:9001
     ports: ["7002:7002"]
+    healthcheck: *instance-health
+
+  instance-server-3:
+    <<: *node-service
+    restart: on-failure  # a drained server exits 0 and stays stopped
+    build: *instance-build
+    stop_grace_period: 2m
+    environment:
+      <<: *realm-env
+      DRAIN_TIMEOUT_SEC: "60"
+      SERVER_ID: s3
+      PORT: "7003"
+      PUBLIC_URL: ws://localhost:7003/ws
+      INTERNAL_URL: http://instance-server-3:9001
+    ports: ["7003:7003"]
     healthcheck: *instance-health
 
   client:

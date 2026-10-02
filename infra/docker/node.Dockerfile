@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# One image recipe for every Node service: --build-arg APP=account-api|social|instance-server
+# One image recipe for every Node service: --build-arg APP=account-api|social|orchestrator|instance-server
 # Build from the repository root:
 #   docker build -f infra/docker/node.Dockerfile --build-arg APP=social .
 

@@ -25,21 +25,24 @@ Deployables live in `apps/`, libraries in `packages/`. Apps never import each ot
 mmoexile/
 ├── apps/
 │   ├── client/           # Vite + Three.js isometric renderer, React HUD, login & character select
-│   ├── account-api/      # Login, characters, play tickets (Fastify, :3000)
+│   ├── account-api/      # Login, characters, /play (Fastify, :3000)
 │   ├── social/           # Parties for the whole realm (Fastify, :3002)
-│   └── instance-server/  # Hosts instances: WebSocket gateway, simulation, handoffs (:3001 / :7001+)
+│   ├── orchestrator/     # Fleet registry, instance allocation, the only ticket issuer (Fastify, :3003)
+│   └── instance-server/  # Hosts instances: WebSocket gateway, simulation, handoffs, draining (:3001 / :7001+)
 ├── packages/
 │   ├── game-core/        # Math, maps, zones, items, prefabs, progression, combat formulas, ECS components
 │   ├── protocol/         # Client ⇄ server packets and snapshots (MessagePack)
 │   ├── simulation/       # Pure bitECS GameWorld + systems (zero I/O)
 │   ├── contracts/        # Service APIs, broker channels, Redis keys (zod schemas)
-│   ├── auth/             # Session tokens and transfer tickets (JWT)
+│   ├── auth/             # Session tokens (HS256) and transfer tickets (Ed25519 JWT)
 │   ├── messaging/        # Broker over Redis pub/sub (or in memory)
-│   ├── service-kit/      # Config, logging, HTTP and shutdown plumbing for services
+│   ├── service-kit/      # Config, logging, HTTP, metrics and shutdown plumbing for services
 │   ├── db/               # Prisma schema, migrations and client
 │   └── tsconfig/         # Shared TypeScript presets
-├── tools/bots/           # Headless bots for end-to-end and soak tests
-├── infra/                # Dockerfiles and docker-compose (dev infrastructure and full realm)
+├── tools/
+│   ├── bots/             # Headless bots for end-to-end, soak and load tests
+│   └── realm-tests/      # Multi-service tests: orchestrator + instance servers + account-api in one process
+├── infra/                # Dockerfiles, docker-compose, Prometheus and Grafana config
 └── docs/                 # Architecture documentation
 ```
 
@@ -69,8 +72,8 @@ pnpm db:deploy
 ### 3. Run Development Servers
 
 ```bash
-# account-api (:3000), social (:3002), one instance server hosting every zone (:3001)
-# and the Vite client (:5173), all with hot reload
+# account-api (:3000), social (:3002), the orchestrator (:3003), one instance
+# server (:3001, internal API :9001) and the Vite client (:5173), all with hot reload
 pnpm dev
 ```
 
@@ -82,18 +85,58 @@ _(To test multiplayer, open a second browser profile or incognito window: each o
 ### 4. Run the Full Realm in Docker
 
 ```bash
-# Builds and starts account-api, social, two instance servers (A: nexus on :7001,
-# B: overworld + golem dungeon on :7002), Postgres, Redis and the client
+# Builds and starts account-api, social, the orchestrator, three generic
+# instance servers (:7001-:7003), Postgres, Redis, the client, Prometheus and Grafana
 pnpm realm:up
 ```
 
-Open **`http://localhost:8080`**. Portals between the nexus and the overworld move you between the two servers. Stop everything with `pnpm realm:down`.
+| URL | What |
+| :--- | :--- |
+| **`http://localhost:8080`** | The game |
+| `http://localhost:3030` | Grafana, "Realm Overview" dashboard (players, instances and tick times per server) |
+| `http://localhost:3003/servers` | The orchestrator's view of the fleet (localhost only) |
+| `http://localhost:9090` | Prometheus |
+
+Every zone change goes through the orchestrator, which decides which server hosts the next instance. Stop everything with `pnpm realm:down`.
+
+![Realm Overview dashboard during a 300-bot run](docs/images/realm-overview.png)
+
+The ticket keys in `infra/compose/docker-compose.yml` are for this local setup only. Generate a real pair with `pnpm --filter @mmoexile/auth keygen`: the private key goes to the orchestrator only, the public key to the instance servers.
 
 ### 5. Bots
 
 ```bash
 # 20 bots hop between the nexus and the overworld for 2 minutes and report handoffs and errors
 pnpm --filter @mmoexile/bots hop -- --bots 20 --minutes 2 --api http://localhost:8080/api
+
+# Also visit the golem dungeon: every bot opens its own private instance
+pnpm --filter @mmoexile/bots hop -- --bots 60 --minutes 5 --route nexus,overworld,golem_dungeon
+```
+
+### 6. Experiment: Scale, Kill and Drain Servers
+
+With the realm running and the Grafana dashboard open:
+
+```bash
+# Start with one server: stopping sends SIGTERM, so the servers drain first
+docker compose -f infra/compose/docker-compose.yml --profile realm stop instance-server-2 instance-server-3
+
+# Load it: new dungeon instances all land on s1
+pnpm --filter @mmoexile/bots hop -- --bots 60 --minutes 10 --route nexus,overworld,golem_dungeon
+
+# Add two servers: new instances now go to the emptiest ones (watch "Instances per server")
+docker compose -f infra/compose/docker-compose.yml --profile realm start instance-server-2 instance-server-3
+
+# Drain s1: no new players; hub players move to s2/s3 at once, dungeons get
+# DRAIN_TIMEOUT_SEC (60 s here) to finish; then the process exits
+curl -X POST localhost:3003/servers/s1/drain
+
+# Kill a server without warning: it gets no new players once its heartbeats are
+# 3 s overdue and is marked dead after 6 s; its players log in again elsewhere
+docker kill mmoexile-instance-server-2-1
+
+# Restart the orchestrator: nobody is disconnected, the fleet is rebuilt from heartbeats
+docker compose -f infra/compose/docker-compose.yml --profile realm restart orchestrator
 ```
 
 ---
@@ -115,7 +158,7 @@ pnpm --filter @mmoexile/bots hop -- --bots 20 --minutes 2 --api http://localhost
 ## Running Tests & Builds
 
 ```bash
-# Run all unit and integration tests
+# Run all unit and integration tests (incl. tools/realm-tests: a whole realm in one process)
 pnpm test
 
 # Tick benchmark (100 players, 500 monsters), run on its own

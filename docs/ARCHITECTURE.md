@@ -17,37 +17,61 @@ This document describes how the game works **today**: the services of a realm, h
 
 ```mermaid
 flowchart LR
-    C["client<br/>(browser)"] -- "HTTPS /api" --> API["account-api<br/>login, characters, tickets"]
-    C == "WebSocket + ticket" ==> A["instance-server A<br/>nexus"]
-    C == "WebSocket + ticket" ==> B["instance-server B<br/>overworld, golem dungeon"]
-    A -- "HTTP: party commands" --> SOC["social<br/>parties"]
-    B -- "HTTP" --> SOC
+    C["client<br/>(browser)"] -- "HTTPS /api" --> API["account-api<br/>login, characters"]
+    C == "WebSocket + ticket" ==> S1["instance-server s1"]
+    C == "WebSocket + ticket" ==> S2["instance-server s2"]
+    C == "WebSocket + ticket" ==> S3["instance-server s3"]
+    API -- "POST /allocate" --> O["orchestrator<br/>fleet registry, placement,<br/>ticket issuer"]
+    S1 -- "register, heartbeat,<br/>/allocate" --> O
+    S2 --> O
+    S3 --> O
+    O -- "POST /internal/instances" --> S2
+    S1 -- "HTTP: party commands" --> SOC["social<br/>parties"]
     API --> PG[("Postgres<br/>accounts, characters")]
-    A --> PG
-    B --> PG
-    A <--> R[("Redis<br/>leases, tickets, presence,<br/>pub/sub")]
-    B <--> R
+    S1 --> PG
+    S1 <--> R[("Redis<br/>leases, tickets, presence,<br/>pub/sub, fleet mirror")]
+    O <--> R
     SOC <--> R
 ```
 
 | Service | Owns | Talks to |
 | :--- | :--- | :--- |
-| `account-api` (`:3000`) | `Account`, `Character` rows (create/delete) | Postgres; signs session tokens and the first ticket |
-| `instance-server` (`SERVER_ID`, `:3001` in dev, `:7001`/`:7002` in Docker) | Instances of the zones placed on it; gameplay columns of characters it holds the lease for | Postgres (fenced writes), Redis, social |
+| `account-api` (`:3000`) | `Account`, `Character` rows (create/delete) | Postgres; signs session tokens; asks the orchestrator for the first ticket |
+| `orchestrator` (`:3003`, internal) | The fleet registry (servers, instances, load) and the ticket signing key | Instance servers' internal APIs; Redis (registry mirror) |
+| `instance-server` (`SERVER_ID`; `:3001` + internal `:9001` in dev, `:7001`–`:7003` in Docker) | The instances placed on it; gameplay columns of characters it holds the lease for | Postgres (fenced writes), Redis, social, orchestrator |
 | `social` (`:3002`) | Parties (in Redis) | Redis; publishes `party.updated` |
 | `client` | — | account-api over HTTP, one instance server at a time over WebSocket |
 
-Which server hosts which zone is a static table in Stage 2 (`ZONE_PLACEMENT=nexus:a,overworld:b,golem_dungeon:b`, with `SERVERS` listing their client-facing URLs). In development one server hosts every zone.
+Instance servers are **generic**: any server hosts any zone. Each keeps one warm nexus; every other instance is created where the orchestrator decides. Each server has two ports: the public WebSocket port that clients connect to directly, and an internal HTTP port (instance creation, `/metrics`) that only the orchestrator and Prometheus reach.
+
+### The orchestrator
+
+- **Registry** (`Registry.ts`): every server with its state, capacity, tick p95, CPU and instances (zone, owner party or portal, players). It lives in memory, is mirrored to Redis, and is rebuilt from heartbeats: a heartbeat from an unknown server registers it, so a restarted orchestrator knows the whole fleet again within one interval (2 s). Restarting it never disconnects a player, since clients talk to instance servers directly.
+- **Liveness**: servers report every 2 s and immediately when instances are created or closed. Three missed heartbeats (6 s) mark a server `dead`: it gets no players, and its instances are dropped from the registry.
+- **Allocation** (`Allocator.ts`, `placement.ts`): `POST /allocate { zoneId, characterId, accountId, partyId?, via?, preferInstanceId?, excludeServerId? }` applies the zone's access policy across the whole fleet: fill the fullest public shard below its soft cap, or find the party's or portal's existing instance. Otherwise it creates one on the best `ready` server: lowest `players + 5 × instances`, plus a penalty when tick p95 exceeds 20 ms; never draining, dead, full or excluded servers. Decisions for the same zone and owner are serialized, so a party arriving together gets one instance. Players on their way count as "reservations" until the next heartbeat covers them.
+- **Tickets**: the orchestrator is the only issuer. Tickets are Ed25519 JWTs naming character, zone, **instance** and target server; instance servers only have the public key, so a compromised instance server cannot mint tickets.
+
+### Server lifecycle and draining
+
+`starting → ready → draining → stopped` (plus `dead`, decided by the orchestrator). This maps 1:1 onto Agones later.
+
+**Draining** (`fleet/Drainer.ts`) starts on SIGTERM (`docker compose stop`, Kubernetes) or `POST /servers/:id/drain` at the orchestrator:
+1. The server reports `draining`; the orchestrator places nobody there any more.
+2. Players in public hubs are handed off to shards on other servers right away.
+3. Private instances (dungeons) may finish until `DRAIN_TIMEOUT_SEC`; then their players are handed off to a nexus elsewhere.
+4. Once empty the server stops (saving and releasing everything that is left) and exits with 0.
+
+SIGINT (Ctrl-C in development), or a second signal during a drain, skips draining and shuts down immediately.
 
 ---
 
 ## 3. Connection Flow, Handoff and Ownership
 
-**Login.** The client signs in at `account-api`, picks a character, and `POST /play` returns the URL of the server hosting the nexus plus a 30-second transfer ticket. The client connects and sends `c2s_hello { ticket, protocolVersion }`. `PlayerLifecycle.admit()` on the instance server:
+**Login.** The client signs in at `account-api`, picks a character, and `POST /play` asks the orchestrator to allocate a nexus slot. It returns the server's URL plus a 30-second transfer ticket for exactly that server and instance. The client connects and sends `c2s_hello { ticket, protocolVersion }`. `PlayerLifecycle.admit()` on the instance server:
 
-1. verifies the ticket's signature, expiry and target server, and claims its id once in Redis (no replays);
+1. verifies the ticket's signature (Ed25519 public key), expiry and target server, and claims its id once in Redis (no replays);
 2. takes the character's **ownership lease** (`lease:char:<id>` in Redis, `SET NX`, 30 s, renewed every 10 s) and increments `Character.ownerEpoch` in Postgres;
-3. loads the character (after owning it, so it reads the latest save), places it into an instance, and sends `s2c_welcome`.
+3. loads the character (after owning it, so it reads the latest save), puts it into the instance named on the ticket (if that instance closed in the meantime, the local placement rules create an equivalent one), and sends `s2c_welcome`.
 
 If someone else holds the lease, the newest login wins: the holder is asked to leave via `session.kick` (it saves and releases), and after 5 s the new server takes over by force.
 
@@ -57,10 +81,14 @@ If someone else holds the lease, the newest login wins: the holder is asked to l
 sequenceDiagram
     participant C as Client
     participant A as Server A
+    participant O as Orchestrator
     participant R as Redis / Postgres
     participant B as Server B
 
     C->>A: c2s_interact (at a portal)
+    A->>O: POST /allocate { zone, character, party, via }
+    O->>B: POST /internal/instances (if a new instance is needed)
+    O->>A: { url of B, instanceId, ticket }
     A->>A: detach character from its instance
     A->>R: save WHERE ownerEpoch = e, release lease
     A->>C: s2c_reconnect { url of B, ticket }
@@ -68,6 +96,8 @@ sequenceDiagram
     B->>R: claim ticket, take lease (epoch e+1), load character
     B->>C: s2c_welcome (loading screen ends)
 ```
+
+Allocation happens before the character is frozen: if the orchestrator is unreachable or the fleet is full, the player stays where they are and gets a chat notice. The ticket ID appears in the logs of account-api or the source server, the orchestrator, and the target server, which ties one handoff together across services.
 
 **Fencing.** Every save is `UPDATE … WHERE ownerEpoch = <my epoch>`. A server that lost its lease without noticing (paused process, network split) writes 0 rows, drops the character, and kicks the session. A crashed server's characters become claimable once its leases expire (or immediately via forced takeover on the next login).
 
@@ -121,21 +151,22 @@ Network transport, decoupled from the concrete socket implementation.
 - **`transport/ITransportGateway`**: interfaces (`ITransportGateway`, `ITransportSession`, `ITransportSocket`) that would allow WebRTC DataChannels or WebTransport alongside WebSockets.
 - **`ClientSession`**: implements `ITransportSession`. Tracks connection state, account/character metadata, and ping timestamps, and sends packets without exposing the raw socket.
 - **`SessionManager`**: registry of active sessions, indexed by session ID and player ID.
-- **`WebSocketGateway`**: implements `ITransportGateway`. Hands `c2s_hello` to `PlayerLifecycle.admit()`, decodes MessagePack, routes commands to the host via the message bus, dispatches snapshots and events, forwards shared chat from the broker, and sends `s2c_reconnect` / `s2c_kicked`.
+- **`WebSocketGateway`**: implements `ITransportGateway`. Hands `c2s_hello` to `PlayerLifecycle.admit()`, decodes MessagePack, routes commands to the host via the message bus, dispatches snapshots and events, forwards shared chat from the broker, and sends `s2c_reconnect` / `s2c_kicked`. Snapshots go through `SnapshotEncoder` (`@mmoexile/protocol`): every entity is MessagePack-encoded once per tick and each player's packet is assembled from the cached bytes (byte-for-byte what `serializePacket` would produce). Encoding per player was about 70 % of a loaded server's CPU.
 
 ### Cluster (`apps/instance-server/src/cluster/`)
 
 Hosts the instances of this process and routes players between them.
 
-- **`Instance`**: one live copy of a zone: `id` (`"<zoneId>:<6 hex>"`, e.g. `golem_dungeon:7f3a9c`), `zone`, the `GameWorld`, its runner, `players`, optional `ownerPartyId`, `state` (`creating`/`running`/`empty`/`closed`), `createdAt`, `emptySince`.
+- **`Instance`**: one live copy of a zone: `id` (`"<zoneId>:<6 hex>"`, e.g. `golem_dungeon:7f3a9c`), `zone`, the `GameWorld`, its runner, `players`, optional `ownerPartyId`, `state` (`creating`/`running`/`empty`/`closed`/`crashed`; only `running` instances tick), `createdAt`, `emptySince`.
 - **`InstanceManager`** (implements `InstanceDirectory`): placement by the zone's access policy.
   - `public_sharded` (nexus, overworld): a preferred instance if below the hard cap, else the fullest instance below the soft cap, else a new shard.
   - `party_private` (golem dungeon): one instance per party; solo players are the party `solo:<characterId>`.
   - `portal_bound`: one instance per `<sourceInstanceId>/<portalId>`, shared by everyone using that portal.
 - **`messaging/IMessageBus` + `InMemoryMessageBus`**: in-process publish/subscribe between gateway and host (commands in; tick results, transfers, chat, deaths out).
 - **`InstanceHost`**:
-  - Creates instances from zones (`createInstance(zoneId)`). At startup only warm instances exist (one `nexus`); everything else is created on demand.
-  - Delegates "which instance does this character enter?" to an `InstanceDirectory` (default: `InstanceManager`).
+  - Creates instances from zones (`createInstance(zoneId, { id?, ownerPartyId?, boundPortalKey? })`). At startup only warm instances exist (one `nexus`); everything else is created when the orchestrator allocates it (`POST /internal/instances`).
+  - Puts an arriving character into the instance named on its ticket; if that instance is gone, delegates to an `InstanceDirectory` (default: `InstanceManager`), which creates an equivalent one.
+  - **Sleeping:** an instance ticks only while players are inside. When the last player leaves, its runner stops; the next player to enter starts it again. Private instances are kept for re-entry for minutes, and ticking them empty used to take most of a server's CPU.
   - **Lifecycle:** `sweepIdleInstances()` runs every second outside the tick loops and closes instances that have been empty longer than their zone's `emptyTimeoutSec`, keeping `minWarmInstances`. `closeInstance()` stops the runner and destroys the world, releasing its entity IDs.
   - **Fault isolation:** each runner wraps its tick in an error boundary. If an instance's tick throws, `handleInstanceCrash()` saves its players, moves them to a nexus shard with a private system message, and closes the instance as `crashed`; other instances keep running.
   - Registers and unregisters players (`registerPlayer({ playerId, name, zoneId, character })`), forwards their commands.
@@ -143,7 +174,7 @@ Hosts the instances of this process and routes players between them.
   - Queues periodic persistence every 150 ticks (5 s).
   - `prepareShutdown()` freezes all runners and snapshots every player for the final flush.
 - **`runners/IWorldRunner`**: contract for driving a world (`start()`, `stop()`, `step()`).
-- **`runners/InProcessWorldRunner`**: drives a world with `setInterval` at 30 Hz on the main thread, with an error boundary around every tick. This is currently the only runner; all worlds share the main thread.
+- **`runners/InProcessWorldRunner`**: drives a world with `setInterval` at 30 Hz on the main thread, with an error boundary around every tick, and reports each tick's duration and the interval since the previous tick. This is currently the only runner; all worlds share the main thread, so the event loop utilization (reported to the orchestrator) is what limits a server.
 
 ### Parties, presence and chat (`src/party/`, `src/presence/`, `src/chat/`)
 
@@ -161,6 +192,13 @@ Hosts the instances of this process and routes players between them.
 - **`FencedCharacterWriter`**: the database writer behind `PersistenceService`; skips characters we don't own and drops fenced ones.
 - **`PlayerLifecycle`**: admit, hand off, leave, kick, drop when fenced, shutdown (see §3).
 - **`server.ts`** (`createInstanceServer`) wires everything; `main.ts` adds config, Redis, Postgres and signal handling.
+
+### Fleet (`src/fleet/`)
+
+- **`FleetAgent`**: registers with the orchestrator, sends heartbeats (state, instances, tick p95, CPU) every 2 s and right after instances are created or closed, and passes on drain requests. If the orchestrator is down, players keep playing; only zone changes wait for it.
+- **`ZoneAllocator`**: `POST /allocate` at the orchestrator, used by every handoff.
+- **`Drainer`**: empties the server before it stops (see §2).
+- **`internalApi.ts`**: the internal port: `POST /internal/instances` (the orchestrator creates an instance with an ID it chose), `/metrics`, `/health`, `/ready`.
 
 ### Simulation (`packages/simulation/src/`)
 
@@ -201,10 +239,18 @@ Asynchronous persistence, out of band from the game loop, backed by PostgreSQL (
 
 ---
 
-### HTTP endpoints (`apps/instance-server/src/http.ts`)
+### HTTP endpoints
+
+Public port (`src/http.ts`, next to the WebSocket endpoint):
 
 - `GET /health`: status, uptime, number of instances and players.
 - `GET /debug/instances` (disabled when `NODE_ENV=production`): every instance with id, zone, state, players, owner party, age, time spent empty, and current tick.
+
+Internal port (`src/internalApi.ts`, `INTERNAL_PORT`, never published): see Fleet above.
+
+### Metrics
+
+Every service serves Prometheus metrics on `/metrics` (`service-kit`'s `createMetrics`: process metrics plus service metrics). Instance servers: `mmoexile_players`, `mmoexile_instances{zone}`, `mmoexile_tick_duration_seconds`, `mmoexile_tick_interval_seconds` (time between two ticks of one instance: 33 ms while the server keeps up), `mmoexile_event_loop_utilization`, `mmoexile_handoff_duration_seconds{kind}` (ticket issue to admission, including the client's reconnect), `mmoexile_lease_conflicts_total`, `mmoexile_fenced_writes_total`, `mmoexile_ticket_rejections_total{reason}`. Orchestrator: `mmoexile_allocation_duration_seconds{created}`, `mmoexile_allocation_failures_total{status}`, and per-server gauges from the heartbeats (`mmoexile_fleet_server_players`, `…_instances`, `…_tick_p95_seconds`, `mmoexile_fleet_servers{state}`). The Docker realm provisions Prometheus and a Grafana "Realm Overview" dashboard (`infra/observability/`).
 
 ---
 
@@ -253,7 +299,7 @@ sequenceDiagram
 
 ## 8. Graceful Shutdown
 
-On `SIGINT`/`SIGTERM` the server runs `gracefulShutdown()` (`apps/instance-server/src/shutdown.ts`). The order guarantees that every online player is saved before the instances holding their state are destroyed:
+On `SIGTERM` the server first drains (§2); on `SIGINT`, after a drain, or on a second signal it runs `gracefulShutdown()` (`apps/instance-server/src/shutdown.ts`). It first reports `draining` so the orchestrator stops sending players, and afterwards reports `stopped`. The order guarantees that every online player is saved before the instances holding their state are destroyed:
 
 ```mermaid
 flowchart TD
@@ -266,7 +312,7 @@ flowchart TD
     D --> X["7. close Redis and Postgres, exit(0)"]
 ```
 
-If a step fails, the sequence stops before destroying instances and the process exits with code 1. A 10-second timer force-exits if any step hangs. The order is covered by `__tests__/shutdown.test.ts`.
+If a step fails, the sequence stops before destroying instances and the process exits with code 1. A 10-second timer force-exits if any step hangs (the drain before it has its own limit, `DRAIN_TIMEOUT_SEC` + 30 s). The order is covered by `__tests__/shutdown.test.ts`.
 
 ---
 
@@ -288,6 +334,7 @@ apps/instance-server/src/
 │   ├── WebSocketGateway.ts
 │   └── index.ts
 ├── chat/                     # ChatCommands (slash commands)
+├── fleet/                    # FleetAgent, ZoneAllocator, Drainer
 ├── ownership/                # CharacterOwnership, LeaseKeeper, FencedCharacterWriter
 ├── party/                    # PartyDirectory, PartyCache
 ├── players/                  # PlayerLifecycle (admit, handoff, leave, kick)
@@ -296,12 +343,23 @@ apps/instance-server/src/
 │   ├── mappers/              # characterMapper
 │   ├── persistenceService.ts
 │   └── index.ts
-├── __tests__/                # host, placement, lifecycle, ownership, parties, two-server handoff
-├── http.ts                   # /health and /debug/instances
+├── __tests__/                # host, placement, lifecycle, ownership, parties, fleet agent, two-server handoff
+├── http.ts                   # public port: /health and /debug/instances
+├── internalApi.ts            # internal port: /internal/instances, /metrics
+├── metrics.ts                # Prometheus metrics
 ├── shutdown.ts               # graceful shutdown sequence
-├── config.ts                 # environment (SERVER_ID, SERVERS, ZONE_PLACEMENT, …)
+├── config.ts                 # environment (SERVER_ID, PUBLIC_URL, ORCHESTRATOR_URL, …)
 ├── server.ts                 # createInstanceServer: composition root
-└── main.ts                   # entry point: config, Redis, Postgres, signals
+└── main.ts                   # entry point: config, Redis, Postgres, signals (SIGTERM drains)
+
+apps/orchestrator/src/
+├── Registry.ts               # servers and instances, heartbeats, dead detection
+├── RegistryMirror.ts         # copy in Redis for warm restarts
+├── placement.ts              # pure placement rules and server scoring
+├── Allocator.ts              # /allocate: find or create an instance, sign the ticket
+├── metrics.ts                # allocation and fleet metrics
+├── app.ts                    # HTTP API (register, heartbeat, drain, servers, allocate)
+└── main.ts
 
 packages/simulation/src/
 ├── commands/                 # CommandQueue, PlayerCommand

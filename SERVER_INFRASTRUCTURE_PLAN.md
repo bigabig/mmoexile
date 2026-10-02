@@ -7,11 +7,11 @@ This is the task-level plan for moving from today's single-process server to the
 | **0** | Repository restructure | 1 process | none (moves only) |
 | **1** | Real instancing | 1 process + Postgres | none |
 | **2** | Split process roles, handoff | docker-compose, 1 machine | `account-api`, `social`, 2× `instance-server` |
-| **3** | Orchestrator & fleet | docker-compose, 1 machine | `orchestrator` |
+| **3** | Orchestrator & fleet | docker-compose, 1 machine | `orchestrator`, 3× generic `instance-server`, Prometheus, Grafana |
 | 4 | Regions | ≥2 locations | `directory` |
 | 5 | Kubernetes & Agones | cluster | none (packaging) |
 
-Stages 0–3 are planned in detail. Stages 4–5 are outlined; they will be detailed once Stage 3 is done and we know what we actually built.
+Stages 0–3 are done (each with implementation notes and verified acceptance criteria below). Stages 4–5 are outlined; they will be detailed next, now that we know what we actually built.
 
 **Working agreements**
 
@@ -399,57 +399,123 @@ The client keeps **one** connection (to its current instance server). Social fea
 
 **Goal:** Replace static placement with a dynamic orchestrator. Instance servers become interchangeable; new instances are placed by load; dead servers are detected; servers can be drained.
 
-### S3.1 `apps/orchestrator`
+### Target Topology (docker-compose)
+
+| Service | Port | Role |
+| :--- | :--- | :--- |
+| `orchestrator` | 3003 (localhost only) | Fleet registry, allocation, the only ticket issuer |
+| `instance-server-1..3` | 7001–7003 public, 9001 internal | Generic: any zone; `SERVER_ID` s1..s3 |
+| `prometheus` | 9090 (localhost only) | Scrapes every service's `/metrics` |
+| `grafana` | 3030 (localhost only) | Provisioned "Realm Overview" dashboard |
+
+Plus `account-api`, `social`, `client`, Postgres and Redis from Stage 2.
+
+### S3.1 `apps/orchestrator` ✅
 - Owns the **instance registry**: `serverId → { url, region, capacity, load, state }` and `instanceId → { serverId, zoneId, partyId?, players, state }`.
 - The registry lives in orchestrator memory, mirrored to Redis. It is **rebuildable**: after an orchestrator restart, instance servers re-register and re-report their instances on the next heartbeat. The orchestrator is a single process for now (a known single point of failure; leader election comes much later, if ever).
+- *Implementation notes:*
+  - *`Registry.ts` (in memory), `RegistryMirror.ts` (one key per server, `fleet:server:<id>`, 60 s TTL). On startup the mirror pre-fills the registry; heartbeats correct it.*
+  - *Instances the orchestrator just created survive a heartbeat that doesn't list them yet (5 s grace), so a party can't get two instances because of a race between creation and reporting.*
+  - *Allocations count as "reservations" on the instance until a heartbeat covers them, so a burst of logins does not overfill one shard.*
+  - *The HTTP contract (`orchestratorApi`, `instanceServerApi`) lives in `packages/contracts`. The placement key helpers (`soloPartyId`, `portalKey`) moved to `game-core`, so orchestrator and instance servers share them.*
 
-### S3.2 Server Registration & Heartbeats
+### S3.2 Server Registration & Heartbeats ✅
 - On startup the instance server calls `POST /servers/register { serverId, url, region, capacity }` and then enters `ready`.
 - Every 2 s: `POST /servers/:id/heartbeat { instances: [{ id, zoneId, partyId, players, state }], tickP95Ms, cpu }`.
 - Missed 3 heartbeats (6 s) → server marked `dead`: excluded from placement, its instances dropped from the registry. The instance-server lifecycle states `starting → ready → draining → stopped` map 1:1 onto Agones later.
+- *Implementation notes:*
+  - *`FleetAgent` (instance server) registers, then reports every 2 s plus immediately (debounced 50 ms) when an instance is created or closed. Heartbeats carry the full identity, so a heartbeat from an unknown server registers it: this is what rebuilds the registry after a restart. A dead server that reports again is revived.*
+  - *Each heartbeat also reports `eventLoopUtilization` (see S3.8 findings); the response carries the state the orchestrator wants (`draining`).*
+  - *Instance servers got a second, internal HTTP port (`INTERNAL_PORT`, Fastify via service-kit) for the orchestrator and metrics. Clients only reach the public WebSocket port.*
+  - *If the orchestrator is down, players keep playing; zone changes fail with a chat notice until it is back.*
 
-### S3.3 Allocation API
+### S3.3 Allocation API ✅
 - `POST /allocate { zoneId, characterId, partyId?, viaPortalId?, preferInstanceId? }` → `{ url, ticket, instanceId }`.
 - Runs the Stage 1 `InstanceManager` rules **globally** (across servers): reuse an existing instance where the policy allows, otherwise choose a server and call its internal `POST /internal/instances { instanceId, zoneId, partyId? }`.
 - **Placement score:** exclude `draining`/`dead`/over-capacity servers; prefer the lowest `players + instances × weight`, penalize high `tickP95Ms`. Simple, observable, replaceable.
 - Tickets now carry `instanceId` (the target server no longer resolves instances itself).
+- *Implementation notes:*
+  - *The request also carries `accountId` (for the ticket) and `excludeServerId` (draining); `via` is the full portal reference. The response adds `serverId` and `ticketId`.*
+  - *`placement.ts` is pure: `serverScore = players + 5 × instances + 10 × (tickP95 − 20 ms)⁺ + 5 × (ELU − 60 %)⁺ in percent`. `chooseServer` ignores servers that are not `ready`, are full or excluded; ties go to the lower server ID.*
+  - *Decisions for the same zone and owner (party, portal, or "public") are serialized with a per-key lock; the reservation happens inside it.*
+  - *A server whose internal API fails is skipped and the next best one is tried (up to 3).*
+  - *If the ticket's instance no longer exists when the player arrives, the target server's local `InstanceManager` creates an equivalent one, so the Stage 1 rules remain as a fallback.*
 
-### S3.4 Ticket Issuance Moves to the Orchestrator
+### S3.4 Ticket Issuance Moves to the Orchestrator ✅
 - Ed25519 signing key lives only in the orchestrator (and account-api for the first login, or account-api calls `/allocate`: preferred, single issuer).
 - Instance servers get only the public key. A compromised instance server cannot mint tickets.
+- *Implementation notes:*
+  - *Single issuer: account-api's `/play` calls `/allocate` (503 "All servers are full" if the fleet is full).*
+  - *Keys are passed as the one-line base64 body of the PEM (`TICKET_PRIVATE_KEY`, `TICKET_PUBLIC_KEY`); full PEM also works. Development has a built-in key pair, refused when `NODE_ENV=production`; `pnpm --filter @mmoexile/auth keygen` makes a real one. Compose ships its own local pair.*
+  - *A handoff now allocates **before** freezing the character, so a failed allocation leaves the player where they are.*
 
-### S3.5 Instance Servers Become Generic
+### S3.5 Instance Servers Become Generic ✅
 - Remove `ZONE_PLACEMENT`; any server can host any zone.
 - Portal use → `POST /allocate` → handoff (Stage 2 protocol, unchanged).
 - Report instance lifecycle changes (created/closed/player count) in heartbeats plus immediate events for creation/closure.
+- *Implementation notes:*
+  - *`SERVERS`, `ZONE_PLACEMENT`, `hostsZone` and `packages/contracts/src/placement.ts` are gone. Each server keeps one warm nexus (zone `minWarmInstances`); the orchestrator fills the fullest shard first, so the extra warm hubs stay idle until needed.*
+  - *"Immediate events" are immediate heartbeats rather than a separate endpoint.*
 
-### S3.6 Draining
+### S3.6 Draining ✅
 - `SIGTERM` or `POST /servers/:id/drain` → the server enters `draining`: no new allocations.
 - Public hub instances: players are handed off to other shards of the same zone (handoff protocol, `preferInstanceId` unset).
 - Private instances: continue until empty or until `drainTimeoutSec` (e.g. 10 min), then remaining players are handed off to a nexus shard.
 - When empty → `stopped` → process exits. This is exactly the behavior Agones expects from a game server.
+- *Implementation notes:*
+  - *`fleet/Drainer.ts`; `DRAIN_TIMEOUT_SEC` defaults to 600 (60 in compose). If players cannot be moved (no other server), the drain gives up 10 s after the timeout and the shutdown saves and disconnects them.*
+  - *`service-kit`'s `handleShutdownSignals` got a drain phase: SIGTERM drains first, SIGINT (Ctrl-C) or a second signal shuts down at once. An orchestrator drain request goes through the same path.*
+  - *Compose: `stop_grace_period: 2m` and `restart: on-failure` for instance servers, so a drained server (exit 0) stays stopped.*
+  - *Players are told once in chat when a drain starts.*
 
-### S3.7 Observability
+### S3.7 Observability ✅
 - `service-kit` exposes Prometheus metrics: players, instances, tick duration histogram, handoff duration, lease conflicts, fenced writes, allocation latency, ticket rejections.
 - docker-compose adds Prometheus + Grafana with one provisioned "Realm Overview" dashboard.
 - Correlation: the ticket `jti` appears in the logs of every service involved in a handoff.
+- *Implementation notes:*
+  - *`createMetrics(service)` (prom-client registry with process metrics) and `GET /metrics` via `createHttpService({ metrics })`. Instance servers serve it on the internal port.*
+  - *Handoff duration is measured on the target: ticket issue time → admission, so it includes the client's reconnect.*
+  - *The orchestrator also exports per-server gauges from heartbeats (players, instances, tick p95, ELU, servers by state), so the dashboard works even when a server can't be scraped.*
+  - *The dashboard JSON is in `infra/observability/grafana/dashboards/`; Grafana allows anonymous viewers and opens it as the home dashboard.*
 
-### S3.8 Scaling Locally
+### S3.8 Scaling Locally ✅
 - docker-compose defines `instance-server-1..3` explicitly (each needs its own published port for direct client connections).
 - Documented experiment: start with 1, add 2 more, watch placement spread new instances; drain one, watch players move.
+- *Implementation notes:*
+  - *The experiment is in the README ("Experiment: Scale, Kill and Drain Servers").*
+  - *`tools/bots` `hop` got `--route` (e.g. `nexus,overworld,golem_dungeon`: every bot opens its own dungeon), per-server placement counts, death detection (deaths are announced in chat only) and a report of its own event loop lag.*
+  - *`tools/realm-tests`: orchestrator, instance servers and account-api in one process for the multi-service tests below.*
+- *Findings from the 300-bot load test, fixed in this stage:*
+  - *__Empty instances were ticking.__ About 100 private dungeons per server, kept for re-entry, each ticking at 30 Hz with nobody inside. Empty instances now sleep (the runner stops when the last player leaves and starts when one enters).*
+  - *__Tick duration hides saturation.__ All instances of a server share one event loop. Ticks stayed at ~1.5 ms p95 while the loop was 93–99 % busy and instances only got 11–23 of their 30 ticks per second. Heartbeats now report event loop utilization (ELU), placement penalizes ELU above 60 %, and instance servers export `mmoexile_tick_interval_seconds` (time between two ticks of the same instance; 33 ms when keeping up). The dashboard shows ELU and the tick interval p99 per server.*
+  - *__Snapshot encoding was 70 % of the CPU.__ A CPU profile of a loaded server showed MessagePack-encoding each player's snapshot dominating (half of it strings), the simulation only ~5 %. `SnapshotEncoder` (protocol) now encodes each entity once per tick and assembles every player's packet from the cached bytes. The output is byte-for-byte identical, so clients are unaffected.*
 
 ### Tests
 - Unit: placement scoring; registry rebuild from heartbeats; dead-server detection with fake clock.
 - Integration: 3 in-process instance servers + orchestrator; allocate 60 dungeon instances → spread across servers within ±20%.
 - Integration: drain a server with 10 hub players → all end up on other servers with state intact.
 - Load: `tools/bots` with 300 bots over 3 servers for 15 minutes; tick p95 stays below 33 ms on every server.
+- *Implemented as:*
+  - *`apps/orchestrator`: registry (heartbeat rebuild, dead detection and revival with a fake clock, creation grace, reservations, sticky drain), Redis mirror restore, placement scoring (incl. ELU), instance selection per access policy, allocator (one instance for a party arriving at once, even spread of 30 over 3, failing servers skipped, 503/400).*
+  - *`apps/instance-server`: `FleetAgent` against a fake orchestrator (register, reports, immediate report on creation, drain request, orchestrator down), the internal API, sleeping instances, and the Stage 2 two-server handoff test with a fake allocator.*
+  - *`tools/realm-tests` (orchestrator + 2–3 instance servers + account-api in one process, real Postgres/Redis): registration; dead within 10 s; graceful stop reported; registry rebuilt within one heartbeat after an orchestrator restart (mirror deleted); a ticket admits into exactly the allocated instance; fill-first across servers; **60 dungeons spread within ±20 % (16–24 per server)**; **10 hub players drained to other servers with HP intact, then the server stops**; a dungeon player stays until the drain timeout, then moves to a nexus elsewhere; a full journey (login → `/play` → portal handoff) with metrics checked.*
+  - *`packages/protocol`: `SnapshotEncoder` is byte-identical to `serializePacket` (including array header boundaries 16 and 65,536).*
 
 ### Acceptance Criteria
-- [ ] No static zone placement remains; any server hosts any zone.
-- [ ] Killing a server: the orchestrator marks it dead within 10 s; no new instances land there; affected players can log back in.
-- [ ] Draining a server moves its hub players away without data loss and the process then exits cleanly.
-- [ ] Restarting the orchestrator does not disconnect any player; the registry is rebuilt within one heartbeat interval.
-- [ ] The Grafana dashboard shows per-server players, instances, and tick times during a bot run.
+Verified against the Docker realm (`pnpm realm:up`, three instance servers) with `tools/bots` running, plus `tools/realm-tests`.
+
+- [x] No static zone placement remains; any server hosts any zone. *`SERVERS`/`ZONE_PLACEMENT` are removed from code, config and compose. In the load run every server hosted nexus, overworld and dungeon instances.*
+- [x] Killing a server: the orchestrator marks it dead within 10 s; no new instances land there; affected players can log back in. *`docker kill` of s2 under load with 60 bots: marked dead after 6.1 s (6.8 s in an earlier run). No instance was created on s2 after the kill. Allocations into s2's existing hub shards stopped about 1.8 s after the kill, once its heartbeat was overdue: servers silent for 1.5 intervals get no players even before they are declared dead (a fix made during this verification). Players already sent there in that window, and those connected to s2, saw the connection drop and logged in again on s1/s3; re-logins take ~5–10 s, because the new server waits 5 s for the dead holder before forcing the takeover.*
+- [x] Draining a server moves its hub players away without data loss and the process then exits cleanly. *Orchestrator drain of s3 with ~70 hub players: empty and exited with code 0 after 1.2–1.9 s. `docker compose stop` (SIGTERM through the `tsx` wrapper) with 40 players: same, 0 kicks, 0 failed hops. State preservation is asserted in `realm-tests` (10 hub players keep their HP; a dungeon player stays until the drain timeout, then moves with HP intact).*
+- [x] Restarting the orchestrator does not disconnect any player; the registry is rebuilt within one heartbeat interval. *Orchestrator stopped, its Redis mirror deleted, started again under load: all three servers were back in the registry 63 ms and 1.9 s (two runs) after it answered, i.e. from heartbeats alone within one 2 s interval. 0 kicks/disconnects; zone changes attempted while it was down failed with a chat notice and were retried. A fresh orchestrator now waits up to two intervals for heartbeats instead of answering "fleet full".*
+- [x] The Grafana dashboard shows per-server players, instances, and tick times during a bot run. *See `docs/images/realm-overview.png`: players, instances, tick duration, event loop utilization and tick interval per server, plus handoff and allocation latency.*
+
+**Load test** (300 bots in 3 processes over 3 servers, 15 minutes, route nexus → overworld → golem dungeon, so every bot also opens private instances): 40,127 cross-server handoffs, 0 failed hops, 0 kicks, 0 errors, 2,680 bot deaths (normal gameplay). Tick p95 ≤ 2.4 ms on every server in every 1-minute window (p99.9 ≤ 5 ms; the budget is 33 ms). Up to 154 players and 561 instances (mostly sleeping) per server, under 500 MB each, event loop utilization ≤ 59 % (average 33–49 %). No warnings or errors in any service log. The tick interval metric was added after this run; a second 300-bot run showed the servers keeping pace: time between two ticks of an instance p50 32 ms, p99 36–38 ms (nominal 33 ms). Zone-change handoffs (ticket issued → admitted on the target, incl. reconnect): p50 19–25 ms, p95 47–132 ms.
+
+Not done / caveats:
+- *A crashed server's players lose up to 5 s of progress (periodic saves); not measured live in Stage 3.*
+- *Players still sent to a server in the first ~2–3 s after it died get a failed connection and must log in again. Closing that window needs faster failure detection (e.g. instance servers watching each other, or Agones health checks in Stage 5).*
+- *The orchestrator and the internal ports are protected only by not being published (compose publishes the orchestrator on 127.0.0.1 for the experiment). Service-to-service authentication is not implemented.*
 
 ---
 

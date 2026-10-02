@@ -17,5 +17,6 @@ scrape_configs:
   - job_name: instance-servers
     static_configs:
       - targets:
-          - instance-server-a:9001
-          - instance-server-b:9001
+          - instance-server-1:9001
+          - instance-server-2:9001
+          - instance-server-3:9001
