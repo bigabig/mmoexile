@@ -44,6 +44,12 @@ export const HeartbeatBody = ServerIdentity.extend({
   tickP95Ms: z.number().nonnegative(),
   /** Process CPU usage since the last heartbeat, 0..1 per core. */
   cpu: z.number().nonnegative(),
+  /**
+   * Event loop utilization since the last heartbeat (0..1). All instances of
+   * a server share one event loop; near 1 means ticks start late even when
+   * each tick is fast, so this is the real "is this server full" signal.
+   */
+  eventLoopUtilization: z.number().min(0).max(1).default(0),
 });
 export type HeartbeatBody = z.infer<typeof HeartbeatBody>;
 
@@ -82,6 +88,7 @@ export const ServerView = ServerIdentity.extend({
   instances: z.array(InstanceReport),
   tickP95Ms: z.number(),
   cpu: z.number(),
+  eventLoopUtilization: z.number(),
   lastHeartbeatAgoMs: z.number(),
 });
 export type ServerView = z.infer<typeof ServerView>;

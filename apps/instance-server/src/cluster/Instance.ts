@@ -11,7 +11,8 @@ export type InstanceId = string;
 
 /**
  * creating → running ⇄ empty → closed. "crashed" replaces "closed" when the
- * instance was shut down because its tick threw.
+ * instance was shut down because its tick threw. Only "running" instances
+ * tick; empty ones sleep until a player enters.
  */
 export type InstanceState =
   | "creating"

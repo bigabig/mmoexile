@@ -35,6 +35,11 @@ export interface AllocatorDeps {
   logger: Logger;
   weights?: PlacementWeights;
   fetch?: typeof fetch;
+  /**
+   * Resolves once the registry is worth asking (after a restart, the fleet
+   * reports within one heartbeat interval).
+   */
+  warmup?: () => Promise<void>;
   /** Called with the duration of every allocation (metrics). */
   onAllocated?: (durationMs: number, created: boolean) => void;
 }
@@ -53,6 +58,7 @@ export class Allocator {
 
   async allocate(request: AllocateRequest): Promise<AllocateResponse> {
     const started = performance.now();
+    await this.deps.warmup?.();
     const zone = getZone(request.zoneId);
     if (!zone) throw new PlacementError(400, `Unknown zone ${request.zoneId}`);
 
@@ -103,7 +109,7 @@ export class Allocator {
     const registry = this.deps.registry;
     const open = registry
       .all()
-      .filter((s) => s.state === "ready" && s.serverId !== request.excludeServerId);
+      .filter((s) => registry.acceptsPlayers(s) && s.serverId !== request.excludeServerId);
     const existing = findInstance(
       zone,
       request,
@@ -161,11 +167,13 @@ export class Allocator {
     const registry = this.deps.registry;
     return registry.all().map((s) => ({
       serverId: s.serverId,
-      state: s.state,
+      // A server that went quiet is treated like one that isn't ready.
+      state: registry.acceptsPlayers(s) ? s.state : "starting",
       capacity: s.capacity,
       players: registry.serverPlayers(s),
       instances: s.instances.size,
       tickP95Ms: s.tickP95Ms,
+      eventLoopUtilization: s.eventLoopUtilization,
     }));
   }
 

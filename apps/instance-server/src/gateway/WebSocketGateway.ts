@@ -11,6 +11,7 @@ import {
   S2C_InstanceTransferPacket,
   S2C_ChatPacket,
   S2C_PartyUpdatePacket,
+  SnapshotEncoder,
   type KickReason,
 } from "@mmoexile/protocol";
 import { SessionManager } from "./SessionManager.js";
@@ -101,10 +102,12 @@ export class WebSocketGateway implements ITransportGateway {
         this.sessionManager.broadcastToPlayers(playerIds, binary);
       }
 
-      // C. Send snapshot with per-player AOI entities and lastAckSeq
+      // C. Send snapshot with per-player AOI entities and lastAckSeq. Each
+      //    entity is encoded once per tick, however many players see it.
       if (result.snapshot) {
         const { tick, serverTime, lastAckSeqs, entities, playerSnapshots } =
           result.snapshot;
+        const encoder = new SnapshotEncoder();
         for (const pId of playerIds) {
           const session = this.sessionManager.getSessionByPlayerId(pId);
           if (session && session.isOpen) {
@@ -116,7 +119,7 @@ export class WebSocketGateway implements ITransportGateway {
               lastAckSeq: lastAckSeqs[pId] ?? 0,
               entities: playerEntities,
             };
-            session.send(packet);
+            session.sendBinary(encoder.encode(packet));
           }
         }
       }

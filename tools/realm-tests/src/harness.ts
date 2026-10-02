@@ -6,6 +6,7 @@ import { redisKeys } from "@mmoexile/contracts";
 import { DEV_TICKET_PRIVATE_KEY } from "@mmoexile/auth";
 import {
   createOrchestrator,
+  DEFAULT_WEIGHTS,
   type Orchestrator,
 } from "@mmoexile/orchestrator";
 import { buildApp as buildAccountApi, readConfig as readAccountConfig } from "@mmoexile/account-api";
@@ -69,6 +70,9 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
       config: { HEARTBEAT_INTERVAL_MS: heartbeatMs, TICKET_PRIVATE_KEY: DEV_TICKET_PRIVATE_KEY },
       logger: createLogger("orchestrator", logLevel),
       redis,
+      // All servers of this realm share one process and event loop, so their
+      // event loop utilization says nothing about any single server.
+      weights: { ...DEFAULT_WEIGHTS, eluBudget: 1 },
     });
 
   let orchestrator = newOrchestrator();

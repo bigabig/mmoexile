@@ -102,8 +102,8 @@ export interface InstanceHostOptions {
   now?: () => number;
   /** An instance was created or closed (the fleet agent reports it at once). */
   onInstancesChanged?: () => void;
-  /** Every tick's duration, for metrics. */
-  onTickDuration?: (ms: number) => void;
+  /** Every tick's duration and the interval since the previous tick, for metrics. */
+  onTickDuration?: (ms: number, intervalMs?: number) => void;
 }
 
 /**
@@ -124,7 +124,7 @@ export class InstanceHost implements InstancePool {
   >;
   private sweepTimer: NodeJS.Timeout | null = null;
   private readonly onInstancesChanged: () => void;
-  private readonly onTickDuration: (ms: number) => void;
+  private readonly onTickDuration: (ms: number, intervalMs?: number) => void;
   public readonly messageBus: IMessageBus;
   /** Tick durations of every instance in this process. */
   public readonly tickStats = new TickStats();
@@ -193,9 +193,9 @@ export class InstanceHost implements InstancePool {
         30,
         (result) => this.handleTick(instance, result),
         (error) => this.handleInstanceCrash(instance, error),
-        (ms) => {
+        (ms, intervalMs) => {
           this.tickStats.record(ms);
-          this.onTickDuration(ms);
+          this.onTickDuration(ms, intervalMs);
         },
       ),
       players: new Set(),
@@ -207,7 +207,7 @@ export class InstanceHost implements InstancePool {
     };
 
     this.instances.set(id, instance);
-    instance.runner.start();
+    // An empty instance sleeps; the first player to enter starts its ticks.
     instance.state = "empty";
     this.onInstancesChanged();
     return instance;
@@ -329,14 +329,21 @@ export class InstanceHost implements InstancePool {
   private addPlayerToInstance(instance: Instance, playerId: string): void {
     this.playerInstance.set(playerId, instance.id);
     instance.players.add(playerId);
+    if (instance.state === "empty") instance.runner.start();
     instance.state = "running";
     instance.emptySince = undefined;
   }
 
+  /**
+   * An instance nobody is in stops ticking until someone enters again: with
+   * many private instances kept alive for re-entry, ticking empty ones would
+   * burn most of the CPU on nothing.
+   */
   private removePlayerFromInstance(instance: Instance, playerId: string): void {
     instance.players.delete(playerId);
     instance.world.removePlayer(playerId);
     if (instance.players.size === 0) {
+      instance.runner.stop();
       instance.state = "empty";
       instance.emptySince = this.now();
     }

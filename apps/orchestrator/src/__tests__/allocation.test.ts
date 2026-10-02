@@ -35,6 +35,15 @@ describe("placement scoring", () => {
     expect(best?.serverId).toBe("idle");
   });
 
+  it("avoids servers whose event loop is saturated, even with fast ticks", () => {
+    expect(serverScore({ players: 0, instances: 0, tickP95Ms: 1, eventLoopUtilization: 0.9 })).toBeCloseTo(150);
+    const best = chooseServer([
+      server("saturated", { eventLoopUtilization: 0.95 }),
+      server("busy-but-fine", { players: 40, instances: 10, eventLoopUtilization: 0.5 }),
+    ]);
+    expect(best?.serverId).toBe("busy-but-fine");
+  });
+
   it("never places on draining, dead, full or excluded servers", () => {
     const servers = [
       server("draining", { state: "draining" }),
@@ -93,6 +102,7 @@ describe("Allocator", () => {
     instances: [],
     tickP95Ms: 1,
     cpu: 0,
+    eventLoopUtilization: 0.1,
   });
 
   /** Instance servers that accept creation requests, except `failing`. */
@@ -150,6 +160,27 @@ describe("Allocator", () => {
   it("skips a server that cannot create instances", async () => {
     const { allocator } = setup(["s1", "s2"], ["s1"]);
     expect((await allocator.allocate(request("x"))).serverId).toBe("s2");
+  });
+
+  it("stops sending players to a server that went quiet, before it is declared dead", async () => {
+    let clock = 0;
+    const registry = new Registry({ now: () => clock, deadAfterMs: 6000 });
+    for (const id of ["s1", "s2"]) {
+      registry.heartbeat({ ...heartbeat(id), instances: [{ id: `overworld:${id}`, zoneId: "overworld", players: id === "s1" ? 30 : 5, state: "running" }] });
+    }
+    const allocator = new Allocator({
+      registry,
+      logger: createLogger("test", "silent"),
+      signTicket: async () => "t",
+    });
+    // Fill first: the fuller shard on s1
+    expect((await allocator.allocate({ ...request("a"), zoneId: "overworld" })).instanceId).toBe("overworld:s1");
+
+    // s1 crashed 3.5 s ago: still "ready" in the registry, but silent
+    clock = 3500;
+    registry.heartbeat({ ...heartbeat("s2"), instances: [{ id: "overworld:s2", zoneId: "overworld", players: 5, state: "running" }] });
+    expect(registry.get("s1")?.state).toBe("ready");
+    expect((await allocator.allocate({ ...request("b"), zoneId: "overworld" })).instanceId).toBe("overworld:s2");
   });
 
   it("fails with 503 when no server can take players", async () => {

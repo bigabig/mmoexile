@@ -18,12 +18,18 @@ export interface PlacementWeights {
   tickBudgetMs: number;
   /** …by this many "players" per millisecond over budget. */
   tickPenaltyPerMs: number;
+  /** Event loop utilization above this makes a server less attractive… */
+  eluBudget: number;
+  /** …by this many "players" per 0.01 over budget. */
+  eluPenaltyPerPercent: number;
 }
 
 export const DEFAULT_WEIGHTS: PlacementWeights = {
   instanceWeight: 5,
   tickBudgetMs: 20,
   tickPenaltyPerMs: 10,
+  eluBudget: 0.6,
+  eluPenaltyPerPercent: 5,
 };
 
 export interface ServerCandidate {
@@ -34,6 +40,8 @@ export interface ServerCandidate {
   players: number;
   instances: number;
   tickP95Ms: number;
+  /** 0..1, see HeartbeatBody. */
+  eventLoopUtilization?: number;
 }
 
 export interface InstanceCandidate {
@@ -53,16 +61,22 @@ export interface PlacementRequest {
   preferInstanceId?: string;
 }
 
-/** Lower is better: players, plus instances, plus a penalty for slow ticks. */
+/**
+ * Lower is better: players, plus instances, plus penalties for slow ticks
+ * and for a busy event loop (many instances each ticking fast can still
+ * saturate the one thread they share).
+ */
 export function serverScore(
-  server: Pick<ServerCandidate, "players" | "instances" | "tickP95Ms">,
+  server: Pick<ServerCandidate, "players" | "instances" | "tickP95Ms" | "eventLoopUtilization">,
   weights: PlacementWeights = DEFAULT_WEIGHTS,
 ): number {
-  const overBudget = Math.max(0, server.tickP95Ms - weights.tickBudgetMs);
+  const tickOver = Math.max(0, server.tickP95Ms - weights.tickBudgetMs);
+  const eluOver = Math.max(0, (server.eventLoopUtilization ?? 0) - weights.eluBudget);
   return (
     server.players +
     server.instances * weights.instanceWeight +
-    overBudget * weights.tickPenaltyPerMs
+    tickOver * weights.tickPenaltyPerMs +
+    eluOver * 100 * weights.eluPenaltyPerPercent
   );
 }
 

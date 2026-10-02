@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import {
   createHttpClient,
   orchestratorApi,
@@ -36,6 +37,7 @@ export class FleetAgent {
   private orchestratorReachable = true;
   private lastCpu = process.cpuUsage();
   private lastCpuAt = performance.now();
+  private lastElu = performance.eventLoopUtilization();
   private readonly call;
   private readonly log: NonNullable<FleetAgentDeps["log"]>;
 
@@ -118,6 +120,7 @@ export class FleetAgent {
       instances: this.instanceReports(),
       tickP95Ms: this.deps.host.tickStats.takeP95(),
       cpu: this.cpuSinceLastReport(),
+      eventLoopUtilization: this.eluSinceLastReport(),
     };
     try {
       const { desiredState } = await this.call(orchestratorApi.heartbeat, body, {
@@ -147,6 +150,13 @@ export class FleetAgent {
       players: i.players.size,
       state: i.state,
     }));
+  }
+
+  private eluSinceLastReport(): number {
+    const now = performance.eventLoopUtilization();
+    const delta = performance.eventLoopUtilization(now, this.lastElu);
+    this.lastElu = now;
+    return Math.min(1, Math.max(0, delta.utilization));
   }
 
   private cpuSinceLastReport(): number {

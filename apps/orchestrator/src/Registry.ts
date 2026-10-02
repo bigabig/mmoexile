@@ -23,6 +23,7 @@ export interface ServerEntry extends ServerIdentity {
   instances: Map<string, InstanceEntry>;
   tickP95Ms: number;
   cpu: number;
+  eventLoopUtilization: number;
   lastHeartbeat: number;
 }
 
@@ -30,6 +31,11 @@ export interface RegistryOptions {
   now?: () => number;
   /** A server that sent no heartbeat for this long is dead (3 × 2 s). */
   deadAfterMs?: number;
+  /**
+   * A server silent for this long gets no new players, even before it is
+   * declared dead (1.5 × 2 s): a crashed server is avoided sooner.
+   */
+  staleAfterMs?: number;
   /** Dead and stopped servers are forgotten after this long. */
   forgetAfterMs?: number;
   /**
@@ -50,6 +56,7 @@ export class Registry {
   private servers = new Map<string, ServerEntry>();
   private readonly now: () => number;
   private readonly deadAfterMs: number;
+  private readonly staleAfterMs: number;
   private readonly forgetAfterMs: number;
   private readonly creationGraceMs: number;
   private readonly reservationTtlMs: number;
@@ -57,6 +64,7 @@ export class Registry {
   constructor(options: RegistryOptions = {}) {
     this.now = options.now ?? Date.now;
     this.deadAfterMs = options.deadAfterMs ?? 6000;
+    this.staleAfterMs = options.staleAfterMs ?? this.deadAfterMs / 2;
     this.forgetAfterMs = options.forgetAfterMs ?? 5 * 60_000;
     this.creationGraceMs = options.creationGraceMs ?? 5000;
     this.reservationTtlMs = options.reservationTtlMs ?? 1000;
@@ -79,6 +87,7 @@ export class Registry {
       instances: new Map(),
       tickP95Ms: 0,
       cpu: 0,
+      eventLoopUtilization: 0,
       // Re-registering after a crash: old instances are gone.
       lastHeartbeat: this.now(),
     };
@@ -102,6 +111,7 @@ export class Registry {
       capacity: report.capacity,
       tickP95Ms: report.tickP95Ms,
       cpu: report.cpu,
+      eventLoopUtilization: report.eventLoopUtilization,
       lastHeartbeat: now,
       // A drain requested here sticks until the server reports it.
       state: wasDraining && report.state === "ready" ? "draining" : report.state,
@@ -146,6 +156,11 @@ export class Registry {
       }
     }
     return died;
+  }
+
+  /** Ready and heard from recently: may receive new players. */
+  acceptsPlayers(entry: ServerEntry): boolean {
+    return entry.state === "ready" && this.now() - entry.lastHeartbeat <= this.staleAfterMs;
   }
 
   /** Stops new allocations to a server; it learns it with the next heartbeat. */
@@ -213,6 +228,7 @@ export class Registry {
       ),
       tickP95Ms: entry.tickP95Ms,
       cpu: entry.cpu,
+      eventLoopUtilization: entry.eventLoopUtilization,
       lastHeartbeatAgoMs: this.now() - entry.lastHeartbeat,
     };
   }
@@ -231,6 +247,7 @@ export class Registry {
         state: view.state,
         tickP95Ms: view.tickP95Ms,
         cpu: view.cpu,
+        eventLoopUtilization: view.eventLoopUtilization,
         // Give the server a full heartbeat window to confirm it is alive.
         lastHeartbeat: now,
         instances: new Map(

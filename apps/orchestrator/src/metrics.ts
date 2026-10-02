@@ -65,6 +65,16 @@ export class OrchestratorMetrics {
       },
     });
     new Gauge({
+      name: "mmoexile_fleet_server_event_loop_utilization",
+      help: "Event loop utilization per instance server (0..1), as last reported",
+      labelNames: ["server"],
+      registers,
+      collect() {
+        this.reset();
+        for (const s of fleet.all()) this.set({ server: s.serverId }, s.eventLoopUtilization);
+      },
+    });
+    new Gauge({
       name: "mmoexile_fleet_server_tick_p95_seconds",
       help: "Tick p95 per instance server, as last reported",
       labelNames: ["server"],

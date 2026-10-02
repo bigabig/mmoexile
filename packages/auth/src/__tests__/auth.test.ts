@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { SignJWT } from "jose";
 import {
   generateSecret,
@@ -73,6 +73,17 @@ describe("transfer tickets", () => {
     expect(t1.ticketId).not.toBe(t2.ticketId);
     expect((await verifyTicket(await signTicket({ ...claims, ticketId: "t-1" }, signing), verifying, "b")).ticketId).toBe("t-1");
     expect(t1.expiresAt).toBeGreaterThan(Date.now());
+    expect(Math.abs(t1.issuedAt - Date.now())).toBeLessThan(1000);
+  });
+
+  it("records the issue time to the millisecond (to time handoffs)", async () => {
+    vi.useFakeTimers({ now: 1_790_000_000_123 });
+    try {
+      const ticket = await verifyTicket(await signTicket(claims, signing), verifying, "b");
+      expect(ticket.issuedAt).toBe(1_790_000_000_123);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("is only valid on its target server", async () => {

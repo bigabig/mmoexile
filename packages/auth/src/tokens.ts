@@ -176,6 +176,8 @@ export async function signTicket(
     acc: claims.accountId,
     zone: claims.zoneId,
     inst: claims.instanceId,
+    // `iat` has whole seconds only; this times handoffs to the millisecond.
+    iatMs: Date.now(),
     srv: claims.targetServerId,
     party: claims.partyId,
     via: claims.via,
@@ -227,7 +229,10 @@ export async function verifyTicket(
       typeof via.portalId === "string"
         ? via
         : undefined,
-    issuedAt: (typeof p.iat === "number" ? p.iat : p.exp - 30) * 1000,
+    issuedAt:
+      typeof p.iatMs === "number"
+        ? p.iatMs
+        : (typeof p.iat === "number" ? p.iat : p.exp - 30) * 1000,
     expiresAt: p.exp * 1000,
   };
 }

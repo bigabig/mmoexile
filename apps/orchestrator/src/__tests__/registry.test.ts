@@ -25,6 +25,7 @@ const heartbeat = (
   instances,
   tickP95Ms: 5,
   cpu: 0.1,
+  eventLoopUtilization: 0.1,
   ...extra,
 });
 
@@ -117,6 +118,37 @@ describe("Registry", () => {
     registry.drain("s1");
     expect(registry.heartbeat(heartbeat("s1"))).toBe("draining");
     expect(registry.heartbeat(heartbeat("s1", [], { state: "stopped" }))).toBe("stopped");
+  });
+});
+
+describe("Orchestrator restart", () => {
+  let redis: Redis;
+  beforeAll(() => {
+    redis = new Redis(process.env.TEST_REDIS_URL!);
+  });
+  afterAll(async () => {
+    await redis.quit();
+  });
+
+  it("waits for the first heartbeats instead of answering 'fleet full'", async () => {
+    const orchestrator = createOrchestrator({
+      config: { HEARTBEAT_INTERVAL_MS: 200, TICKET_PRIVATE_KEY: DEV_TICKET_PRIVATE_KEY },
+      logger: createLogger("test", "silent"),
+      redis,
+    });
+    const pending = orchestrator.app.inject({
+      method: "POST",
+      url: "/allocate",
+      payload: { zoneId: "nexus", characterId: "c", accountId: "a" },
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    orchestrator.registry.heartbeat({
+      ...heartbeat("warm-s1", [nexus("nexus:eeeeee")]),
+    });
+    const response = await pending;
+    expect(response.statusCode).toBe(200);
+    expect(response.json().instanceId).toBe("nexus:eeeeee");
+    await orchestrator.stop();
   });
 });
 

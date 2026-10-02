@@ -115,7 +115,10 @@ export async function createInstanceServer({
   const host = new InstanceHost({
     persistence,
     onInstancesChanged: () => fleet?.reportSoon(),
-    onTickDuration: (ms) => metrics?.tickDuration.observe(ms / 1000),
+    onTickDuration: (ms, intervalMs) => {
+      metrics?.tickDuration.observe(ms / 1000);
+      if (intervalMs !== undefined) metrics?.tickInterval.observe(intervalMs / 1000);
+    },
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
     // Every zone change is a handoff with reconnect (decision D4).
     onPortalTransfer: (playerId, targetZoneId, via) => {

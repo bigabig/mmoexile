@@ -46,6 +46,27 @@ describe("Instance lifecycle", () => {
     host.stop();
   });
 
+  it("ticks an instance only while players are inside", () => {
+    vi.useFakeTimers();
+    const host = new InstanceHost({ sweepIntervalMs: 0 });
+    const dungeon = host.createInstance("golem_dungeon", { ownerPartyId: "solo:a" });
+    vi.advanceTimersByTime(1000);
+    expect(dungeon.world.currentTick).toBe(0); // sleeping since creation
+
+    const { instanceId: nexusId } = host.registerPlayer({ playerId: "a", name: "A" });
+    host.transferPlayer("a", "golem_dungeon", golemPortal(nexusId));
+    expect(host.getInstanceForPlayer("a")).toBe(dungeon);
+    vi.advanceTimersByTime(1000);
+    const ticked = dungeon.world.currentTick;
+    expect(ticked).toBeGreaterThan(20);
+
+    host.transferPlayer("a", "nexus");
+    vi.advanceTimersByTime(1000);
+    expect(dungeon.world.currentTick).toBe(ticked); // asleep again
+    host.stop();
+    vi.useRealTimers();
+  });
+
   it("does not close instances while players are inside", () => {
     let clock = 0;
     const host = new InstanceHost({ now: () => clock, sweepIntervalMs: 0 });

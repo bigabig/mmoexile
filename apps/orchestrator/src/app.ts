@@ -11,6 +11,7 @@ import type { Redis } from "@mmoexile/messaging";
 import { Registry } from "./Registry.js";
 import { RegistryMirror } from "./RegistryMirror.js";
 import { Allocator } from "./Allocator.js";
+import { PlacementError, type PlacementWeights } from "./placement.js";
 import { OrchestratorMetrics } from "./metrics.js";
 import type { Config } from "./config.js";
 
@@ -19,6 +20,8 @@ export interface OrchestratorDeps {
   logger: Logger;
   redis: Redis;
   now?: () => number;
+  /** Placement weights; defaults to DEFAULT_WEIGHTS. */
+  weights?: PlacementWeights;
 }
 
 export interface Orchestrator {
@@ -41,18 +44,39 @@ export function createOrchestrator({
   logger,
   redis,
   now = Date.now,
+  weights,
 }: OrchestratorDeps): Orchestrator {
   const registry = new Registry({
     now,
     deadAfterMs: config.HEARTBEAT_INTERVAL_MS * 3,
+    // 3 s with the default 2 s interval; never below 1 s, so a server busy
+    // for a moment (e.g. creating many instances) isn't skipped.
+    staleAfterMs: Math.min(
+      Math.max(config.HEARTBEAT_INTERVAL_MS * 1.5, 1000),
+      config.HEARTBEAT_INTERVAL_MS * 3,
+    ),
   });
   const mirror = new RegistryMirror(redis);
   const metrics = new OrchestratorMetrics(registry);
   const ticketKey = ticketSigningKey(config.TICKET_PRIVATE_KEY);
   ticketKey.catch(() => {}); // reported by start()
+  // A fresh orchestrator knows no servers until their next heartbeat. Rather
+  // than answering "fleet full" then, allocations wait up to two intervals.
+  const startedAt = now();
+  const warmup = async () => {
+    while (
+      !registry.all().some((s) => registry.acceptsPlayers(s)) &&
+      now() - startedAt < config.HEARTBEAT_INTERVAL_MS * 2
+    ) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+
   const allocator = new Allocator({
     registry,
     logger,
+    weights,
+    warmup,
     signTicket: async (claims) => signTicket(claims, await ticketKey),
     onAllocated: (ms, created) =>
       metrics.allocationDuration.observe({ created: String(created) }, ms / 1000),
@@ -68,7 +92,12 @@ export function createOrchestrator({
   app.setErrorHandler(
     (error: Error & { statusCode?: number; validation?: unknown }, _req, reply) => {
       const status = error.statusCode ?? (error.validation ? 400 : 500);
-      if (status >= 500) logger.error({ err: error }, "Request failed");
+      if (error instanceof PlacementError) {
+        // Expected (fleet full, unknown zone): no stack trace
+        logger.warn({ status, reason: error.message }, "Allocation refused");
+      } else if (status >= 500) {
+        logger.error({ err: error }, "Request failed");
+      }
       return reply
         .code(status)
         .send({ error: status >= 500 ? "Internal error" : error.message });

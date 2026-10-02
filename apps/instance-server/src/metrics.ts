@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import {
   Counter,
   createMetrics,
@@ -13,6 +14,7 @@ import type { InstanceHost } from "./cluster/index.js";
 export class InstanceServerMetrics {
   readonly registry: Registry;
   readonly tickDuration: Histogram;
+  readonly tickInterval: Histogram;
   readonly handoffDuration: Histogram<"kind">;
   readonly ticketRejections: Counter<"reason">;
   readonly leaseConflicts: Counter;
@@ -33,18 +35,37 @@ export class InstanceServerMetrics {
     });
     new Gauge({
       name: "mmoexile_instances",
-      help: "Live instances on this server, by zone",
-      labelNames: ["zone"],
+      help: "Live instances on this server, by zone and state (only running ones tick)",
+      labelNames: ["zone", "state"],
       registers,
       collect() {
         this.reset();
-        for (const instance of host.getAllInstances()) this.inc({ zone: instance.zone.id });
+        for (const instance of host.getAllInstances()) {
+          this.inc({ zone: instance.zone.id, state: instance.state });
+        }
+      },
+    });
+    let lastElu = performance.eventLoopUtilization();
+    new Gauge({
+      name: "mmoexile_event_loop_utilization",
+      help: "Share of time the event loop was busy since the last scrape (0..1)",
+      registers,
+      collect() {
+        const now = performance.eventLoopUtilization();
+        this.set(performance.eventLoopUtilization(now, lastElu).utilization);
+        lastElu = now;
       },
     });
     this.tickDuration = new Histogram({
       name: "mmoexile_tick_duration_seconds",
       help: "Duration of one simulation tick (any instance); the budget is 33 ms",
       buckets: FAST_DURATION_BUCKETS,
+      registers,
+    });
+    this.tickInterval = new Histogram({
+      name: "mmoexile_tick_interval_seconds",
+      help: "Time between two ticks of the same instance; 0.033 when the server keeps up",
+      buckets: [0.03, 0.034, 0.036, 0.04, 0.05, 0.066, 0.1, 0.2, 0.5],
       registers,
     });
     this.handoffDuration = new Histogram({
