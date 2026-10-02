@@ -85,7 +85,7 @@ docs/                     ← ARCHITECTURE.md, addressing_architecture_critique.
 - [x] `pnpm install && pnpm -r build && pnpm -r test` pass from a clean clone.
 - [x] `pnpm dev` starts server and client; the game plays exactly as before.
 - [x] `pnpm lint:deps` passes and fails if a rule is deliberately violated.
-- [ ] CI (added in S0.9) is green on GitHub.
+- [x] CI (added in S0.9) is green on GitHub.
 - [x] No file under `packages/` imports from `apps/`.
 
 ### Out of Scope
