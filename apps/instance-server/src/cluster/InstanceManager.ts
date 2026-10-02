@@ -1,4 +1,4 @@
-import { ZONES, type ZoneId } from "@mmoexile/game-core";
+import { ZONES, portalKey, soloPartyId, type ZoneId } from "@mmoexile/game-core";
 import type { Instance, InstanceId } from "./Instance.js";
 
 export interface PlacementRequest {
@@ -31,13 +31,7 @@ export interface InstanceDirectory {
   resolve(request: PlacementRequest): Instance;
 }
 
-export function soloPartyId(characterId: string): string {
-  return `solo:${characterId}`;
-}
-
-export function portalKey(sourceInstanceId: InstanceId, portalId: string) {
-  return `${sourceInstanceId}/${portalId}`;
-}
+export { soloPartyId, portalKey };
 
 export class InstanceManager implements InstanceDirectory {
   constructor(private readonly pool: InstancePool) {}

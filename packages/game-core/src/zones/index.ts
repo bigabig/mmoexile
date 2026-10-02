@@ -39,3 +39,13 @@ export function isZoneId(id: string): id is ZoneId {
 export function getZone(id: string): ZoneDefinition | undefined {
   return isZoneId(id) ? ZONES[id] : undefined;
 }
+
+/** Owner key of a solo player's private instances (a party of one). */
+export function soloPartyId(characterId: string): string {
+  return `solo:${characterId}`;
+}
+
+/** Key of a portal_bound instance: the portal it belongs to. */
+export function portalKey(sourceInstanceId: string, portalId: string): string {
+  return `${sourceInstanceId}/${portalId}`;
+}

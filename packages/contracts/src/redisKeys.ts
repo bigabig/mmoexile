@@ -14,4 +14,7 @@ export const redisKeys = {
   party: (partyId: string) => `party:${partyId}`,
   partyOf: (characterId: string) => `party:of:${characterId}`,
   partyInvite: (inviteeId: string) => `party:invite:${inviteeId}`,
+  /** The orchestrator's mirror of one instance server and its instances. */
+  fleetServer: (serverId: string) => `fleet:server:${serverId}`,
+  fleetServerPattern: "fleet:server:*",
 } as const;
