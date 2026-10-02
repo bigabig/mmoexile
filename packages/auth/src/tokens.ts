@@ -97,6 +97,8 @@ export interface TicketClaims {
   accountId: string;
   /** Zone to enter on the target server. */
   zoneId: string;
+  /** Instance the orchestrator chose; the server falls back to its own placement if unset. */
+  instanceId?: string;
   /** Server the ticket is valid for; other servers must reject it. */
   targetServerId: string;
   partyId?: string;
@@ -111,19 +113,20 @@ export interface VerifiedTicket extends TicketClaims {
 }
 
 export async function signTicket(
-  claims: TicketClaims,
+  claims: TicketClaims & { ticketId?: string },
   key: Uint8Array,
   ttlSeconds = 30,
 ): Promise<string> {
   return new SignJWT({
     acc: claims.accountId,
     zone: claims.zoneId,
+    inst: claims.instanceId,
     srv: claims.targetServerId,
     party: claims.partyId,
     via: claims.via,
   })
     .setProtectedHeader({ alg: "HS256" })
-    .setJti(randomUUID())
+    .setJti(claims.ticketId ?? randomUUID())
     .setSubject(claims.characterId)
     .setAudience(TICKET_AUDIENCE)
     .setIssuedAt()
@@ -160,6 +163,7 @@ export async function verifyTicket(
     characterId: p.sub,
     accountId: p.acc,
     zoneId: p.zone,
+    instanceId: typeof p.inst === "string" ? p.inst : undefined,
     targetServerId: p.srv,
     partyId: typeof p.party === "string" ? p.party : undefined,
     via:

@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
+import { secretKey, signTicket } from "@mmoexile/auth";
 import {
   orchestratorApi,
+  type AllocateRequest,
   type HeartbeatBody,
   type ServerIdentity,
 } from "@mmoexile/contracts";
@@ -8,10 +10,11 @@ import { createHttpService, type Logger } from "@mmoexile/service-kit";
 import type { Redis } from "@mmoexile/messaging";
 import { Registry } from "./Registry.js";
 import { RegistryMirror } from "./RegistryMirror.js";
+import { Allocator } from "./Allocator.js";
 import type { Config } from "./config.js";
 
 export interface OrchestratorDeps {
-  config: Pick<Config, "HEARTBEAT_INTERVAL_MS">;
+  config: Pick<Config, "HEARTBEAT_INTERVAL_MS" | "TICKET_SECRET">;
   logger: Logger;
   redis: Redis;
   now?: () => number;
@@ -20,6 +23,7 @@ export interface OrchestratorDeps {
 export interface Orchestrator {
   app: FastifyInstance;
   registry: Registry;
+  allocator: Allocator;
   /** Loads the Redis mirror and starts dead-server detection. */
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -41,6 +45,12 @@ export function createOrchestrator({
     deadAfterMs: config.HEARTBEAT_INTERVAL_MS * 3,
   });
   const mirror = new RegistryMirror(redis);
+  const ticketKey = secretKey(config.TICKET_SECRET);
+  const allocator = new Allocator({
+    registry,
+    logger,
+    signTicket: (claims) => signTicket(claims, ticketKey),
+  });
   let sweepTimer: NodeJS.Timeout | undefined;
 
   const app = createHttpService({
@@ -102,6 +112,12 @@ export function createOrchestrator({
     },
   );
 
+  app.post(
+    orchestratorApi.allocate.path,
+    { schema: { body: orchestratorApi.allocate.body } },
+    async (request) => allocator.allocate(request.body as AllocateRequest),
+  );
+
   app.get(orchestratorApi.listServers.path, async () => ({
     servers: registry.all().map((s) => registry.view(s)),
   }));
@@ -116,6 +132,7 @@ export function createOrchestrator({
   return {
     app,
     registry,
+    allocator,
     async start() {
       const restored = await mirror.load();
       registry.restore(restored);

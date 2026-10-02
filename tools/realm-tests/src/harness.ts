@@ -3,6 +3,7 @@ import { prisma } from "@mmoexile/db";
 import { Redis, RedisBroker } from "@mmoexile/messaging";
 import { createLogger } from "@mmoexile/service-kit";
 import { redisKeys } from "@mmoexile/contracts";
+import { DEV_TICKET_SECRET } from "@mmoexile/auth";
 import {
   createOrchestrator,
   type Orchestrator,
@@ -62,7 +63,7 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
 
   const newOrchestrator = () =>
     createOrchestrator({
-      config: { HEARTBEAT_INTERVAL_MS: heartbeatMs },
+      config: { HEARTBEAT_INTERVAL_MS: heartbeatMs, TICKET_SECRET: DEV_TICKET_SECRET },
       logger: createLogger("orchestrator", logLevel),
       redis,
     });

@@ -123,7 +123,12 @@ export class PlayerLifecycle {
       if (err instanceof InvalidTokenError) return { ok: false, reason: "invalid_ticket" };
       throw err;
     }
-    if (!isZoneId(ticket.zoneId) || serverForZone(this.deps.placement, ticket.zoneId).serverId !== this.deps.serverId) {
+    if (
+      !isZoneId(ticket.zoneId) ||
+      // Tickets from the orchestrator name an instance; the static table is a fallback.
+      (!ticket.instanceId &&
+        serverForZone(this.deps.placement, ticket.zoneId).serverId !== this.deps.serverId)
+    ) {
       return { ok: false, reason: "invalid_ticket" };
     }
     if (!(await this.claimTicket(ticket))) {
@@ -153,6 +158,7 @@ export class PlayerLifecycle {
         character,
         partyId: ticket.partyId,
         via: ticket.via,
+        instanceId: ticket.instanceId,
         allowPrivateZones: true,
       });
     } catch (err) {

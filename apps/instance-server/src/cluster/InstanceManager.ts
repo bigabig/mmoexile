@@ -13,6 +13,8 @@ export interface PlacementRequest {
 }
 
 export interface CreateInstanceOptions {
+  /** Use this ID (chosen by the orchestrator) instead of generating one. */
+  id?: InstanceId;
   ownerPartyId?: string;
   boundPortalKey?: string;
 }

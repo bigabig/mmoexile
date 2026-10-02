@@ -51,6 +51,7 @@ describe("transfer tickets", () => {
     characterId: "char1",
     accountId: "acc1",
     zoneId: "golem_dungeon",
+    instanceId: "golem_dungeon:7f3a9c",
     targetServerId: "b",
     partyId: "party_1",
     via: { sourceInstanceId: "overworld:abc123", portalId: "portal_to_dungeon_1" },
@@ -62,6 +63,7 @@ describe("transfer tickets", () => {
 
     expect(t1).toMatchObject(claims);
     expect(t1.ticketId).not.toBe(t2.ticketId);
+    expect((await verifyTicket(await signTicket({ ...claims, ticketId: "t-1" }, key), key, "b")).ticketId).toBe("t-1");
     expect(t1.expiresAt).toBeGreaterThan(Date.now());
   });
 

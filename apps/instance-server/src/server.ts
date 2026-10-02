@@ -141,7 +141,11 @@ export async function createInstanceServer({
     broker,
   });
   await gateway.subscribeToSharedChat();
-  const internalApi = buildInternalApi({ logger, host });
+  const internalApi = buildInternalApi({
+    logger,
+    host,
+    acceptsInstances: () => !fleet || fleet.currentState === "ready",
+  });
 
   // Keep presence entries of local players alive.
   const presenceTimer = setInterval(() => {

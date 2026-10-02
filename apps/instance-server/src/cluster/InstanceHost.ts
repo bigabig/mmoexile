@@ -61,6 +61,11 @@ export interface RegisterPlayerOptions {
   /** Portal used, for portal_bound zones. */
   via?: { sourceInstanceId: InstanceId; portalId: string };
   /**
+   * The instance the orchestrator allocated. Used if it is still open here;
+   * otherwise the local placement rules pick (or recreate) one.
+   */
+  instanceId?: InstanceId;
+  /**
    * Allow private and portal-bound zones. Only set when entry was authorized
    * (a transfer ticket); plain logins always land in public zones.
    */
@@ -169,7 +174,10 @@ export class InstanceHost implements InstancePool {
     options: CreateInstanceOptions = {},
   ): Instance {
     const zone = ZONES[zoneId];
-    let id = this.generateId(zoneId);
+    let id = options.id ?? this.generateId(zoneId);
+    if (options.id && this.instances.has(options.id)) {
+      throw new Error(`Instance ${options.id} already exists`);
+    }
     while (this.instances.has(id)) {
       id = this.generateId(zoneId);
     }
@@ -403,21 +411,28 @@ export class InstanceHost implements InstancePool {
         ZONES[options.zoneId].access.kind === "public_sharded")
         ? options.zoneId
         : "nexus";
-    if (!this.hostsZone(zoneId)) {
-      this.playerInfo.delete(playerId);
-      throw new Error(`Zone ${zoneId} is not hosted on this server`);
-    }
+    const allocated = options.instanceId
+      ? this.instances.get(options.instanceId)
+      : undefined;
     let instance: Instance;
-    try {
-      instance = this.placement.resolve({
-        zoneId,
-        characterId: charId,
-        partyId: options.partyId ?? this.getPartyId(charId),
-        via: options.via,
-      });
-    } catch (err) {
-      this.playerInfo.delete(playerId);
-      throw err;
+    if (allocated && allocated.zone.id === zoneId && allocated.state !== "closed") {
+      instance = allocated;
+    } else {
+      if (!this.hostsZone(zoneId)) {
+        this.playerInfo.delete(playerId);
+        throw new Error(`Zone ${zoneId} is not hosted on this server`);
+      }
+      try {
+        instance = this.placement.resolve({
+          zoneId,
+          characterId: charId,
+          partyId: options.partyId ?? this.getPartyId(charId),
+          via: options.via,
+        });
+      } catch (err) {
+        this.playerInfo.delete(playerId);
+        throw err;
+      }
     }
     this.addPlayerToInstance(instance, playerId);
 
