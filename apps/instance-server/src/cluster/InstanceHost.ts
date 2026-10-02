@@ -69,6 +69,8 @@ export interface RegisteredPlayer {
 
 export interface InstanceHostOptions {
   messageBus?: IMessageBus;
+  /** How often idle instances are checked for closing; 0 disables the timer. */
+  sweepIntervalMs?: number;
   /** Placement policy; defaults to the zone access rules (InstanceManager). */
   placement?: InstanceDirectory;
   generateId?: (zoneId: ZoneId) => InstanceId;
@@ -86,6 +88,7 @@ export class InstanceHost implements InstancePool {
   private readonly generateId: (zoneId: ZoneId) => InstanceId;
   private readonly now: () => number;
   private readonly placement: InstanceDirectory;
+  private sweepTimer: NodeJS.Timeout | null = null;
   public readonly messageBus: IMessageBus;
 
   constructor(options: InstanceHostOptions = {}) {
@@ -105,6 +108,16 @@ export class InstanceHost implements InstancePool {
     this.messageBus.onCommand((playerId, command) => {
       this.forwardCommand(playerId, command);
     });
+
+    // Lifecycle sweeper: runs outside every tick loop.
+    const sweepIntervalMs = options.sweepIntervalMs ?? 1000;
+    if (sweepIntervalMs > 0) {
+      this.sweepTimer = setInterval(
+        () => this.sweepIdleInstances(),
+        sweepIntervalMs,
+      );
+      this.sweepTimer.unref();
+    }
   }
 
   // --- Instances ---
@@ -126,8 +139,11 @@ export class InstanceHost implements InstancePool {
       zone,
       world,
       mapData,
-      runner: new InProcessWorldRunner(world, 30, (result) =>
-        this.handleTick(instance, result),
+      runner: new InProcessWorldRunner(
+        world,
+        30,
+        (result) => this.handleTick(instance, result),
+        (error) => this.handleInstanceCrash(instance, error),
       ),
       players: new Set(),
       ownerPartyId: options.ownerPartyId,
@@ -147,8 +163,90 @@ export class InstanceHost implements InstancePool {
     return this.instances.get(instanceId);
   }
 
+  /** Live instances of a zone (closed and crashed instances are removed). */
   public getInstancesForZone(zoneId: ZoneId): Instance[] {
     return [...this.instances.values()].filter((i) => i.zone.id === zoneId);
+  }
+
+  /**
+   * Stops an instance, destroys its world (releasing its entity IDs) and
+   * forgets it. Players must have left already.
+   */
+  public closeInstance(
+    instance: Instance,
+    finalState: "closed" | "crashed" = "closed",
+  ): void {
+    if (instance.state === "closed" || instance.state === "crashed") return;
+    instance.runner.stop();
+    instance.world.destroy();
+    instance.state = finalState;
+    this.instances.delete(instance.id);
+  }
+
+  /**
+   * Closes instances that have been empty longer than their zone's timeout,
+   * keeping each zone's minimum number of warm instances.
+   */
+  public sweepIdleInstances(): Instance[] {
+    const now = this.now();
+    const closed: Instance[] = [];
+    for (const zone of Object.values(ZONES)) {
+      const instances = this.getInstancesForZone(zone.id);
+      let alive = instances.length;
+      const expired = instances
+        .filter(
+          (i) =>
+            i.state === "empty" &&
+            i.emptySince !== undefined &&
+            now - i.emptySince >= zone.emptyTimeoutSec * 1000,
+        )
+        .sort((a, b) => a.emptySince! - b.emptySince!);
+      for (const instance of expired) {
+        if (alive <= (zone.minWarmInstances ?? 0)) break;
+        this.closeInstance(instance);
+        closed.push(instance);
+        alive--;
+      }
+    }
+    return closed;
+  }
+
+  /**
+   * Fault isolation: a tick that throws takes down only its own instance.
+   * Players inside are saved and moved to a nexus shard; every other
+   * instance in the process keeps running.
+   */
+  private handleInstanceCrash(instance: Instance, error: unknown): void {
+    console.error(
+      `[InstanceHost] Instance ${instance.id} (zone ${instance.zone.id}) crashed:`,
+      error,
+    );
+    const evacuated = [...instance.players];
+    for (const playerId of evacuated) {
+      const info = this.playerInfo.get(playerId);
+      const state = instance.world.getPlayerPersistenceState(playerId);
+      if (info && state) {
+        persistenceService.queueSave(info.charId, state);
+      }
+      const nexus = this.placement.resolve({
+        zoneId: "nexus",
+        characterId: info?.charId ?? playerId,
+      });
+      if (!this.movePlayer(playerId, instance, nexus)) {
+        instance.players.delete(playerId);
+        this.playerInstance.delete(playerId);
+      }
+    }
+    this.closeInstance(instance, "crashed");
+
+    if (evacuated.length > 0) {
+      this.messageBus.publishChat({
+        sender: "System",
+        text: `${instance.mapData.name} ran into a server error and was closed. You have been moved to the Nexus.`,
+        kind: "system",
+        targetPlayerIds: evacuated,
+      });
+    }
   }
 
   public getAllInstances(): Instance[] {
@@ -331,7 +429,16 @@ export class InstanceHost implements InstancePool {
       return false;
     }
     if (target.id === source.id) return false;
+    return this.movePlayer(playerId, source, target);
+  }
 
+  /** Moves a player between two instances, preserving their session state. */
+  private movePlayer(
+    playerId: string,
+    source: Instance,
+    target: Instance,
+  ): boolean {
+    const info = this.playerInfo.get(playerId);
     const eid = source.world.uuidToEid.get(playerId);
     if (eid === undefined) return false;
 
@@ -366,11 +473,13 @@ export class InstanceHost implements InstancePool {
       spawnPoint: target.mapData.spawnPoint,
     });
 
-    this.broadcastChat(
-      "System",
-      `${info.name} entered ${target.mapData.name}`,
-      "system",
-    );
+    if (info) {
+      this.broadcastChat(
+        "System",
+        `${info.name} entered ${target.mapData.name}`,
+        "system",
+      );
+    }
     return true;
   }
 
@@ -496,12 +605,13 @@ export class InstanceHost implements InstancePool {
   }
 
   public stop(): void {
-    for (const instance of this.instances.values()) {
-      instance.runner.stop();
-      instance.world.destroy();
-      instance.state = "closed";
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
     }
-    this.instances.clear();
+    for (const instance of [...this.instances.values()]) {
+      this.closeInstance(instance);
+    }
     this.playerInstance.clear();
     this.playerInfo.clear();
   }

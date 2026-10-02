@@ -9,7 +9,16 @@ import type { IWorldRunner } from "./runners/IWorldRunner.js";
  */
 export type InstanceId = string;
 
-export type InstanceState = "creating" | "running" | "empty" | "closed";
+/**
+ * creating → running ⇄ empty → closed. "crashed" replaces "closed" when the
+ * instance was shut down because its tick threw.
+ */
+export type InstanceState =
+  | "creating"
+  | "running"
+  | "empty"
+  | "closed"
+  | "crashed";
 
 /**
  * One live, ticking copy of a zone. See SERVER_INFRASTRUCTURE.md §1.

@@ -76,12 +76,14 @@ Hosts the instances of this process and routes players between them.
 - **`InstanceHost`**:
   - Creates instances from zones (`createInstance(zoneId)`). At startup only warm instances exist (one `nexus`); everything else is created on demand.
   - Delegates "which instance does this character enter?" to an `InstanceDirectory` (default: `InstanceManager`).
+  - **Lifecycle:** `sweepIdleInstances()` runs every second outside the tick loops and closes instances that have been empty longer than their zone's `emptyTimeoutSec`, keeping `minWarmInstances`. `closeInstance()` stops the runner and destroys the world, releasing its entity IDs.
+  - **Fault isolation:** each runner wraps its tick in an error boundary. If an instance's tick throws, `handleInstanceCrash()` saves its players, moves them to a nexus shard with a private system message, and closes the instance as `crashed`; other instances keep running.
   - Registers and unregisters players (`registerPlayer({ playerId, name, zoneId, character })`), forwards their commands.
   - Moves players between instances (`transferPlayer(playerId, targetZoneId)`).
   - Queues periodic persistence every 150 ticks (5 s).
   - `prepareShutdown()` freezes all runners and snapshots every player for the final flush.
 - **`runners/IWorldRunner`**: contract for driving a world (`start()`, `stop()`, `step()`).
-- **`runners/InProcessWorldRunner`**: drives a world with `setInterval` at 30 Hz on the main thread. This is currently the only runner; all worlds share the main thread.
+- **`runners/InProcessWorldRunner`**: drives a world with `setInterval` at 30 Hz on the main thread, with an error boundary around every tick. This is currently the only runner; all worlds share the main thread.
 
 ### Simulation (`packages/simulation/src/`)
 

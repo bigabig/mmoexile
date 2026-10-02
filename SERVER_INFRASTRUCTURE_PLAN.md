@@ -160,7 +160,7 @@ Rules:
 - **`portal_bound`**: key = `<sourceInstanceId>/<portalId>` (portal IDs come from map definitions, so they repeat across instances of the same zone); the instance is created on first entry, shared by everyone who uses that portal. Entering without a portal is refused.
 - Login only honors public zones; a character whose saved zone is private or portal-bound logs into the nexus (part of S1.9).
 
-### S1.4 Instance Lifecycle
+### S1.4 Instance Lifecycle ✅
 
 - States: `creating → running → empty → closed` (plus `crashed`, see fault isolation below).
 - A sweeper (1 Hz, outside the tick loop) closes instances whose `emptySince + emptyTimeoutSec` has passed, except to keep `minWarmInstances`.

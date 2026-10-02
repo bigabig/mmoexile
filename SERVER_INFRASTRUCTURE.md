@@ -153,7 +153,7 @@ Today, everything runs in **one Node process** (`apps/instance-server/src/index.
 | Zone vs. instance | **Done (S1.1–S1.3):** zones (`ZONES`) are templates; instances have ids like `golem_dungeon:7f3a9c` and are created on demand by `InstanceManager` | Instances created on demand from zones |
 | Private instances | **Done (S1.3):** one golem dungeon per party (solo players count as a party of one); `portal_bound` zones are supported but unused | Per-party, owned, with timeout |
 | Public sharding | **Done (S1.3):** fill-first placement below the soft cap, new shard when all are full, preferred shard up to the hard cap | N Nexus copies with a player cap |
-| Instance lifecycle | Worlds live forever | creating → running → empty → closed |
+| Instance lifecycle | **Done (S1.4):** a 1 Hz sweeper closes instances empty longer than their zone's timeout (keeping warm hub instances); a tick that throws closes only its own instance and moves its players to the nexus | creating → running → empty → closed |
 | Execution | Only `InProcessWorldRunner`; all worlds tick on the main thread (worker threads are not yet implemented) | Many processes/cores, many machines |
 | ECS isolation | **Fixed in S1.0:** all `GameWorld`s in a process allocate entity IDs from one shared index (`processEntityIndex`), so the module-global component arrays (`Health.current[eid]`) are never written by two worlds; `destroy()` releases a world's IDs | One shared entity index per process |
 | Zone transfer | In-memory function call (`InstanceHost.transferPlayer`) | Save → release lease → ticket → reconnect → claim |

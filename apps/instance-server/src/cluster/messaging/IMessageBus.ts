@@ -12,7 +12,10 @@ export interface ChatPayload {
   sender: string;
   text: string;
   kind: "system" | "player";
+  /** Only players in this instance receive it. */
   targetInstanceId?: string;
+  /** Only these players receive it (takes precedence over targetInstanceId). */
+  targetPlayerIds?: string[];
 }
 
 export interface PlayerDeathPayload {

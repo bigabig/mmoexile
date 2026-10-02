@@ -106,7 +106,8 @@ export class WebSocketGateway implements ITransportGateway {
     );
 
     // 3. Chat broadcast
-    this.messageBus.onChat(({ sender, text, kind, targetInstanceId }) => {
+    this.messageBus.onChat(
+      ({ sender, text, kind, targetInstanceId, targetPlayerIds }) => {
       const packet: S2C_ChatPacket = {
         type: "s2c_chat",
         sender,
@@ -116,7 +117,9 @@ export class WebSocketGateway implements ITransportGateway {
       };
       const binary = serializePacket(packet);
 
-      if (targetInstanceId) {
+      if (targetPlayerIds) {
+        this.sessionManager.broadcastToPlayers(targetPlayerIds, binary);
+      } else if (targetInstanceId) {
         const instance = this.host.getInstance(targetInstanceId);
         if (instance) {
           this.sessionManager.broadcastToPlayers(instance.players, binary);
@@ -124,7 +127,8 @@ export class WebSocketGateway implements ITransportGateway {
       } else {
         this.sessionManager.broadcastAll(binary);
       }
-    });
+      },
+    );
   }
 
   private setupWebSocketListeners(): void {
