@@ -31,6 +31,7 @@ import {
 import type { PlayerPersistenceSnapshot } from "@mmoexile/simulation";
 import type { IMessageBus } from "./messaging/IMessageBus.js";
 import { InMemoryMessageBus } from "./messaging/InMemoryMessageBus.js";
+import { TickStats } from "./TickStats.js";
 
 /** Character data accepted when a player joins (domain or raw DB shape). */
 export type JoiningCharacter =
@@ -96,6 +97,8 @@ export interface InstanceHostOptions {
   getPartyId?: (characterId: string) => string | undefined;
   generateId?: (zoneId: ZoneId) => InstanceId;
   now?: () => number;
+  /** An instance was created or closed (the fleet agent reports it at once). */
+  onInstancesChanged?: () => void;
 }
 
 /**
@@ -116,7 +119,10 @@ export class InstanceHost implements InstancePool {
     InstanceHostOptions["onPortalTransfer"]
   >;
   private sweepTimer: NodeJS.Timeout | null = null;
+  private readonly onInstancesChanged: () => void;
   public readonly messageBus: IMessageBus;
+  /** Tick durations of every instance in this process. */
+  public readonly tickStats = new TickStats();
 
   constructor(options: InstanceHostOptions = {}) {
     this.messageBus = options.messageBus ?? new InMemoryMessageBus();
@@ -126,6 +132,7 @@ export class InstanceHost implements InstancePool {
     this.getPartyId = options.getPartyId ?? (() => undefined);
     this.persistence = options.persistence ?? NO_PERSISTENCE;
     this.hostsZone = options.hostsZone ?? (() => true);
+    this.onInstancesChanged = options.onInstancesChanged ?? (() => {});
     this.onPortalTransfer =
       options.onPortalTransfer ??
       ((playerId, targetZoneId, via) =>
@@ -179,6 +186,7 @@ export class InstanceHost implements InstancePool {
         30,
         (result) => this.handleTick(instance, result),
         (error) => this.handleInstanceCrash(instance, error),
+        (ms) => this.tickStats.record(ms),
       ),
       players: new Set(),
       ownerPartyId: options.ownerPartyId,
@@ -191,6 +199,7 @@ export class InstanceHost implements InstancePool {
     this.instances.set(id, instance);
     instance.runner.start();
     instance.state = "empty";
+    this.onInstancesChanged();
     return instance;
   }
 
@@ -216,6 +225,7 @@ export class InstanceHost implements InstancePool {
     instance.world.destroy();
     instance.state = finalState;
     this.instances.delete(instance.id);
+    this.onInstancesChanged();
   }
 
   /**

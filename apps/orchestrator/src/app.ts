@@ -1,5 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { orchestratorApi } from "@mmoexile/contracts";
+import {
+  orchestratorApi,
+  type HeartbeatBody,
+  type ServerIdentity,
+} from "@mmoexile/contracts";
 import { createHttpService, type Logger } from "@mmoexile/service-kit";
 import type { Redis } from "@mmoexile/messaging";
 import { Registry } from "./Registry.js";
@@ -51,6 +55,50 @@ export function createOrchestrator({
       return reply
         .code(status)
         .send({ error: status >= 500 ? "Internal error" : error.message });
+    },
+  );
+
+  const mirrorServer = (serverId: string) => {
+    const entry = registry.get(serverId);
+    if (entry) {
+      mirror.save(registry.view(entry)).catch((err) =>
+        logger.warn({ err }, "Could not mirror the registry to Redis"),
+      );
+    }
+  };
+
+  app.post(
+    orchestratorApi.register.path,
+    { schema: { body: orchestratorApi.register.body } },
+    async (request) => {
+      const identity = request.body as ServerIdentity;
+      registry.register(identity);
+      mirrorServer(identity.serverId);
+      logger.info({ serverId: identity.serverId, url: identity.url }, "Instance server registered");
+      return { heartbeatIntervalMs: config.HEARTBEAT_INTERVAL_MS };
+    },
+  );
+
+  app.post(
+    orchestratorApi.heartbeat.path,
+    { schema: { body: orchestratorApi.heartbeat.body } },
+    async (request, reply) => {
+      const report = request.body as HeartbeatBody;
+      const { id } = request.params as { id: string };
+      if (id !== report.serverId) {
+        return reply.code(400).send({ error: "Server ID in path and body differ" });
+      }
+      const known = registry.get(id);
+      if (!known || known.state === "dead") {
+        logger.info({ serverId: id, wasDead: known?.state === "dead" }, "Instance server (re)joined via heartbeat");
+      }
+      const previous = known?.state;
+      const desiredState = registry.heartbeat(report);
+      if (previous && previous !== report.state && report.state !== "ready") {
+        logger.info({ serverId: id, state: report.state }, "Instance server changed state");
+      }
+      mirrorServer(id);
+      return { desiredState };
     },
   );
 

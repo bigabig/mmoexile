@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   fastify,
+  LogController,
   type FastifyBaseLogger,
   type FastifyInstance,
 } from "fastify";
@@ -29,7 +30,7 @@ export function createHttpService(
   const app = fastify({
     // pino's Logger and Fastify's logger type disagree on minor typings.
     loggerInstance: options.logger as unknown as FastifyBaseLogger,
-    disableRequestLogging: true,
+    logController: new LogController({ disableRequestLogging: true }),
     requestIdHeader: REQUEST_ID_HEADER,
     genReqId: () => randomUUID(),
   });

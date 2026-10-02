@@ -14,6 +14,18 @@ export const configSchema = baseConfigSchema.extend({
   /** apps/social, for party commands. */
   SOCIAL_URL: z.string().default("http://localhost:3002"),
   LEASE_TTL_MS: z.coerce.number().int().positive().default(30_000),
+  /** Client-facing WebSocket URL; defaults to ws://localhost:<port>/ws. */
+  PUBLIC_URL: z.string().optional(),
+  /** Internal HTTP API (orchestrator calls, metrics); never exposed to clients. */
+  INTERNAL_PORT: z.coerce.number().int().nonnegative().default(9001),
+  /** How the orchestrator reaches INTERNAL_PORT; defaults to localhost. */
+  INTERNAL_URL: z.string().optional(),
+  /** Empty disables fleet registration (tests, standalone runs). */
+  ORCHESTRATOR_URL: z.string().default("http://localhost:3003"),
+  REGION: z.string().default("local"),
+  /** Players this server should hold at most (placement limit). */
+  CAPACITY: z.coerce.number().int().positive().default(200),
+  HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
 });
 
 export type Config = z.infer<typeof configSchema>;

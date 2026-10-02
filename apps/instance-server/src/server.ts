@@ -20,6 +20,8 @@ import { CharacterOwnership } from "./ownership/CharacterOwnership.js";
 import { LeaseKeeper } from "./ownership/LeaseKeeper.js";
 import { FencedCharacterWriter } from "./ownership/FencedCharacterWriter.js";
 import { PlayerLifecycle } from "./players/PlayerLifecycle.js";
+import { buildInternalApi } from "./internalApi.js";
+import { FleetAgent } from "./fleet/FleetAgent.js";
 import type { Config } from "./config.js";
 
 export interface InstanceServerDeps {
@@ -38,6 +40,11 @@ export interface InstanceServer {
   readonly host: InstanceHost;
   readonly lifecycle: PlayerLifecycle;
   readonly gateway: WebSocketGateway;
+  /** Link to the orchestrator; unset if ORCHESTRATOR_URL is empty. */
+  readonly fleet: FleetAgent | undefined;
+  /** Port of the internal API, once listening. */
+  readonly internalPort: number | undefined;
+  /** Opens the public and internal ports, then joins the fleet. */
   listen(port: number): Promise<number>;
   /** Saves and releases every character, then stops everything. */
   stop(): Promise<void>;
@@ -80,8 +87,12 @@ export async function createInstanceServer({
   const partyCache = new PartyCache(broker);
   await partyCache.start();
 
+  let fleet: FleetAgent | undefined;
+  let internalPort: number | undefined;
+
   const host = new InstanceHost({
     persistence,
+    onInstancesChanged: () => fleet?.reportSoon(),
     hostsZone,
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
     // Every zone change is a handoff with reconnect (decision D4).
@@ -130,6 +141,7 @@ export async function createInstanceServer({
     broker,
   });
   await gateway.subscribeToSharedChat();
+  const internalApi = buildInternalApi({ logger, host });
 
   // Keep presence entries of local players alive.
   const presenceTimer = setInterval(() => {
@@ -148,18 +160,49 @@ export async function createInstanceServer({
     "Instance server ready",
   );
 
+  const joinFleet = async (publicPort: number) => {
+    if (!config.ORCHESTRATOR_URL) return;
+    fleet = new FleetAgent({
+      identity: {
+        serverId: config.SERVER_ID,
+        url: config.PUBLIC_URL ?? `ws://localhost:${publicPort}/ws`,
+        internalUrl: config.INTERNAL_URL ?? `http://localhost:${internalPort}`,
+        region: config.REGION,
+        capacity: config.CAPACITY,
+      },
+      orchestratorUrl: config.ORCHESTRATOR_URL,
+      host,
+      intervalMs: config.HEARTBEAT_INTERVAL_MS,
+      log: (level, message, extra) => logger[level](extra ?? {}, message),
+    });
+    await fleet.start();
+  };
+
   return {
     host,
     lifecycle,
     gateway,
-    listen: (port) =>
-      new Promise((resolve) =>
+    get fleet() {
+      return fleet;
+    },
+    get internalPort() {
+      return internalPort;
+    },
+    listen: async (port) => {
+      const publicPort = await new Promise<number>((resolve) =>
         httpServer.listen(port, () =>
           resolve((httpServer.address() as AddressInfo).port),
         ),
-      ),
+      );
+      await internalApi.listen({ port: config.INTERNAL_PORT, host: "0.0.0.0" });
+      internalPort = (internalApi.server.address() as AddressInfo).port;
+      await joinFleet(publicPort);
+      return publicPort;
+    },
     stop: async () => {
       clearInterval(presenceTimer);
+      // No new allocations while players are saved and kicked.
+      await fleet?.setState("draining");
       leases.stop();
       await gracefulShutdown({
         gateway,
@@ -173,6 +216,8 @@ export async function createInstanceServer({
           }),
         disconnectDatabase: async () => {},
       });
+      await fleet?.stop();
+      await internalApi.close();
     },
   };
 }

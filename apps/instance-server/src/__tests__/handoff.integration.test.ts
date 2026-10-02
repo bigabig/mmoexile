@@ -44,6 +44,8 @@ async function startServer(serverId: "a" | "b", port: number, servers: string) {
     SERVERS: servers,
     ZONE_PLACEMENT: "nexus:a,overworld:b,golem_dungeon:b",
     REDIS_URL: process.env.TEST_REDIS_URL,
+    INTERNAL_PORT: "0",
+    ORCHESTRATOR_URL: "",
   });
   const redis = new Redis(process.env.TEST_REDIS_URL!);
   const broker = new RedisBroker({ redis });

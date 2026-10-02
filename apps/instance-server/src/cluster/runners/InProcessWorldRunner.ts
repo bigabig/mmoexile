@@ -4,6 +4,7 @@ import type { WorldTickResult } from "@mmoexile/simulation";
 
 export type WorldTickCallback = (result: WorldTickResult) => void;
 export type WorldErrorCallback = (error: unknown) => void;
+export type WorldTimingCallback = (durationMs: number) => void;
 
 export class InProcessWorldRunner implements IWorldRunner {
   public readonly world: GameWorld;
@@ -12,17 +13,20 @@ export class InProcessWorldRunner implements IWorldRunner {
   private isRunning: boolean = false;
   private onTick?: WorldTickCallback;
   private onError?: WorldErrorCallback;
+  private onTiming?: WorldTimingCallback;
 
   constructor(
     world: GameWorld,
     tickRateHz: number = 30,
     onTick?: WorldTickCallback,
     onError?: WorldErrorCallback,
+    onTiming?: WorldTimingCallback,
   ) {
     this.world = world;
     this.tickIntervalMs = 1000 / tickRateHz;
     this.onTick = onTick;
     this.onError = onError;
+    this.onTiming = onTiming;
   }
 
   public setOnTick(callback: WorldTickCallback): void {
@@ -36,7 +40,9 @@ export class InProcessWorldRunner implements IWorldRunner {
     this.intervalTimer = setInterval(() => {
       // Error boundary: a failing tick stops this world only, never the process.
       try {
+        const started = performance.now();
         const result = this.step(1 / 30, Date.now());
+        this.onTiming?.(performance.now() - started);
         if (this.onTick) {
           this.onTick(result);
         }
