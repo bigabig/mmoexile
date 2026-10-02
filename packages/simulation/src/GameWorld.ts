@@ -1,5 +1,6 @@
 import {
   createWorld,
+  getAllEntities,
   query,
   removeEntity,
   hasComponent,
@@ -39,6 +40,7 @@ import {
   type SpawnProjectileOptions,
 } from "./ecs/EntityFactory.js";
 import { EntityManager } from "./ecs/EntityManager.js";
+import { processEntityIndex } from "./ecs/entityIndex.js";
 import { CommandQueue } from "./commands/CommandQueue.js";
 import type { PlayerCommand } from "./commands/PlayerCommand.js";
 import {
@@ -96,8 +98,9 @@ export class GameWorld {
     this.mapData = mapData;
     this.events = new EventBus<WorldEventMap>();
 
-    // Instantiate bitECS World
-    this.ecsWorld = createWorld();
+    // Instantiate bitECS World, allocating IDs from the process-wide index
+    // so entity IDs never collide with other worlds in this process.
+    this.ecsWorld = createWorld(processEntityIndex);
 
     // Instantiate Entity Manager
     this.entities = new EntityManager(this);
@@ -485,6 +488,10 @@ export class GameWorld {
   }
 
   public destroy(): void {
+    // Release this world's entity IDs back to the shared process-wide index.
+    for (const eid of getAllEntities(this.ecsWorld)) {
+      removeEntity(this.ecsWorld, eid);
+    }
     this.commandQueue.clear();
     this.tickBuffer.clear();
     this.events.clear();

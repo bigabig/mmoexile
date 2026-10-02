@@ -97,7 +97,7 @@ Any behavior change, renaming `GameWorld` (Stage 1), Turborepo (revisit when bui
 
 **Goal:** The game *behaves* like an instanced ARPG: zones vs. instances, private per-party dungeons, sharded public hubs, instance lifecycle, parties, Postgres. Still a single process, but with interfaces shaped so Stage 2/3 can swap in distributed implementations.
 
-### S1.0 Prerequisite: Fix ECS Entity-ID Collisions ⚠️
+### S1.0 Prerequisite: Fix ECS Entity-ID Collisions ✅
 
 **Problem (verified):** bitECS components are module-global arrays (e.g. `Health.current[eid]` in `game-core/components`). Every `GameWorld` calls `createWorld()`, which creates its **own** entity index, so two worlds in one process both allocate `eid = 1` and write into the same array slots. This already affects today's 3 worlds and gets worse with hundreds of instances.
 

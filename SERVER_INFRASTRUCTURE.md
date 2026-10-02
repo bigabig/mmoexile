@@ -155,7 +155,7 @@ Today, everything runs in **one Node process** (`apps/instance-server/src/index.
 | Public sharding | One Nexus for everyone | N Nexus copies with a player cap |
 | Instance lifecycle | Worlds live forever | creating → running → empty → closed |
 | Execution | Only `InProcessWorldRunner`; all worlds tick on the main thread (worker threads are not yet implemented) | Many processes/cores, many machines |
-| ECS isolation | **Broken for >1 world per process:** bitECS components are module-global arrays (`Health.current[eid]`), but every `GameWorld` calls `createWorld()` with its own entity index, so two worlds both hand out `eid = 1` and overwrite each other's component data | One shared entity index per process, so entity IDs never collide across instances |
+| ECS isolation | **Fixed in S1.0:** all `GameWorld`s in a process allocate entity IDs from one shared index (`processEntityIndex`), so the module-global component arrays (`Health.current[eid]`) are never written by two worlds; `destroy()` releases a world's IDs | One shared entity index per process |
 | Zone transfer | In-memory function call (`WorldCluster.transferPlayer`) | Save → release lease → ticket → reconnect → claim |
 | Client connection | One fixed `ws://host:3001/ws` for the whole session | Reconnects to whichever server hosts the instance |
 | Auth | Token stored in DB, looked up by the gateway | Signed session token, verifiable anywhere |
