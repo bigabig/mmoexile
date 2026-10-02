@@ -249,9 +249,10 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 
 **Static placement:** in Stage 2, which server hosts which zone is a config table (`ZONE_PLACEMENT=nexus:a,overworld:b,golem_dungeon:b`). This is the classic "zone server" model of older MMOs and a deliberate stepping stone: it gives us real cross-server handoffs without an orchestrator. The **target server** resolves the concrete instance (it runs its own `InstanceManager` from Stage 1).
 
-### S2.1 `packages/service-kit`
+### S2.1 `packages/service-kit` ✅
 - Env config loading + validation (zod), structured logging (pino), `/health` + `/ready` endpoints, graceful shutdown hooks, request/correlation IDs.
 - Every app's `main.ts` uses it, so all services behave identically operationally.
+- Implemented as `loadConfig` (zod), `createLogger` (pino), `createHttpService` (Fastify with zod validators, `x-request-id`, `/health`, `/ready`) and `handleShutdownSignals`. No `fastify-type-provider-zod`: its required peers pull in Swagger/OpenAPI, and the validator hook is a few lines.
 
 ### S2.2 `packages/contracts`
 - zod schemas + TS types for: account-api HTTP API, social HTTP API, instance-server internal API, and **broker subjects** (`chat.global`, `chat.party.<partyId>`, `chat.whisper.<characterId>`, `party.updated.<partyId>`, `session.kick.<characterId>`).
