@@ -95,6 +95,30 @@ describe("Instance lifecycle", () => {
   });
 });
 
+describe("Lifecycle sweeper timer", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("closes idle instances on its own once per second", () => {
+    vi.useFakeTimers();
+    let clock = 0;
+    const host = new InstanceHost({ now: () => clock });
+    const { instanceId: nexusId } = host.registerPlayer({
+      playerId: "a",
+      name: "A",
+    });
+    host.transferPlayer("a", "golem_dungeon", golemPortal(nexusId));
+    const dungeon = host.getInstanceForPlayer("a")!;
+    host.transferPlayer("a", "nexus");
+
+    clock = ZONES.golem_dungeon.emptyTimeoutSec * 1000;
+    vi.advanceTimersByTime(1000);
+
+    expect(dungeon.state).toBe("closed");
+    expect(host.getInstance(dungeon.id)).toBeUndefined();
+    host.stop();
+  });
+});
+
 describe("Per-instance fault isolation", () => {
   afterEach(() => {
     vi.useRealTimers();
