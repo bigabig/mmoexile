@@ -260,11 +260,12 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 - Implemented modules: `accountApi`, `social`, `broker` (channels `chat.global`, `chat.party`, `party.updated`, `session.kick`), `redisKeys`, `placement` (parsing `SERVERS` / `ZONE_PLACEMENT`), and `createHttpClient` (validates responses with the route's schema). Runs in the browser too, so it is held to the same no-I/O rule as `game-core`.
 - Instance servers keep a local party cache (seeded from `social` when a character arrives, updated by `party.updated`); tickets carry the `partyId`, so placement never waits on a network call.
 
-### S2.3 `packages/auth`
+### S2.3 `packages/auth` ✅
 - **Session token:** JWT (`jose`), `{ sub: accountId, exp: 24h }`, issued by account-api.
 - **Transfer ticket:** JWT, `{ jti, characterId, accountId, zoneId, partyId?, viaPortalId?, targetServerId, exp: 30s }`.
 - Signing: shared HMAC secret in Stage 2 (all trusted services hold it). Stage 3 switches tickets to Ed25519 so instance servers only hold the public key.
-- Replay protection: `jti` claimed once via Redis `SET ticket:<jti> 1 NX EX 60`.
+- Replay protection: `jti` claimed once via Redis `SET ticket:<jti> 1 NX EX 60`. The auth package only signs and verifies (signature, expiry, target server); claiming the `jti` happens in the instance server's handoff code (S2.8).
+- Refresh secrets are random, stored only as SHA-256 hashes, and compared in constant time.
 
 ### S2.4 `packages/messaging`
 - `Broker` interface: `publish(subject, msg)`, `subscribe(subject, handler)`, pattern subscriptions; typed by `contracts`.
