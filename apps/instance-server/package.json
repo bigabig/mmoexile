@@ -10,8 +10,10 @@
   },
   "dependencies": {
     "@mmoexile/auth": "workspace:*",
+    "@mmoexile/contracts": "workspace:*",
     "@mmoexile/db": "workspace:*",
     "@mmoexile/game-core": "workspace:*",
+    "@mmoexile/messaging": "workspace:*",
     "@mmoexile/protocol": "workspace:*",
     "@mmoexile/simulation": "workspace:*",
     "@msgpack/msgpack": "^3.0.0",
@@ -21,6 +23,7 @@
   "devDependencies": {
     "@mmoexile/tsconfig": "workspace:*",
     "@testcontainers/postgresql": "^12.2.0",
+    "@testcontainers/redis": "^12.2.0",
     "@types/node": "^22.13.0",
     "@types/ws": "^8.5.14",
     "tsx": "^4.19.3",

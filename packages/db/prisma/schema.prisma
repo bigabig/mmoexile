@@ -41,6 +41,9 @@ model Character {
   y              Float    @default(20.0)
   isAlive        Boolean  @default(true)
   deathReason    String?
+  /// Fencing token: incremented whenever a server takes ownership of the
+  /// character; state writes must match it (see instance-server ownership)
+  ownerEpoch     Int      @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

@@ -293,11 +293,12 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 - `s2c_kicked { reason: "logged_in_elsewhere" | "server_shutdown" | "invalid_ticket" | "version_mismatch" }`.
 - `PROTOCOL_VERSION` constant checked in `c2s_hello`.
 
-### S2.7 Ownership Lease + Fencing
+### S2.7 Ownership Lease + Fencing ✅
 - **Lease** in Redis: `lease:char:<id> = { serverId, instanceId, epoch }`, `SET NX PX 30000`, renewed every 10 s by the holding server.
 - **Fencing epoch** in Postgres: new column `Character.ownerEpoch`. Acquiring a lease increments it (`UPDATE … SET ownerEpoch = ownerEpoch + 1 RETURNING ownerEpoch`).
 - **Every state write is conditional:** `UPDATE Character SET … WHERE id = $1 AND ownerEpoch = $2`. A server that lost its lease (GC pause, network split) can no longer overwrite newer data. Its write affects 0 rows, which it treats as "I've been fenced": it drops the character and disconnects the client.
 - Lease renewal failure → same as fenced.
+- Implemented in `apps/instance-server/src/ownership/`: `CharacterOwnership` (`acquire`, `forceAcquire`, `renew`, `release`, `writeFenced`) and `LeaseKeeper` (renews every TTL/3, reports lost leases). Renew and release run as Lua scripts that only act if the lease still holds our exact value. If bumping the epoch fails, the lease reservation is rolled back. Wired into the connection flow with the protocol switch (S2.6/S2.8/S2.11).
 
 This lease-plus-fencing pattern is the core anti-duplication mechanism. It deserves careful tests (S2 Tests).
 

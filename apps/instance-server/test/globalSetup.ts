@@ -5,10 +5,12 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
+import { RedisContainer, type StartedRedisContainer } from "@testcontainers/redis";
 
 /**
- * Gives the test run its own database: a throwaway Postgres container, or
- * TEST_DATABASE_URL if set. Migrations are applied before any test runs.
+ * Gives the test run its own Postgres and Redis: throwaway containers, or
+ * TEST_DATABASE_URL / TEST_REDIS_URL if set. Migrations are applied before
+ * any test runs.
  */
 const dbPackageDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -16,13 +18,18 @@ const dbPackageDir = path.resolve(
 );
 
 let container: StartedPostgreSqlContainer | undefined;
+let redisContainer: StartedRedisContainer | undefined;
 
 export async function setup(): Promise<void> {
   let url = process.env.TEST_DATABASE_URL;
-  if (!url) {
-    container = await new PostgreSqlContainer("postgres:16").start();
-    url = container.getConnectionUri();
-  }
+  const [postgres, redis] = await Promise.all([
+    url ? undefined : new PostgreSqlContainer("postgres:16").start(),
+    process.env.TEST_REDIS_URL ? undefined : new RedisContainer("redis:7").start(),
+  ]);
+  container = postgres;
+  redisContainer = redis;
+  url ??= postgres!.getConnectionUri();
+  process.env.TEST_REDIS_URL ??= redis!.getConnectionUrl();
 
   execSync("pnpm exec prisma migrate deploy", {
     cwd: dbPackageDir,
@@ -35,5 +42,5 @@ export async function setup(): Promise<void> {
 }
 
 export async function teardown(): Promise<void> {
-  await container?.stop();
+  await Promise.all([container?.stop(), redisContainer?.stop()]);
 }

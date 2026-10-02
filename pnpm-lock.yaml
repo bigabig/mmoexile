@@ -264,12 +264,18 @@ importers:
       '@mmoexile/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@mmoexile/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@mmoexile/db':
         specifier: workspace:*
         version: link:../../packages/db
       '@mmoexile/game-core':
         specifier: workspace:*
         version: link:../../packages/game-core
+      '@mmoexile/messaging':
+        specifier: workspace:*
+        version: link:../../packages/messaging
       '@mmoexile/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -290,6 +296,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@testcontainers/postgresql':
+        specifier: ^12.2.0
+        version: 12.2.0(supports-color@7.2.0)
+      '@testcontainers/redis':
         specifier: ^12.2.0
         version: 12.2.0(supports-color@7.2.0)
       '@types/node':
