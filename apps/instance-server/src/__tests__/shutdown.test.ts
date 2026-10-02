@@ -12,6 +12,11 @@ function recordingSteps(overrides: Partial<ShutdownSteps> = {}) {
       prepareShutdown: () => calls.push("host.prepareShutdown"),
       stop: () => calls.push("host.stop"),
     },
+    players: {
+      shutdown: async () => {
+        calls.push("players.shutdown");
+      },
+    },
     persistence: {
       stop: async () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
@@ -38,6 +43,7 @@ describe("gracefulShutdown", () => {
     expect(calls).toEqual([
       "gateway.close",
       "host.prepareShutdown",
+      "players.shutdown",
       "persistence.stop",
       "host.stop",
       "gateway.disconnectAll",
@@ -58,6 +64,10 @@ describe("gracefulShutdown", () => {
     await expect(gracefulShutdown(steps)).rejects.toThrow(
       "database unreachable",
     );
-    expect(calls).toEqual(["gateway.close", "host.prepareShutdown"]);
+    expect(calls).toEqual([
+      "gateway.close",
+      "host.prepareShutdown",
+      "players.shutdown",
+    ]);
   });
 });

@@ -11,6 +11,7 @@ import {
   S2C_InstanceTransferPacket,
   S2C_ChatPacket,
   S2C_PartyUpdatePacket,
+  type KickReason,
 } from "@mmoexile/protocol";
 import { SessionManager } from "./SessionManager.js";
 import {
@@ -18,7 +19,11 @@ import {
   type IMessageBus,
   InMemoryMessageBus,
 } from "../cluster/index.js";
-import { accountService } from "../persistence/index.js";
+import type {
+  AdmittedPlayer,
+  PlayerLifecycle,
+} from "../players/PlayerLifecycle.js";
+import type { ClientSession } from "./ClientSession.js";
 import type { ITransportGateway } from "./transport/ITransportGateway.js";
 import type { PartyChange, PartyService } from "../party/PartyService.js";
 import { ChatCommands } from "../chat/ChatCommands.js";
@@ -30,16 +35,19 @@ export class WebSocketGateway implements ITransportGateway {
   public readonly parties: PartyService;
   public readonly messageBus: IMessageBus;
   private readonly commands: ChatCommands;
+  private readonly lifecycle: PlayerLifecycle;
 
   constructor(
     httpServer: HttpServer,
     host: InstanceHost,
     parties: PartyService,
+    lifecycle: PlayerLifecycle,
     sessionManager: SessionManager = new SessionManager(),
     messageBus?: IMessageBus,
   ) {
     this.host = host;
     this.parties = parties;
+    this.lifecycle = lifecycle;
     this.commands = new ChatCommands(host, parties);
     this.sessionManager = sessionManager;
     this.messageBus = messageBus ?? host.messageBus ?? new InMemoryMessageBus();
@@ -167,6 +175,71 @@ export class WebSocketGateway implements ITransportGateway {
     }
   }
 
+  private welcomePacket(player: AdmittedPlayer): S2C_WelcomePacket {
+    const { record, character, map } = player;
+    return {
+      type: "s2c_welcome",
+      playerId: player.characterId,
+      instanceId: player.instanceId,
+      zoneId: player.zoneId,
+      map,
+      playerState: {
+        id: player.characterId,
+        type: "player",
+        subtype: record.class,
+        x: map.spawnPoint.x,
+        y: map.spawnPoint.y,
+        vx: 0,
+        vy: 0,
+        angle: 0,
+        hp: record.hp,
+        maxHp: record.maxHp,
+        mp: record.mp,
+        maxMp: record.maxMp,
+        name: player.name,
+        level: record.level,
+        defense: record.defense,
+        classId: record.class,
+        equipment: {
+          weapon: record.equippedWeapon,
+          armor: record.equippedArmor,
+        },
+        inventory: character.inventory,
+        xp: record.xp,
+        nextLevelXp: Math.floor(100 * Math.pow(record.level, 1.35)),
+        isAlive: true,
+        modelId: record.class === "knight" ? "knight" : "player",
+      },
+    };
+  }
+
+  /** Tells a client to reconnect elsewhere (zone change); see PlayerLifecycle. */
+  public sendReconnect(
+    characterId: string,
+    url: string,
+    ticket: string,
+    zoneId: string,
+  ): void {
+    const session = this.sessionManager.getSessionByPlayerId(characterId);
+    if (!session) return;
+    session.send({ type: "s2c_reconnect", url, ticket, zoneId });
+    // The character already left this server; closing must not save again.
+    this.sessionManager.unbindPlayer(session);
+    setTimeout(() => session.close(1000, "Reconnect"), 5000).unref();
+  }
+
+  /** Ends a client session with a reason. */
+  public kickSession(characterId: string, reason: KickReason): void {
+    const session = this.sessionManager.getSessionByPlayerId(characterId);
+    if (session) this.endSession(session, reason);
+  }
+
+  private endSession(session: ClientSession, reason: KickReason): void {
+    session.send({ type: "s2c_kicked", reason });
+    this.sessionManager.unbindPlayer(session);
+    session.close(4000, reason);
+  }
+
   private setupWebSocketListeners(): void {
     this.wss.on("connection", (socket: WebSocket) => {
       const session = this.sessionManager.createSession(socket);
@@ -176,74 +249,39 @@ export class WebSocketGateway implements ITransportGateway {
           const packet = deserializePacket<ClientPacket>(data as ArrayBuffer);
 
           switch (packet.type) {
-            case "c2s_join": {
-              const { account, token, character, domainCharacter } =
-                await accountService.loginOrRegister(
-                  packet.nickname,
-                  packet.token,
-                );
-
-              // Logins always start in a nexus shard (like PoE sending you to
-              // town); character.lastZoneId is kept for later features.
-              const { instanceId, zoneId, map } = this.host.registerPlayer({
-                playerId: character.id,
-                name: account.nickname,
-                charId: character.id,
-                zoneId: "nexus",
-                character: domainCharacter,
-              });
-
+            case "c2s_hello": {
+              if (session.playerId || session.admitting) return;
+              session.admitting = true;
+              const result = await this.lifecycle.admit(
+                packet.ticket,
+                packet.protocolVersion,
+              );
+              session.admitting = false;
+              if (!result.ok) {
+                this.endSession(session, result.reason);
+                return;
+              }
+              const player = result.player;
+              if (!session.isOpen) {
+                // The client vanished while being admitted.
+                await this.lifecycle.leave(player.characterId);
+                return;
+              }
               this.sessionManager.bindPlayer(
                 session,
-                character.id,
-                character.id,
-                account.nickname,
-                instanceId,
+                player.characterId,
+                player.characterId,
+                player.name,
+                player.instanceId,
               );
-
-              const welcomePacket: S2C_WelcomePacket = {
-                type: "s2c_welcome",
-                playerId: character.id,
-                token,
-                instanceId,
-                zoneId,
-                map,
-                playerState: {
-                  id: character.id,
-                  type: "player",
-                  subtype: character.class,
-                  x: map.spawnPoint.x,
-                  y: map.spawnPoint.y,
-                  vx: 0,
-                  vy: 0,
-                  angle: 0,
-                  hp: character.hp,
-                  maxHp: character.maxHp,
-                  mp: character.mp,
-                  maxMp: character.maxMp,
-                  name: account.nickname,
-                  level: character.level,
-                  defense: character.defense,
-                  classId: character.class,
-                  equipment: {
-                    weapon: character.equippedWeapon,
-                    armor: character.equippedArmor,
-                  },
-                  inventory: domainCharacter.inventory,
-                  xp: character.xp,
-                  nextLevelXp: Math.floor(
-                    100 * Math.pow(character.level, 1.35),
-                  ),
-                  isAlive: true,
-                  modelId: character.class === "knight" ? "knight" : "player",
-                },
-              };
-
-              session.send(welcomePacket);
+              session.send(this.welcomePacket(player));
               this.host.broadcastChat(
                 "System",
-                `${account.nickname} entered the realm.`,
+                player.arrivedViaPortal
+                  ? `${player.name} entered ${player.map.name}`
+                  : `${player.name} logged in.`,
                 "system",
+                player.arrivedViaPortal ? player.instanceId : undefined,
               );
               break;
             }
@@ -375,7 +413,7 @@ export class WebSocketGateway implements ITransportGateway {
               targetPlayerIds: remaining,
             });
           }
-          this.host.unregisterPlayer(session.playerId);
+          void this.lifecycle.leave(session.playerId);
         }
         this.sessionManager.removeSession(socket);
       });

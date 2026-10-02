@@ -218,6 +218,9 @@ importers:
 
   apps/client:
     dependencies:
+      '@mmoexile/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@mmoexile/game-core':
         specifier: workspace:*
         version: link:../../packages/game-core
@@ -279,6 +282,9 @@ importers:
       '@mmoexile/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@mmoexile/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
       '@mmoexile/simulation':
         specifier: workspace:*
         version: link:../../packages/simulation
@@ -291,6 +297,9 @@ importers:
       ws:
         specifier: ^8.18.0
         version: 8.21.3
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
     devDependencies:
       '@mmoexile/tsconfig':
         specifier: workspace:*

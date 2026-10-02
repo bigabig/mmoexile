@@ -12,6 +12,8 @@ import {
   serializePacket,
   EntityState,
   ChatChannel,
+  KickReason,
+  PROTOCOL_VERSION,
 } from "@mmoexile/protocol";
 
 export interface NetworkCallbacks {
@@ -33,6 +35,10 @@ export interface NetworkCallbacks {
     channel: ChatChannel,
   ) => void;
   onDisconnected?: () => void;
+  /** Zone change in progress: the server sent us to another connection. */
+  onReconnecting?: (zoneId: string) => void;
+  /** The server ended the session. */
+  onKicked?: (reason: KickReason) => void;
 }
 
 interface PendingInput {
@@ -47,7 +53,6 @@ export class NetworkManager {
   private socket: WebSocket | null = null;
   private callbacks: NetworkCallbacks;
   public localPlayerId: string | null = null;
-  public token: string | null = null;
   public currentMap: MapData | null = null;
 
   // Client-side prediction
@@ -61,25 +66,26 @@ export class NetworkManager {
     this.callbacks = callbacks;
   }
 
-  public connect(url: string, nickname: string, token?: string): void {
+  /**
+   * Connects to an instance server and presents the ticket (from account-api
+   * or from an s2c_reconnect).
+   */
+  public connect(url: string, ticket: string): void {
     if (this.socket) {
+      this.detachSocket(this.socket);
       this.socket.close();
     }
 
-    this.socket = new WebSocket(url);
-    this.socket.binaryType = "arraybuffer";
+    const socket = new WebSocket(url);
+    this.socket = socket;
+    socket.binaryType = "arraybuffer";
 
-    this.socket.onopen = () => {
-      console.log("[Network] Connected to game server");
-      const joinPacket: ClientPacket = {
-        type: "c2s_join",
-        nickname,
-        token: token || undefined,
-      };
-      this.send(joinPacket);
+    socket.onopen = () => {
+      console.log("[Network] Connected to", url);
+      this.send({ type: "c2s_hello", ticket, protocolVersion: PROTOCOL_VERSION });
     };
 
-    this.socket.onmessage = (event: MessageEvent) => {
+    socket.onmessage = (event: MessageEvent) => {
       try {
         const packet = deserializePacket<ServerPacket>(
           event.data as ArrayBuffer,
@@ -90,12 +96,12 @@ export class NetworkManager {
       }
     };
 
-    this.socket.onclose = () => {
+    socket.onclose = () => {
       console.log("[Network] Disconnected from server");
       this.callbacks.onDisconnected?.();
     };
 
-    this.socket.onerror = (err) => {
+    socket.onerror = (err) => {
       console.error("[Network] WebSocket error:", err);
     };
   }
@@ -235,7 +241,6 @@ export class NetworkManager {
     switch (packet.type) {
       case "s2c_welcome": {
         this.localPlayerId = packet.playerId;
-        this.token = packet.token;
         this.currentMap = packet.map;
         this.localPos.x = packet.playerState.x;
         this.localPos.y = packet.playerState.y;
@@ -317,6 +322,21 @@ export class NetworkManager {
         break;
       }
 
+      case "s2c_reconnect": {
+        // Zone change: continue on the server that hosts the target zone.
+        this.pendingInputs = [];
+        this.callbacks.onReconnecting?.(packet.zoneId);
+        this.connect(packet.url, packet.ticket);
+        break;
+      }
+
+      case "s2c_kicked": {
+        if (this.socket) this.detachSocket(this.socket);
+        this.socket = null;
+        this.callbacks.onKicked?.(packet.reason);
+        break;
+      }
+
       case "s2c_chat": {
         this.callbacks.onChat?.(
           packet.sender,
@@ -331,8 +351,17 @@ export class NetworkManager {
 
   public disconnect(): void {
     if (this.socket) {
+      this.detachSocket(this.socket);
       this.socket.close();
       this.socket = null;
     }
+  }
+
+  /** Stops an old socket from delivering events (e.g. during a zone change). */
+  private detachSocket(socket: WebSocket): void {
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
   }
 }

@@ -8,6 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mmoexile/contracts": "workspace:*",
     "@mmoexile/game-core": "workspace:*",
     "@mmoexile/protocol": "workspace:*",
     "lucide-react": "^0.475.0",

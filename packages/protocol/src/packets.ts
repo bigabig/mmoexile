@@ -2,8 +2,14 @@ import { encode, decode } from "@msgpack/msgpack";
 import type { DamageEvent, MapData, ProjectileState } from "@mmoexile/game-core";
 import type { EntityState } from "./snapshot.js";
 
+/**
+ * Bumped on incompatible protocol changes; the server rejects clients with a
+ * different version (s2c_kicked "version_mismatch").
+ */
+export const PROTOCOL_VERSION = 2;
+
 export type PacketType =
-  | "c2s_join"
+  | "c2s_hello"
   | "c2s_input"
   | "c2s_shoot"
   | "c2s_interact"
@@ -20,12 +26,18 @@ export type PacketType =
   | "s2c_damage"
   | "s2c_instance_transfer"
   | "s2c_chat"
-  | "s2c_party_update";
+  | "s2c_party_update"
+  | "s2c_reconnect"
+  | "s2c_kicked";
 
-export interface C2S_JoinPacket {
-  type: "c2s_join";
-  nickname: string;
-  token?: string;
+/**
+ * First packet on every connection to an instance server. The ticket comes
+ * from account-api (/play) or from s2c_reconnect.
+ */
+export interface C2S_HelloPacket {
+  type: "c2s_hello";
+  ticket: string;
+  protocolVersion: number;
 }
 
 export interface C2S_InputPacket {
@@ -88,7 +100,7 @@ export interface C2S_DropItemPacket {
 }
 
 export type ClientPacket =
-  | C2S_JoinPacket
+  | C2S_HelloPacket
   | C2S_InputPacket
   | C2S_ShootPacket
   | C2S_InteractPacket
@@ -103,7 +115,6 @@ export type ClientPacket =
 export interface S2C_WelcomePacket {
   type: "s2c_welcome";
   playerId: string;
-  token: string;
   instanceId: string;
   zoneId: string;
   map: MapData;
@@ -163,6 +174,30 @@ export interface S2C_PartyUpdatePacket {
   members: PartyMemberInfo[];
 }
 
+/**
+ * "Go connect over there": the player changes zone and must reconnect to
+ * `url` with `ticket` (sent as c2s_hello). Shown as a loading screen.
+ */
+export interface S2C_ReconnectPacket {
+  type: "s2c_reconnect";
+  url: string;
+  ticket: string;
+  zoneId: string;
+}
+
+export type KickReason =
+  | "logged_in_elsewhere"
+  | "server_shutdown"
+  | "invalid_ticket"
+  | "version_mismatch"
+  | "character_unavailable";
+
+/** The server ends the session; the socket closes right after. */
+export interface S2C_KickedPacket {
+  type: "s2c_kicked";
+  reason: KickReason;
+}
+
 export type ServerPacket =
   | S2C_WelcomePacket
   | S2C_SnapshotPacket
@@ -170,7 +205,9 @@ export type ServerPacket =
   | S2C_DamagePacket
   | S2C_InstanceTransferPacket
   | S2C_ChatPacket
-  | S2C_PartyUpdatePacket;
+  | S2C_PartyUpdatePacket
+  | S2C_ReconnectPacket
+  | S2C_KickedPacket;
 
 export type GamePacket = ClientPacket | ServerPacket;
 

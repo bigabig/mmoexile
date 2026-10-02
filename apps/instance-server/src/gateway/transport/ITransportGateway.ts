@@ -7,7 +7,7 @@ import type { SessionManager } from "../SessionManager.js";
 export interface ITransportSocket {
   readonly isOpen: boolean;
   send(data: Uint8Array | string): void;
-  close(): void;
+  close(code?: number, reason?: string): void;
 }
 
 /**
@@ -22,7 +22,7 @@ export interface ITransportSession {
   currentInstanceId?: string;
   send(packet: ServerPacket): void;
   sendBinary(binary: Uint8Array): void;
-  close(): void;
+  close(code?: number, reason?: string): void;
 }
 
 /**

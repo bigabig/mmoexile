@@ -3,9 +3,16 @@ import { Sword, Play } from "lucide-react";
 
 interface QuickJoinModalProps {
   onJoin: (nickname: string) => void;
+  /** Why the player is back at this screen (kick, error), if any. */
+  notice?: string | null;
+  busy?: boolean;
 }
 
-export const QuickJoinModal: React.FC<QuickJoinModalProps> = ({ onJoin }) => {
+export const QuickJoinModal: React.FC<QuickJoinModalProps> = ({
+  onJoin,
+  notice,
+  busy,
+}) => {
   const [nickname, setNickname] = useState(() => {
     return (
       localStorage.getItem("rotmg_nickname") ||
@@ -15,7 +22,7 @@ export const QuickJoinModal: React.FC<QuickJoinModalProps> = ({ onJoin }) => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (nickname.trim()) {
+    if (nickname.trim() && !busy) {
       localStorage.setItem("rotmg_nickname", nickname.trim());
       onJoin(nickname.trim());
     }
@@ -72,6 +79,24 @@ export const QuickJoinModal: React.FC<QuickJoinModalProps> = ({ onJoin }) => {
         <p style={{ fontSize: 13, color: "#94a3b8", marginBottom: 24 }}>
           3D Voxel Bullet Hell MMO Clone
         </p>
+
+        {notice && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: 16,
+              padding: "10px 12px",
+              borderRadius: 8,
+              backgroundColor: "#422006",
+              border: "1px solid #a16207",
+              color: "#fde68a",
+              fontSize: 13,
+              textAlign: "left",
+            }}
+          >
+            {notice}
+          </div>
+        )}
 
         <form
           onSubmit={handleSubmit}

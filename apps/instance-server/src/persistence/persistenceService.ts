@@ -1,13 +1,27 @@
-import { accountService } from "./accountService.js";
 import type { CharacterUpdateState } from "./mappers/characterMapper.js";
+import type { CharacterPersistence } from "../cluster/CharacterPersistence.js";
 
-export class PersistenceService {
+/** Performs the actual database writes (fenced in production). */
+export interface CharacterWriter {
+  writeState(charId: string, state: CharacterUpdateState): Promise<void>;
+  markDead(charId: string): Promise<void>;
+}
+
+/**
+ * Batches character saves out of band from the game loop: periodic snapshots
+ * are queued and flushed every few seconds, disconnects and deaths are
+ * written right away, and stop() drains everything for shutdown.
+ */
+export class PersistenceService implements CharacterPersistence {
   private pendingSaves = new Map<string, CharacterUpdateState>();
   private isFlushing = false;
   private flushTimer: NodeJS.Timeout | null = null;
   private inFlightWrites = 0;
 
-  constructor(flushIntervalMs: number = 2000) {
+  constructor(
+    private readonly writer: CharacterWriter,
+    flushIntervalMs: number = 2000,
+  ) {
     this.flushTimer = setInterval(() => {
       this.flush().catch((err) =>
         console.error("[PersistenceService] Background flush error:", err),
@@ -26,7 +40,7 @@ export class PersistenceService {
     this.pendingSaves.delete(charId);
     this.inFlightWrites++;
     try {
-      await accountService.persistCharacterState(charId, state);
+      await this.writer.writeState(charId, state);
     } catch (err) {
       console.error(
         `[PersistenceService] Failed to persist character ${charId}:`,
@@ -41,7 +55,7 @@ export class PersistenceService {
     this.pendingSaves.delete(charId);
     this.inFlightWrites++;
     try {
-      await accountService.handleCharacterDeath(charId);
+      await this.writer.markDead(charId);
     } catch (err) {
       console.error(
         `[PersistenceService] Failed to record death for character ${charId}:`,
@@ -68,7 +82,7 @@ export class PersistenceService {
 
       for (const [charId, state] of entries) {
         try {
-          await accountService.persistCharacterState(charId, state);
+          await this.writer.writeState(charId, state);
         } catch (err) {
           console.error(
             `[PersistenceService] Failed to batch-persist character ${charId}:`,
@@ -89,4 +103,3 @@ export class PersistenceService {
   }
 }
 
-export const persistenceService = new PersistenceService();

@@ -36,12 +36,7 @@ import {
 } from "@mmoexile/game-core";
 import { SpatialSystem, EntityFactory, GameWorld } from "@mmoexile/simulation";
 import { InstanceHost } from "../cluster/index.js";
-import {
-  accountRepo,
-  characterRepo,
-  CharacterMapper,
-  accountService,
-} from "../persistence/index.js";
+import { CharacterMapper, prisma } from "../persistence/index.js";
 
 describe("InstanceHost Lossless Transitions", () => {
   it("transfers player between instances while 100% preserving stats, equipment, and inventory", () => {
@@ -236,44 +231,7 @@ describe("InstanceHost placement", () => {
   });
 });
 
-describe("Database & Account Persistence", () => {
-  it("creates guest account with default wizard character", async () => {
-    const { account, token, character } =
-      await accountService.loginOrRegister("TestHero");
-
-    expect(account.id).toBeDefined();
-    expect(account.nickname).toBe("TestHero");
-    expect(token).toBeDefined();
-    // Only the hash of the token is stored
-    expect(account.refreshSecretHash).not.toBe(token);
-    expect(character).toBeDefined();
-    expect(character.class).toBe("wizard");
-    expect(character.hp).toBe(110);
-    expect(character.maxHp).toBe(110);
-    expect(character.defense).toBe(3);
-    expect(character.equippedWeapon).toBe("staff_energy");
-    expect(character.equippedArmor).toBe("robe_apprentice");
-    expect(character.isAlive).toBe(true);
-
-    const loaded = await accountService.loginOrRegister(
-      "DifferentName",
-      token,
-    );
-    expect(loaded.account.id).toBe(account.id);
-    expect(loaded.character.id).toBe(character.id);
-
-    const knightAcc = await accountService.loginOrRegister(
-      "KnightHero",
-      undefined,
-      "knight",
-    );
-    expect(knightAcc.character.class).toBe("knight");
-    expect(knightAcc.character.hp).toBe(175);
-    expect(knightAcc.character.defense).toBe(12);
-    expect(knightAcc.character.equippedWeapon).toBe("sword_iron");
-    expect(knightAcc.character.equippedArmor).toBe("armor_iron");
-  });
-
+describe("Character equipment rules", () => {
   it("supports fully unequipped player and correctly recalculates effective stats", () => {
     const wizard = createDefaultCharacter("NakedWizard", "wizard", "w1");
     wizard.equipment.weapon = null;
@@ -324,78 +282,31 @@ describe("Database & Account Persistence", () => {
   });
 });
 
-describe("Repository, Mapper & Service Layer", () => {
-  it("creates and retrieves accounts via AccountRepository", async () => {
-    const testToken = `repo_test_${Date.now()}`;
-    const account = await accountRepo.createAccount({
-      nickname: "RepoTester",
-      token: testToken,
+describe("CharacterMapper", () => {
+  it("maps between Prisma records and CharacterData models", async () => {
+    const account = await prisma.account.create({
+      data: { nickname: "MapperHero", refreshSecretHash: `mapper-${Date.now()}` },
+    });
+    const record = await prisma.character.create({
+      data: { accountId: account.id, class: "knight", inventory: ["staff_fire", null, null, null, null, null, null, null] },
     });
 
-    expect(account.id).toBeDefined();
-    expect(account.nickname).toBe("RepoTester");
-
-    const fetchedById = await accountRepo.findById(account.id);
-    expect(fetchedById?.id).toBe(account.id);
-
-    const fetchedByToken = await accountRepo.findByToken(testToken);
-    expect(fetchedByToken?.id).toBe(account.id);
-  });
-
-  it("maps between Prisma records and CharacterData models via CharacterMapper", async () => {
-    const loginResult = await accountService.loginOrRegister(
-      "MapperHero",
-      undefined,
-      "wizard",
-    );
-    const prismaRecord = loginResult.character;
-
-    const domainChar = CharacterMapper.toDomain(prismaRecord, "MapperHero");
-    expect(domainChar.id).toBe(prismaRecord.id);
-    expect(domainChar.classId).toBe("wizard");
+    const domainChar = CharacterMapper.toDomain(record, "MapperHero");
+    expect(domainChar.id).toBe(record.id);
     expect(domainChar.name).toBe("MapperHero");
+    expect(domainChar.classId).toBe("knight");
     expect(domainChar.inventory).toHaveLength(8);
-    expect(domainChar.equipment.weapon).toBe("staff_energy");
+    expect(domainChar.inventory[0]).toBe("staff_fire");
 
-    const createInput = CharacterMapper.toPersistenceCreate(
-      domainChar,
-      loginResult.account.id,
-      "nexus",
-      25.0,
-      30.0,
-    );
-    expect(createInput.class).toBe("wizard");
-    expect(createInput.x).toBe(25.0);
-    expect(createInput.y).toBe(30.0);
-    expect(Array.isArray(createInput.inventory)).toBe(true);
-  });
-
-  it("updates character state and handles death via CharacterRepository & AccountService", async () => {
-    const { character } = await accountService.loginOrRegister(
-      "UpdateHero",
-      undefined,
-      "knight",
-    );
-
-    await accountService.persistCharacterState(character.id, {
+    const update = CharacterMapper.toPersistenceUpdate({
       hp: 120,
-      mp: 20,
       x: 35.5,
       y: 42.1,
       lastZoneId: "overworld",
       isAlive: true,
-      equippedWeapon: "sword_iron",
+      inventory: domainChar.inventory,
     });
-
-    const updated = await characterRepo.findById(character.id);
-    expect(updated?.hp).toBe(120);
-    expect(updated?.mp).toBe(20);
-    expect(updated?.x).toBe(35.5);
-    expect(updated?.y).toBe(42.1);
-    expect(updated?.lastZoneId).toBe("overworld");
-
-    const deadChar = await characterRepo.markDead(character.id, "Slime Boss");
-    expect(deadChar.isAlive).toBe(false);
-    expect(deadChar.deathReason).toBe("Slime Boss");
+    expect(update).toMatchObject({ hp: 120, lastZoneId: "overworld" });
+    expect(update.mp).toBeUndefined();
   });
 });

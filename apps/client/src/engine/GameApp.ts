@@ -18,7 +18,7 @@ import { ProjectileRenderer } from "./ProjectileRenderer.js";
 import { CameraController } from "./CameraController.js";
 import { InputManager } from "./InputManager.js";
 import { NetworkManager } from "./NetworkManager.js";
-import type { ChatChannel } from "@mmoexile/protocol";
+import type { ChatChannel, KickReason } from "@mmoexile/protocol";
 
 export interface GameAppCallbacks {
   onHpChange?: (hp: number, maxHp: number) => void;
@@ -42,6 +42,10 @@ export interface GameAppCallbacks {
   ) => void;
   onDeath?: () => void;
   onNearbyLootBag?: (bag: EntityState | null) => void;
+  /** Loading screen while moving to another server/instance. */
+  onLoading?: (zoneId: string | null) => void;
+  /** The server ended the session (duplicate login, shutdown, …). */
+  onKicked?: (reason: KickReason) => void;
 }
 
 export class GameApp {
@@ -118,6 +122,10 @@ export class GameApp {
     // 7. Network Manager
     this.networkMgr = new NetworkManager({
       onWelcome: (playerId, _instanceId, map) => {
+        // Every zone change arrives as a fresh welcome on a new connection.
+        this.projectileRenderer.clear();
+        this.entityMgr.clear();
+        this.callbacks.onLoading?.(null);
         this.entityMgr.localPlayerId = playerId;
         this.mapRenderer.setMap(map);
         this.currentWorldName = map.name;
@@ -163,6 +171,13 @@ export class GameApp {
         this.callbacks.onWorldChange?.(map.name);
         this.cameraCtrl.setFollowTarget(spawnX, spawnY);
       },
+      onReconnecting: (zoneId) => {
+        this.callbacks.onLoading?.(zoneId);
+      },
+      onKicked: (reason) => {
+        this.callbacks.onLoading?.(null);
+        this.callbacks.onKicked?.(reason);
+      },
       onChat: (sender, text, kind, channel) => {
         this.callbacks.onChat?.(sender, text, kind, channel);
       },
@@ -171,12 +186,10 @@ export class GameApp {
     window.addEventListener("resize", this.handleResize);
   }
 
-  public connect(nickname: string, token?: string): void {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    // Connect through Vite proxy or direct port 3001
-    const wsUrl = `${protocol}//${host}/ws`;
-    this.networkMgr.connect(wsUrl, nickname, token);
+  /** Connects to the instance server from account-api's /play response. */
+  public connect(url: string, ticket: string): void {
+    this.callbacks.onLoading?.("nexus");
+    this.networkMgr.connect(url, ticket);
   }
 
   public start(): void {

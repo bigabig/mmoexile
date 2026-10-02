@@ -1,4 +1,4 @@
-# Local infrastructure for development. Stage 1: only Postgres.
+# Local infrastructure for development: Postgres and Redis.
 # Usage: pnpm db:up / pnpm db:down (from the repository root)
 name: mmoexile
 
@@ -15,6 +15,16 @@ services:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mmoexile -d mmoexile"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7
+    ports:
+      - "${MMOEXILE_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       timeout: 3s
       retries: 15

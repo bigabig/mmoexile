@@ -1,6 +1,8 @@
 export interface ShutdownSteps {
   gateway: { close(): unknown; disconnectAll(): void };
   host: { prepareShutdown(): void; stop(): void };
+  /** Saves and releases every character (fenced), and kicks the sessions. */
+  players: { shutdown(): Promise<void> };
   persistence: { stop(): Promise<void> };
   closeHttpServer(): Promise<void>;
   disconnectDatabase(): Promise<void>;
@@ -18,16 +20,19 @@ export async function gracefulShutdown(steps: ShutdownSteps): Promise<void> {
   // 2. Freeze all instances and queue final snapshots of every player
   steps.host.prepareShutdown();
 
-  // 3. Flush queued saves and wait for in-flight database writes
+  // 3. Final fenced save of every character, release its lease, kick it
+  await steps.players.shutdown();
+
+  // 4. Flush queued saves and wait for in-flight database writes
   await steps.persistence.stop();
 
-  // 4. Destroy instances
+  // 5. Destroy instances
   steps.host.stop();
 
-  // 5. Disconnect clients, then close the HTTP server
+  // 6. Disconnect remaining clients, then close the HTTP server
   steps.gateway.disconnectAll();
   await steps.closeHttpServer();
 
-  // 6. Close the database connection
+  // 7. Close the database (and other) connections
   await steps.disconnectDatabase();
 }

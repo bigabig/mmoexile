@@ -102,7 +102,7 @@ export class CharacterMapper {
    */
   public static toPersistenceUpdate(
     state: CharacterUpdateState,
-  ): Prisma.CharacterUpdateInput {
+  ): Prisma.CharacterUpdateManyMutationInput {
     return {
       hp: state.hp,
       mp: state.mp !== undefined ? state.mp : undefined,

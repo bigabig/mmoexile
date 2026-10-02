@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/main.ts",
     "build": "tsc",
     "test": "vitest run",
-    "start": "tsx src/index.ts"
+    "start": "tsx src/main.ts"
   },
   "dependencies": {
     "@mmoexile/auth": "workspace:*",
@@ -15,10 +15,12 @@
     "@mmoexile/game-core": "workspace:*",
     "@mmoexile/messaging": "workspace:*",
     "@mmoexile/protocol": "workspace:*",
+    "@mmoexile/service-kit": "workspace:*",
     "@mmoexile/simulation": "workspace:*",
     "@msgpack/msgpack": "^3.0.0",
     "bitecs": "^0.4.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@mmoexile/tsconfig": "workspace:*",

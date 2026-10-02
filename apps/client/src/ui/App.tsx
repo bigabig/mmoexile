@@ -4,6 +4,16 @@ import { HUD } from "./HUD.js";
 import { Minimap } from "./Minimap.js";
 import { ChatBox, ChatMessage } from "./ChatBox.js";
 import { QuickJoinModal } from "./QuickJoinModal.js";
+import { AccountClient } from "../net/accountClient.js";
+import type { KickReason } from "@mmoexile/protocol";
+
+const KICK_MESSAGES: Record<KickReason, string> = {
+  logged_in_elsewhere: "You logged in from somewhere else.",
+  server_shutdown: "The server is restarting. Please join again in a moment.",
+  invalid_ticket: "Your session expired. Please join again.",
+  version_mismatch: "The game was updated. Please reload the page.",
+  character_unavailable: "This character can't be played (dead or deleted).",
+};
 import { PermadeathModal } from "./components/PermadeathModal.js";
 import { CharacterSheetModal } from "./components/CharacterSheetModal.js";
 import { InventoryModal } from "./components/InventoryModal.js";
@@ -17,6 +27,10 @@ export const App: React.FC = () => {
 
   const [joined, setJoined] = useState(false);
   const [nickname, setNickname] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
+  const [loadingZone, setLoadingZone] = useState<string | null>(null);
+  const accountRef = useRef(new AccountClient());
   const [hp, setHp] = useState(100);
   const [maxHp, setMaxHp] = useState(100);
   const [mp, setMp] = useState(50);
@@ -94,6 +108,13 @@ export const App: React.FC = () => {
       onDeath: () => {
         setIsDead(true);
       },
+      onLoading: (zoneId) => {
+        setLoadingZone(zoneId);
+      },
+      onKicked: (reason) => {
+        setNotice(KICK_MESSAGES[reason]);
+        setJoined(false);
+      },
     });
 
     gameAppRef.current = gameApp;
@@ -151,11 +172,23 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  const handleJoin = (chosenNick: string) => {
-    setNickname(chosenNick);
-    setJoined(true);
-    const token = localStorage.getItem("rotmg_token") || undefined;
-    gameAppRef.current?.connect(chosenNick, token);
+  const handleJoin = async (chosenNick: string) => {
+    setJoining(true);
+    setNotice(null);
+    try {
+      const account = accountRef.current;
+      const { nickname: accountName } = await account.signIn(chosenNick);
+      const { url, ticket } = await account.quickPlay();
+      setNickname(accountName);
+      setJoined(true);
+      gameAppRef.current?.connect(url, ticket);
+    } catch (err) {
+      setNotice(
+        `Could not join: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setJoining(false);
+    }
   };
 
   const handleSendMessage = (text: string) => {
@@ -227,7 +260,28 @@ export const App: React.FC = () => {
     >
       <canvas ref={canvasRef} style={{ width: "100%", height: "100%" }} />
 
-      {!joined && <QuickJoinModal onJoin={handleJoin} />}
+      {!joined && (
+        <QuickJoinModal onJoin={handleJoin} notice={notice} busy={joining} />
+      )}
+
+      {joined && loadingZone && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 90,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "rgba(9, 13, 22, 0.92)",
+            color: "#e2e8f0",
+            fontSize: 18,
+            letterSpacing: "0.08em",
+          }}
+        >
+          Entering {loadingZone.replace(/_/g, " ")}…
+        </div>
+      )}
 
       {joined && (
         <>

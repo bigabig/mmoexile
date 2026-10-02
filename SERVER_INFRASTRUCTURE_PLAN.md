@@ -285,7 +285,7 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 - Refresh secrets are stored as SHA-256 hashes (`Account.refreshSecretHash`, hand-written migration that hashes existing tokens in place).
 - Zero-config development: dev-only signing secrets (`@mmoexile/auth`) and a single-server placement (`DEV_SERVER_URLS`, `DEV_ZONE_PLACEMENT` in contracts); `NODE_ENV=production` refuses the dev secrets.
 
-### S2.6 Protocol Changes (`packages/protocol`)
+### S2.6 Protocol Changes (`packages/protocol`) ✅
 - Remove `c2s_join` (login is HTTP now).
 - `c2s_hello { ticket, clientVersion }`: the first packet on every connection.
 - `s2c_welcome` loses `token`.
@@ -302,7 +302,7 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 
 This lease-plus-fencing pattern is the core anti-duplication mechanism. It deserves careful tests (S2 Tests).
 
-### S2.8 Handoff Protocol
+### S2.8 Handoff Protocol ✅
 
 ```
 Server A (source)                          Client                       Server B (target)
@@ -335,7 +335,7 @@ Server A (source)                          Client                       Server B
 
 **Same-server transfers** use the **same protocol**, including the reconnect. One code path is easier to reason about and test. A fast path that skips the reconnect can come later as an optimization, once the general path is proven.
 
-### S2.9 Duplicate Login Policy: "Newest Login Wins"
+### S2.9 Duplicate Login Policy: "Newest Login Wins" ✅
 - A new ticket for a character whose lease is held → the claiming server publishes `session.kick.<characterId>`. The holder saves, releases, and sends `s2c_kicked(logged_in_elsewhere)`. The claimer retries the lease for up to 5 s; if that fails, it force-takes by bumping the epoch (the old holder is then fenced).
 
 ### S2.10 `apps/social`
@@ -347,12 +347,15 @@ Server A (source)                          Client                       Server B
 
 The client keeps **one** connection (to its current instance server). Social features flow through it; the client never talks to `social` directly.
 
-### S2.11 `apps/instance-server` Changes
+### S2.11 `apps/instance-server` Changes ✅
 - Accepts connections only with valid tickets; no more login logic.
 - Periodic saves use the fenced write; the shutdown flush (existing logic) becomes "save + release all leases + `s2c_kicked(server_shutdown)`".
-- Internal HTTP (not exposed publicly): `GET /internal/status` for debugging.
+- Internal HTTP: the existing `/health` and `/debug/instances` (Stage 1) cover debugging; a separate `/internal/status` was not needed.
+- Implementation: `PlayerLifecycle` (admit, hand off, leave, kick, drop when fenced, shutdown), `FencedCharacterWriter` behind the batched `PersistenceService`, and a composition root `createInstanceServer()` that integration tests start twice in one process. The old in-game login (`c2s_join`, `accountService`, repositories) is gone; account-api owns accounts and characters.
 
-### S2.12 Client Changes
+### S2.12 Client Changes (partly)
+
+*Done with the switch: quick join through account-api (stored refresh secret, newest living character or a new wizard), `c2s_hello`, following `s2c_reconnect` behind a loading overlay, and kick reasons on the join screen. Still open: the character select and create screen.*
 - Login / character-select screens talk to `account-api` over HTTP.
 - `NetworkManager` supports `reconnect(url, ticket)`: tear down the socket, show a loading screen, connect, send `c2s_hello`, wait for `s2c_welcome`, and replace world state.
 - Handles `s2c_kicked` with a clear message.

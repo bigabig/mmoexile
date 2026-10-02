@@ -16,8 +16,8 @@ export class WebSocketTransportSocket implements ITransportSocket {
     this.ws.send(data);
   }
 
-  public close(): void {
-    this.ws.close();
+  public close(code?: number, reason?: string): void {
+    this.ws.close(code, reason);
   }
 }
 
@@ -28,6 +28,8 @@ export class ClientSession implements ITransportSession {
   public charId?: string;
   public nickname?: string;
   public currentInstanceId?: string;
+  /** A c2s_hello is being processed; further hellos are ignored. */
+  public admitting = false;
 
   constructor(id: string, socket: ITransportSocket | WebSocket) {
     this.id = id;
@@ -54,9 +56,9 @@ export class ClientSession implements ITransportSession {
     }
   }
 
-  public close(): void {
+  public close(code?: number, reason?: string): void {
     if (this.isOpen) {
-      this.socket.close();
+      this.socket.close(code, reason);
     }
   }
 }
