@@ -272,7 +272,7 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 - Implementations: `InMemoryBroker` (tests), `RedisBroker` (ioredis pub/sub). Both pass one shared test suite; the Redis tests run against a throwaway Redis via Testcontainers (or `TEST_REDIS_URL`).
 - Redis is chosen over NATS for now because we need Redis anyway (leases, presence). The interface keeps NATS possible later.
 
-### S2.5 `apps/account-api`
+### S2.5 `apps/account-api` ✅
 - Framework: Fastify.
 - Owns tables: `Account`, `Character` (create/delete/list; gameplay-state columns are written by the lease holder, see S2.7).
 - Endpoints:
@@ -281,7 +281,9 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
   - `GET /characters`, `POST /characters { classId }`, `DELETE /characters/:id`.
   - `POST /play { characterId }` → `{ url, ticket }` for the character's nexus server (static placement).
 - Multiple characters per account (character select screen in the client).
-- Moves `accountService`, repositories, and mappers out of the instance server; the instance server keeps only a slim character-state repository.
+- Moves `accountService`, repositories, and mappers out of the instance server; the instance server keeps only a slim character-state repository. *(The instance server's copy is removed together with its in-game login in S2.11; until then both exist.)*
+- Refresh secrets are stored as SHA-256 hashes (`Account.refreshSecretHash`, hand-written migration that hashes existing tokens in place).
+- Zero-config development: dev-only signing secrets (`@mmoexile/auth`) and a single-server placement (`DEV_SERVER_URLS`, `DEV_ZONE_PLACEMENT` in contracts); `NODE_ENV=production` refuses the dev secrets.
 
 ### S2.6 Protocol Changes (`packages/protocol`)
 - Remove `c2s_join` (login is HTTP now).

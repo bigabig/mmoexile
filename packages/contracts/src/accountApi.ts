@@ -57,6 +57,13 @@ export const accountApi = {
     body: z.object({ classId: CharacterClassId }),
     response: z.object({ character: CharacterSummary }),
   },
+  /** Deletes one of the account's characters. Path: /characters/<id>. */
+  deleteCharacter: {
+    method: "DELETE",
+    path: "/characters/:id",
+    body: z.undefined(),
+    response: z.object({ deleted: z.literal(true) }),
+  },
   /** Starts playing a character: returns where to connect and a transfer ticket. */
   play: {
     method: "POST",

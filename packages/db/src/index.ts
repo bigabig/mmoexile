@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 
-export type { Account, Character, Prisma } from "@prisma/client";
+export type { Account, Character, Prisma, PrismaClient } from "@prisma/client";
 
 /** The docker-compose database (`pnpm db:up`), used when DATABASE_URL is unset. */
 export const DEFAULT_DATABASE_URL =

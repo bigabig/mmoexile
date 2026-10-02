@@ -5,6 +5,10 @@
 
 export type ServerId = string;
 
+/** Development default: one instance server on :3001 hosts every zone. */
+export const DEV_SERVER_URLS = "a=ws://localhost:3001/ws";
+export const DEV_ZONE_PLACEMENT = "nexus:a,overworld:a,golem_dungeon:a";
+
 /** Parses "a=ws://localhost:7001/ws,b=ws://localhost:7002/ws". */
 export function parseServerUrls(value: string): Map<ServerId, string> {
   const servers = new Map<ServerId, string>();

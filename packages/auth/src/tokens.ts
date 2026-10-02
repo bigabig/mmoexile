@@ -10,6 +10,25 @@ import { SignJWT, jwtVerify, errors } from "jose";
  */
 
 const MIN_SECRET_LENGTH = 32;
+
+/**
+ * Development-only signing secrets, so local setups need no configuration.
+ * Services refuse to start with these when NODE_ENV=production.
+ */
+export const DEV_SESSION_SECRET = "dev-only-session-secret-do-not-use-in-prod";
+export const DEV_TICKET_SECRET = "dev-only-ticket-secret-do-not-use-in-prod!";
+
+export function assertNotDevSecrets(
+  nodeEnv: string,
+  secrets: string[],
+): void {
+  if (
+    nodeEnv === "production" &&
+    secrets.some((s) => s === DEV_SESSION_SECRET || s === DEV_TICKET_SECRET)
+  ) {
+    throw new Error("Development signing secrets are not allowed in production");
+  }
+}
 const SESSION_AUDIENCE = "mmoexile:session";
 const TICKET_AUDIENCE = "mmoexile:ticket";
 

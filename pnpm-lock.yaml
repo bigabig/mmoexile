@@ -173,6 +173,49 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  apps/account-api:
+    dependencies:
+      '@mmoexile/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@mmoexile/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@mmoexile/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@mmoexile/game-core':
+        specifier: workspace:*
+        version: link:../../packages/game-core
+      '@mmoexile/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      fastify:
+        specifier: ^5.12.5
+        version: 5.12.5
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@mmoexile/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@testcontainers/postgresql':
+        specifier: ^12.2.0
+        version: 12.2.0(supports-color@7.2.0)
+      '@types/node':
+        specifier: ^22.13.0
+        version: 22.20.4
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.15
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.4)(jiti@2.7.0)(supports-color@7.2.0)(tsx@4.23.15)(yaml@2.9.1)
+
   apps/client:
     dependencies:
       '@mmoexile/game-core':
