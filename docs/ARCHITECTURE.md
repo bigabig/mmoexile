@@ -1,6 +1,6 @@
 # Game Server Architecture
 
-This document describes how the game server works **today**: the layers inside `@mmoexile/instance-server`, the pure packages it builds on, the tick lifecycle, world transfers, and shutdown. For the target multi-service infrastructure (realms, gateways, orchestrator, handoffs) see [`SERVER_INFRASTRUCTURE.md`](../SERVER_INFRASTRUCTURE.md); for the migration plan see [`SERVER_INFRASTRUCTURE_PLAN.md`](../SERVER_INFRASTRUCTURE_PLAN.md).
+This document describes how the game works **today**: the services of a realm, how a character connects and moves between servers, the layers inside `@mmoexile/instance-server`, the pure packages it builds on, the tick lifecycle, and shutdown. For the target multi-service infrastructure (realms, gateways, orchestrator, handoffs) see [`SERVER_INFRASTRUCTURE.md`](../SERVER_INFRASTRUCTURE.md); for the migration plan see [`SERVER_INFRASTRUCTURE_PLAN.md`](../SERVER_INFRASTRUCTURE_PLAN.md).
 
 ---
 
@@ -13,7 +13,67 @@ This document describes how the game server works **today**: the layers inside `
 
 ---
 
-## 2. Packages and Layers
+## 2. Services of a Realm
+
+```mermaid
+flowchart LR
+    C["client<br/>(browser)"] -- "HTTPS /api" --> API["account-api<br/>login, characters, tickets"]
+    C == "WebSocket + ticket" ==> A["instance-server A<br/>nexus"]
+    C == "WebSocket + ticket" ==> B["instance-server B<br/>overworld, golem dungeon"]
+    A -- "HTTP: party commands" --> SOC["social<br/>parties"]
+    B -- "HTTP" --> SOC
+    API --> PG[("Postgres<br/>accounts, characters")]
+    A --> PG
+    B --> PG
+    A <--> R[("Redis<br/>leases, tickets, presence,<br/>pub/sub")]
+    B <--> R
+    SOC <--> R
+```
+
+| Service | Owns | Talks to |
+| :--- | :--- | :--- |
+| `account-api` (`:3000`) | `Account`, `Character` rows (create/delete) | Postgres; signs session tokens and the first ticket |
+| `instance-server` (`SERVER_ID`, `:3001` in dev, `:7001`/`:7002` in Docker) | Instances of the zones placed on it; gameplay columns of characters it holds the lease for | Postgres (fenced writes), Redis, social |
+| `social` (`:3002`) | Parties (in Redis) | Redis; publishes `party.updated` |
+| `client` | — | account-api over HTTP, one instance server at a time over WebSocket |
+
+Which server hosts which zone is a static table in Stage 2 (`ZONE_PLACEMENT=nexus:a,overworld:b,golem_dungeon:b`, with `SERVERS` listing their client-facing URLs). In development one server hosts every zone.
+
+---
+
+## 3. Connection Flow, Handoff and Ownership
+
+**Login.** The client signs in at `account-api`, picks a character, and `POST /play` returns the URL of the server hosting the nexus plus a 30-second transfer ticket. The client connects and sends `c2s_hello { ticket, protocolVersion }`. `PlayerLifecycle.admit()` on the instance server:
+
+1. verifies the ticket's signature, expiry and target server, and claims its id once in Redis (no replays);
+2. takes the character's **ownership lease** (`lease:char:<id>` in Redis, `SET NX`, 30 s, renewed every 10 s) and increments `Character.ownerEpoch` in Postgres;
+3. loads the character (after owning it, so it reads the latest save), places it into an instance, and sends `s2c_welcome`.
+
+If someone else holds the lease, the newest login wins: the holder is asked to leave via `session.kick` (it saves and releases), and after 5 s the new server takes over by force.
+
+**Every zone change is a handoff**, also within one server (decision D4):
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as Server A
+    participant R as Redis / Postgres
+    participant B as Server B
+
+    C->>A: c2s_interact (at a portal)
+    A->>A: detach character from its instance
+    A->>R: save WHERE ownerEpoch = e, release lease
+    A->>C: s2c_reconnect { url of B, ticket }
+    C->>B: connect, c2s_hello { ticket }
+    B->>R: claim ticket, take lease (epoch e+1), load character
+    B->>C: s2c_welcome (loading screen ends)
+```
+
+**Fencing.** Every save is `UPDATE … WHERE ownerEpoch = <my epoch>`. A server that lost its lease without noticing (paused process, network split) writes 0 rows, drops the character, and kicks the session. A crashed server's characters become claimable once its leases expire (or immediately via forced takeover on the next login).
+
+---
+
+## 4. Packages and Layers
 
 The server is split across one app and several workspace packages. Dependency rules are enforced by `pnpm lint:deps` (see `.dependency-cruiser.cjs`).
 
@@ -52,7 +112,7 @@ Invariants:
 
 ---
 
-## 3. The Layers in Detail
+## 5. The Layers in Detail
 
 ### Gateway (`apps/instance-server/src/gateway/`)
 
@@ -61,7 +121,7 @@ Network transport, decoupled from the concrete socket implementation.
 - **`transport/ITransportGateway`**: interfaces (`ITransportGateway`, `ITransportSession`, `ITransportSocket`) that would allow WebRTC DataChannels or WebTransport alongside WebSockets.
 - **`ClientSession`**: implements `ITransportSession`. Tracks connection state, account/character metadata, and ping timestamps, and sends packets without exposing the raw socket.
 - **`SessionManager`**: registry of active sessions, indexed by session ID and player ID.
-- **`WebSocketGateway`**: implements `ITransportGateway`. Handles the handshake, MessagePack decoding, login, routing commands to the cluster via the message bus, and dispatching snapshots and events back to clients.
+- **`WebSocketGateway`**: implements `ITransportGateway`. Hands `c2s_hello` to `PlayerLifecycle.admit()`, decodes MessagePack, routes commands to the host via the message bus, dispatches snapshots and events, forwards shared chat from the broker, and sends `s2c_reconnect` / `s2c_kicked`.
 
 ### Cluster (`apps/instance-server/src/cluster/`)
 
@@ -85,12 +145,22 @@ Hosts the instances of this process and routes players between them.
 - **`runners/IWorldRunner`**: contract for driving a world (`start()`, `stop()`, `step()`).
 - **`runners/InProcessWorldRunner`**: drives a world with `setInterval` at 30 Hz on the main thread, with an error boundary around every tick. This is currently the only runner; all worlds share the main thread.
 
-### Parties and chat commands (`apps/instance-server/src/party/`, `src/chat/`)
+### Parties, presence and chat (`src/party/`, `src/presence/`, `src/chat/`)
 
-- **`PartyService`**: in-process party registry (invite with 60 s expiry, accept, leave, max 6, leader handover, disband at one member). `InstanceHost` asks it for a character's party during placement, so party members share `party_private` instances. Moves to the `social` app in Stage 2.
-- **`ChatCommands`**: `/invite <name>`, `/accept`, `/leave`, `/party`, plus `/g <text>` (global) and `/p <text>` (party). Replies are private system messages (`targetPlayerIds`).
-- **Chat scopes**: plain chat stays in the sender's instance. Level-ups go to the instance, zone entries to the entered instance, deaths to everyone. Every `s2c_chat` carries a `channel` (`local`, `global`, `party`) that the client shows as a prefix.
-- The gateway sends `s2c_party_update` to members on every change, and removes disconnecting players from their party.
+- **`PartyDirectory`**: party operations. `SocialPartyDirectory` calls the `social` service; `InMemoryPartyDirectory` applies the same rules in memory (tests).
+- **`PartyCache`**: local party membership, kept current by `party.updated` broker messages, so placement can look up a character's party synchronously.
+- **`Presence`**: who is online under which name, in Redis (refreshed every 20 s), so `/invite <name>` finds players on any server.
+- **`ChatCommands`**: `/invite <name>`, `/accept`, `/leave`, `/party`, `/g <text>` and `/p <text>`. Replies to the issuer are local; party notices and `/p` go through `chat.party`, `/g` and global system messages (logins, deaths) through `chat.global`, so they reach every server.
+- **Chat scopes**: plain chat stays in the sender's instance; level-ups go to the instance, zone entries to the entered instance. Every `s2c_chat` carries a `channel` (`local`, `global`, `party`) that the client shows as a prefix.
+- Disconnecting leaves the party; handoffs and kicks don't.
+
+### Ownership and players (`src/ownership/`, `src/players/`)
+
+- **`CharacterOwnership`**: lease acquire / force / renew / release, and `writeFenced()`.
+- **`LeaseKeeper`**: renews all held leases and reports lost ones.
+- **`FencedCharacterWriter`**: the database writer behind `PersistenceService`; skips characters we don't own and drops fenced ones.
+- **`PlayerLifecycle`**: admit, hand off, leave, kick, drop when fenced, shutdown (see §3).
+- **`server.ts`** (`createInstanceServer`) wires everything; `main.ts` adds config, Redis, Postgres and signal handling.
 
 ### Simulation (`packages/simulation/src/`)
 
@@ -124,11 +194,10 @@ Pure bitECS game simulation.
 
 Asynchronous persistence, out of band from the game loop, backed by PostgreSQL (`pnpm db:up` starts it via `infra/compose`). Schema changes go through committed Prisma migrations (`packages/db/prisma/migrations`). Characters store `lastZoneId` (a zone, never an instance) and their inventory as `jsonb`.
 
-- **`@mmoexile/db`**: Prisma schema and the shared Prisma client.
-- **`repositories/accountRepository`**, **`repositories/characterRepository`**: database access for accounts and characters.
+- **`@mmoexile/db`**: Prisma schema, migrations, and the client (generated into `packages/db/generated/` so it ships with the package in Docker images).
 - **`mappers/characterMapper`**: converts between Prisma records and the domain `CharacterData`.
-- **`accountService`**: guest login/registration, active-character selection, death handling.
-- **`persistenceService`**: batched background saves, immediate saves on disconnect, death records, and a draining `stop()` for shutdown.
+- **`persistenceService`**: batched background saves, immediate saves, death records, and a draining `stop()` for shutdown. Writes go through a `CharacterWriter`; the instance server uses the `FencedCharacterWriter`, so only the lease holder can write.
+- Accounts and character creation live in `account-api`, not here.
 
 ---
 
@@ -139,7 +208,7 @@ Asynchronous persistence, out of band from the game loop, backed by PostgreSQL (
 
 ---
 
-## 4. Tick Lifecycle
+## 6. Tick Lifecycle
 
 Each world ticks at 30 Hz:
 
@@ -173,33 +242,16 @@ sequenceDiagram
 
 ---
 
-## 5. World Transfers
+## 7. Character State and Transfers
 
-When a player uses a portal:
-
-```mermaid
-sequenceDiagram
-    participant Player
-    participant Source as Source World
-    participant Cluster as InstanceHost
-    participant Target as Target World
-
-    Player->>Source: interact command
-    Source->>Source: MovementSystem.handleInteract finds a portal within 1.8 tiles
-    Source-->>Cluster: WorldTickResult.transfers (targetZoneId)
-    Cluster->>Source: Read player state, removePlayer()
-    Cluster->>Target: addPlayer(snapshot) at spawn point
-    Cluster->>Player: s2c_instance_transfer (instanceId, zoneId, map, spawn)
-```
-
-- The transfer is an in-memory move within one process; the database is updated by the regular out-of-band saves.
-- Transfers, periodic saves and crash evacuations all use one `CharacterSnapshot` (`snapshotCharacter()` in `@mmoexile/simulation`), so they can never disagree about what a character's state is.
+- Handoffs (§3), periodic saves (every 150 ticks) and crash evacuations all use one `CharacterSnapshot` (`snapshotCharacter()` in `@mmoexile/simulation`), so they can never disagree about what a character's state is.
+- Characters store their zone (`lastZoneId`), never an instance id; logins always start in a nexus shard.
 - MP is not simulated yet (no mana component); snapshots omit it so the persisted value is left untouched.
-- Moving players *between processes* requires the ticket/lease handoff described in `SERVER_INFRASTRUCTURE.md`.
+- `InstanceHost.transferPlayer()` (an in-memory move) still exists for tests and single-process setups; the instance server replaces it with the handoff via `onPortalTransfer`.
 
 ---
 
-## 6. Graceful Shutdown
+## 8. Graceful Shutdown
 
 On `SIGINT`/`SIGTERM` the server runs `gracefulShutdown()` (`apps/instance-server/src/shutdown.ts`). The order guarantees that every online player is saved before the instances holding their state are destroyed:
 
@@ -207,17 +259,18 @@ On `SIGINT`/`SIGTERM` the server runs `gracefulShutdown()` (`apps/instance-serve
 flowchart TD
     S["SIGINT / SIGTERM"] --> G["1. gateway.close()<br/>stop accepting connections"]
     G --> P["2. host.prepareShutdown()<br/>stop runners, queue a final snapshot of every player"]
-    P --> F["3. await persistenceService.stop()<br/>flush queue, wait for in-flight writes"]
-    F --> C["4. host.stop()<br/>destroy instances"]
-    C --> D["5. gateway.disconnectAll() + close HTTP server<br/>clients receive close code 1001"]
-    D --> X["6. await disconnectDatabase(), exit(0)"]
+    P --> L["3. players.shutdown()<br/>fenced save, release lease, s2c_kicked server_shutdown"]
+    L --> F["4. await persistenceService.stop()<br/>flush queue, wait for in-flight writes"]
+    F --> C["5. host.stop()<br/>destroy instances"]
+    C --> D["6. gateway.disconnectAll() + close HTTP server"]
+    D --> X["7. close Redis and Postgres, exit(0)"]
 ```
 
-If the flush fails, the sequence stops before destroying instances and the process exits with code 1. A 10-second timer force-exits if any step hangs. The order is covered by `__tests__/shutdown.test.ts`.
+If a step fails, the sequence stops before destroying instances and the process exits with code 1. A 10-second timer force-exits if any step hangs. The order is covered by `__tests__/shutdown.test.ts`.
 
 ---
 
-## 7. Directory Layout
+## 9. Directory Layout
 
 ```
 apps/instance-server/src/
@@ -235,17 +288,20 @@ apps/instance-server/src/
 │   ├── WebSocketGateway.ts
 │   └── index.ts
 ├── chat/                     # ChatCommands (slash commands)
-├── party/                    # PartyService
+├── ownership/                # CharacterOwnership, LeaseKeeper, FencedCharacterWriter
+├── party/                    # PartyDirectory, PartyCache
+├── players/                  # PlayerLifecycle (admit, handoff, leave, kick)
+├── presence/                 # Presence (Redis / in memory)
 ├── persistence/
 │   ├── mappers/              # characterMapper
-│   ├── repositories/         # accountRepository, characterRepository
-│   ├── accountService.ts
 │   ├── persistenceService.ts
 │   └── index.ts
-├── __tests__/                # host/instances, persistence, shutdown order
+├── __tests__/                # host, placement, lifecycle, ownership, parties, two-server handoff
 ├── http.ts                   # /health and /debug/instances
 ├── shutdown.ts               # graceful shutdown sequence
-└── index.ts                  # entry point, wiring, signal handling
+├── config.ts                 # environment (SERVER_ID, SERVERS, ZONE_PLACEMENT, …)
+├── server.ts                 # createInstanceServer: composition root
+└── main.ts                   # entry point: config, Redis, Postgres, signals
 
 packages/simulation/src/
 ├── commands/                 # CommandQueue, PlayerCommand

@@ -24,14 +24,22 @@ Deployables live in `apps/`, libraries in `packages/`. Apps never import each ot
 ```
 mmoexile/
 ├── apps/
-│   ├── client/           # Vite + Three.js isometric renderer, React HUD, chat, minimap
-│   └── instance-server/  # WebSocket gateway, world cluster, persistence (game server)
+│   ├── client/           # Vite + Three.js isometric renderer, React HUD, login & character select
+│   ├── account-api/      # Login, characters, play tickets (Fastify, :3000)
+│   ├── social/           # Parties for the whole realm (Fastify, :3002)
+│   └── instance-server/  # Hosts instances: WebSocket gateway, simulation, handoffs (:3001 / :7001+)
 ├── packages/
-│   ├── game-core/        # Math, maps, items, prefabs, progression, combat formulas, ECS components, voxels
+│   ├── game-core/        # Math, maps, zones, items, prefabs, progression, combat formulas, ECS components
 │   ├── protocol/         # Client ⇄ server packets and snapshots (MessagePack)
 │   ├── simulation/       # Pure bitECS GameWorld + systems (zero I/O)
-│   ├── db/               # Prisma schema and client
+│   ├── contracts/        # Service APIs, broker channels, Redis keys (zod schemas)
+│   ├── auth/             # Session tokens and transfer tickets (JWT)
+│   ├── messaging/        # Broker over Redis pub/sub (or in memory)
+│   ├── service-kit/      # Config, logging, HTTP and shutdown plumbing for services
+│   ├── db/               # Prisma schema, migrations and client
 │   └── tsconfig/         # Shared TypeScript presets
+├── tools/bots/           # Headless bots for end-to-end and soak tests
+├── infra/                # Dockerfiles and docker-compose (dev infrastructure and full realm)
 └── docs/                 # Architecture documentation
 ```
 
@@ -45,7 +53,7 @@ The target server infrastructure (realms, gateways, instances, orchestrator) is 
 
 - **Node.js**: v20+ (tested on v24)
 - **pnpm**: tested on v12 (or `corepack enable pnpm`)
-- **Docker** with Compose: runs the local Postgres, and the server tests start their own throwaway Postgres via Testcontainers
+- **Docker** with Compose: runs Postgres and Redis locally (and the full realm), and the tests start their own throwaway Postgres and Redis via Testcontainers
 
 ### 2. Install & Initialize
 
@@ -53,7 +61,7 @@ The target server infrastructure (realms, gateways, instances, orchestrator) is 
 # Install dependencies across all workspaces (also generates the Prisma client)
 pnpm install
 
-# Start Postgres (docker compose, port 5432) and apply migrations
+# Start Postgres (:5432) and Redis (:6379) in Docker, then apply migrations
 pnpm db:up
 pnpm db:deploy
 ```
@@ -61,14 +69,32 @@ pnpm db:deploy
 ### 3. Run Development Servers
 
 ```bash
-# Starts both the WebSocket game server (:3001) and Vite client (:5173) concurrently
+# account-api (:3000), social (:3002), one instance server hosting every zone (:3001)
+# and the Vite client (:5173), all with hot reload
 pnpm dev
 ```
 
 Open your browser to:
 👉 **`http://localhost:5173`**
 
-_(To test multiplayer, open a second tab or incognito window with a different nickname!)_
+_(To test multiplayer, open a second browser profile or incognito window: each one gets its own guest account.)_
+
+### 4. Run the Full Realm in Docker
+
+```bash
+# Builds and starts account-api, social, two instance servers (A: nexus on :7001,
+# B: overworld + golem dungeon on :7002), Postgres, Redis and the client
+pnpm realm:up
+```
+
+Open **`http://localhost:8080`**. Portals between the nexus and the overworld move you between the two servers. Stop everything with `pnpm realm:down`.
+
+### 5. Bots
+
+```bash
+# 20 bots hop between the nexus and the overworld for 2 minutes and report handoffs and errors
+pnpm --filter @mmoexile/bots hop -- --bots 20 --minutes 2 --api http://localhost:8080/api
+```
 
 ---
 

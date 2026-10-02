@@ -146,7 +146,7 @@ This is what a PoE loading screen is. The original RotMG does the same via its `
 
 ## 6. Current State vs. Target
 
-Today, everything runs in **one Node process** (`apps/instance-server/src/index.ts`): HTTP, WebSocket gateway, `InstanceHost`, all instances, parties, and persistence. Stage 0 (repository layout) and Stage 1 (real instancing in one process, Postgres) are complete; Stage 2 splits the process roles.
+Stages 0–2 are complete. A realm now runs as several cooperating processes (`pnpm realm:up` starts them in Docker): `account-api` (login, characters, tickets), `social` (parties), two `instance-server`s with a static zone placement (server A: nexus; server B: overworld and golem dungeon), Postgres and Redis. Characters move between servers with the ticket and lease handoff. Stage 3 replaces the static placement with an orchestrator.
 
 | Concern | Today | Target |
 | :--- | :--- | :--- |
@@ -154,13 +154,15 @@ Today, everything runs in **one Node process** (`apps/instance-server/src/index.
 | Private instances | **Done (S1.3):** one golem dungeon per party (solo players count as a party of one); `portal_bound` zones are supported but unused | Per-party, owned, with timeout |
 | Public sharding | **Done (S1.3):** fill-first placement below the soft cap, new shard when all are full, preferred shard up to the hard cap | N Nexus copies with a player cap |
 | Instance lifecycle | **Done (S1.4):** a 1 Hz sweeper closes instances empty longer than their zone's timeout (keeping warm hub instances); a tick that throws closes only its own instance and moves its players to the nexus | creating → running → empty → closed |
-| Execution | Only `InProcessWorldRunner`; all worlds tick on the main thread (worker threads are not yet implemented) | Many processes/cores, many machines |
+| Execution | **Stage 2:** one instance-server process per container (N containers × 1 process); each process hosts many instances on its main thread | Many processes/cores, many machines |
 | ECS isolation | **Fixed in S1.0:** all `GameWorld`s in a process allocate entity IDs from one shared index (`processEntityIndex`), so the module-global component arrays (`Health.current[eid]`) are never written by two worlds; `destroy()` releases a world's IDs | One shared entity index per process |
-| Zone transfer | In-memory function call (`InstanceHost.transferPlayer`) | Save → release lease → ticket → reconnect → claim |
-| Client connection | One fixed `ws://host:3001/ws` for the whole session | Reconnects to whichever server hosts the instance |
-| Auth | Token stored in DB, looked up by the gateway | Signed session token, verifiable anywhere |
-| Message bus | `InMemoryMessageBus` | Redis / NATS |
+| Zone transfer | **Done (S2.8):** every zone change is a handoff (fenced save → release lease → ticket → reconnect → claim), also within one server (decision D4) | Save → release lease → ticket → reconnect → claim |
+| Client connection | **Done (S2.6/S2.12):** the client gets a server URL and ticket from `account-api`, and follows `s2c_reconnect` to whichever server hosts the next zone | Reconnects to whichever server hosts the instance |
+| Auth | **Done (S2.3/S2.5):** signed session tokens (JWT) from `account-api`; signed, single-use transfer tickets (30 s) required by every instance server; refresh secrets stored only as hashes | Signed session token, verifiable anywhere |
+| Message bus | **Done (S2.4/S2.10):** Redis pub/sub between services (global and party chat, party updates, kicks); `InMemoryMessageBus` remains for in-process plumbing | Redis / NATS |
 | Database | **Done (S1.8):** Postgres via docker-compose, Prisma migrations; tests use Testcontainers | Central Postgres |
+| Ownership | **Done (S2.7):** Redis lease plus Postgres fencing epoch per character; newest login wins | One owner per character |
+| Placement across servers | **Stage 2:** static table (`ZONE_PLACEMENT`); Stage 3 adds the orchestrator | Load-based, dynamic |
 | Regions | None | Gateways |
 
 ### Foundations Already in Place
