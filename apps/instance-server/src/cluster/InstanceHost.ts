@@ -25,9 +25,10 @@ import {
   type InstancePool,
 } from "./InstanceManager.js";
 import {
-  persistenceService,
-  type CharacterUpdateState,
-} from "../persistence/index.js";
+  NO_PERSISTENCE,
+  type CharacterPersistence,
+} from "./CharacterPersistence.js";
+import type { PlayerPersistenceSnapshot } from "@mmoexile/simulation";
 import type { IMessageBus } from "./messaging/IMessageBus.js";
 import { InMemoryMessageBus } from "./messaging/InMemoryMessageBus.js";
 
@@ -54,6 +55,15 @@ export interface RegisterPlayerOptions {
   /** Zone to spawn in; unknown zones fall back to the nexus. */
   zoneId?: string;
   character?: JoiningCharacter;
+  /** Party at the time of entry (e.g. from the transfer ticket). */
+  partyId?: string;
+  /** Portal used, for portal_bound zones. */
+  via?: { sourceInstanceId: InstanceId; portalId: string };
+  /**
+   * Allow private and portal-bound zones. Only set when entry was authorized
+   * (a transfer ticket); plain logins always land in public zones.
+   */
+  allowPrivateZones?: boolean;
 }
 
 export interface RegisteredPlayer {
@@ -65,6 +75,19 @@ export interface RegisteredPlayer {
 
 export interface InstanceHostOptions {
   messageBus?: IMessageBus;
+  /** Where character state is saved; defaults to a no-op. */
+  persistence?: CharacterPersistence;
+  /** Zones this server hosts (static placement); defaults to all. */
+  hostsZone?: (zoneId: ZoneId) => boolean;
+  /**
+   * Called when a player uses a portal. Defaults to an in-process transfer;
+   * the instance server replaces it with a handoff (reconnect + ticket).
+   */
+  onPortalTransfer?: (
+    playerId: string,
+    targetZoneId: string,
+    via: { sourceInstanceId: InstanceId; portalId: string },
+  ) => void;
   /** How often idle instances are checked for closing; 0 disables the timer. */
   sweepIntervalMs?: number;
   /** Placement policy; defaults to the zone access rules (InstanceManager). */
@@ -87,6 +110,11 @@ export class InstanceHost implements InstancePool {
   private readonly now: () => number;
   private readonly placement: InstanceDirectory;
   private readonly getPartyId: (characterId: string) => string | undefined;
+  private readonly persistence: CharacterPersistence;
+  private readonly hostsZone: (zoneId: ZoneId) => boolean;
+  private readonly onPortalTransfer: NonNullable<
+    InstanceHostOptions["onPortalTransfer"]
+  >;
   private sweepTimer: NodeJS.Timeout | null = null;
   public readonly messageBus: IMessageBus;
 
@@ -96,10 +124,17 @@ export class InstanceHost implements InstancePool {
     this.now = options.now ?? Date.now;
     this.placement = options.placement ?? new InstanceManager(this);
     this.getPartyId = options.getPartyId ?? (() => undefined);
+    this.persistence = options.persistence ?? NO_PERSISTENCE;
+    this.hostsZone = options.hostsZone ?? (() => true);
+    this.onPortalTransfer =
+      options.onPortalTransfer ??
+      ((playerId, targetZoneId, via) =>
+        void this.transferPlayer(playerId, targetZoneId, via));
 
     // Keep warm instances (e.g. one nexus) ready; everything else is created
     // on demand by the placement policy.
     for (const zone of Object.values(ZONES)) {
+      if (!this.hostsZone(zone.id)) continue;
       for (let i = 0; i < (zone.minWarmInstances ?? 0); i++) {
         this.createInstance(zone.id);
       }
@@ -226,7 +261,7 @@ export class InstanceHost implements InstancePool {
       const info = this.playerInfo.get(playerId);
       const state = instance.world.getPlayerPersistenceState(playerId);
       if (info && state) {
-        persistenceService.queueSave(info.charId, state);
+        this.persistence.queueSave(info.charId, state);
       }
       const nexus = this.placement.resolve({
         zoneId: "nexus",
@@ -292,7 +327,7 @@ export class InstanceHost implements InstancePool {
   private handleTick(instance: Instance, result: WorldTickResult): void {
     // 1. Portal transfers requested this tick
     for (const transfer of result.transfers) {
-      this.transferPlayer(transfer.playerId, transfer.targetZoneId, {
+      this.onPortalTransfer(transfer.playerId, transfer.targetZoneId, {
         sourceInstanceId: instance.id,
         portalId: transfer.portalId,
       });
@@ -313,7 +348,7 @@ export class InstanceHost implements InstancePool {
       if (!death.isPlayer) continue;
       const info = this.playerInfo.get(death.entityId);
       if (!info) continue;
-      persistenceService.handleDeath(info.charId);
+      void this.persistence.handleDeath(info.charId);
       const zoneName = instance.mapData.name;
       this.broadcastChat(
         "Graveyard",
@@ -333,7 +368,7 @@ export class InstanceHost implements InstancePool {
       for (const item of instance.world.getPlayerPersistenceStates()) {
         const info = this.playerInfo.get(item.playerId);
         if (info) {
-          persistenceService.queueSave(info.charId, item.state);
+          this.persistence.queueSave(info.charId, item.state);
         }
       }
     }
@@ -349,19 +384,31 @@ export class InstanceHost implements InstancePool {
     const charId = options.charId ?? playerId;
     this.playerInfo.set(playerId, { name, charId });
 
-    // Players only log back into public zones; private and portal-bound
-    // instances can't be rejoined from the login screen.
+    // Plain logins only land in public zones; private and portal-bound zones
+    // need an authorized entry (transfer ticket).
     const zoneId: ZoneId =
       options.zoneId &&
       isZoneId(options.zoneId) &&
-      ZONES[options.zoneId].access.kind === "public_sharded"
+      (options.allowPrivateZones ||
+        ZONES[options.zoneId].access.kind === "public_sharded")
         ? options.zoneId
         : "nexus";
-    const instance = this.placement.resolve({
-      zoneId,
-      characterId: charId,
-      partyId: this.getPartyId(charId),
-    });
+    if (!this.hostsZone(zoneId)) {
+      this.playerInfo.delete(playerId);
+      throw new Error(`Zone ${zoneId} is not hosted on this server`);
+    }
+    let instance: Instance;
+    try {
+      instance = this.placement.resolve({
+        zoneId,
+        characterId: charId,
+        partyId: options.partyId ?? this.getPartyId(charId),
+        via: options.via,
+      });
+    } catch (err) {
+      this.playerInfo.delete(playerId);
+      throw err;
+    }
     this.addPlayerToInstance(instance, playerId);
 
     let inventory: (string | null)[] | undefined = undefined;
@@ -402,16 +449,38 @@ export class InstanceHost implements InstancePool {
     };
   }
 
-  public unregisterPlayer(playerId: string): CharacterUpdateState | undefined {
+  /**
+   * Removes a player without saving and returns their final state. Used by the
+   * handoff, which saves with a fenced write itself.
+   */
+  public detachPlayer(
+    playerId: string,
+  ): { state: PlayerPersistenceSnapshot; charId: string } | undefined {
     const instance = this.getInstanceForPlayer(playerId);
     const info = this.playerInfo.get(playerId);
-    let finalState: CharacterUpdateState | undefined = undefined;
+    let result: { state: PlayerPersistenceSnapshot; charId: string } | undefined;
+    if (instance && info) {
+      const state = instance.world.getPlayerPersistenceState(playerId);
+      if (state) result = { state, charId: info.charId };
+      this.removePlayerFromInstance(instance, playerId);
+    }
+    this.playerInstance.delete(playerId);
+    this.playerInfo.delete(playerId);
+    return result;
+  }
+
+  public unregisterPlayer(
+    playerId: string,
+  ): PlayerPersistenceSnapshot | undefined {
+    const instance = this.getInstanceForPlayer(playerId);
+    const info = this.playerInfo.get(playerId);
+    let finalState: PlayerPersistenceSnapshot | undefined = undefined;
 
     if (instance && info) {
       const state = instance.world.getPlayerPersistenceState(playerId);
       if (state) {
         finalState = state;
-        persistenceService.saveImmediate(info.charId, state);
+        void this.persistence.saveImmediate(info.charId, state);
       }
       this.removePlayerFromInstance(instance, playerId);
     }
@@ -605,7 +674,7 @@ export class InstanceHost implements InstancePool {
       for (const item of instance.world.getPlayerPersistenceStates()) {
         const info = this.playerInfo.get(item.playerId);
         if (info) {
-          persistenceService.queueSave(info.charId, item.state);
+          this.persistence.queueSave(info.charId, item.state);
         }
       }
     }

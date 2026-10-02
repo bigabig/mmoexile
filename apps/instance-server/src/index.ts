@@ -15,6 +15,7 @@ const parties = new PartyService();
 // Layer 2: Instance Host
 const host = new InstanceHost({
   getPartyId: (characterId) => parties.getPartyId(characterId),
+  persistence: persistenceService,
 });
 
 // HTTP: /health, plus /debug/instances outside production

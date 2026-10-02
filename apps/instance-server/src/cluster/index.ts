@@ -1,5 +1,6 @@
 export * from "./Instance.js";
 export * from "./InstanceHost.js";
+export * from "./CharacterPersistence.js";
 export * from "./InstanceManager.js";
 export * from "./runners/IWorldRunner.js";
 export * from "./runners/InProcessWorldRunner.js";
