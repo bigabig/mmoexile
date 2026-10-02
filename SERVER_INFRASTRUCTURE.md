@@ -146,7 +146,7 @@ This is what a PoE loading screen is. The original RotMG does the same via its `
 
 ## 6. Current State vs. Target
 
-Today, everything runs in **one Node process** (`apps/instance-server/src/index.ts`): HTTP, WebSocket gateway, `InstanceHost`, all instances, and persistence. The repository already follows the target `apps/` + `packages/` layout (Stage 0).
+Today, everything runs in **one Node process** (`apps/instance-server/src/index.ts`): HTTP, WebSocket gateway, `InstanceHost`, all instances, parties, and persistence. Stage 0 (repository layout) and Stage 1 (real instancing in one process, Postgres) are complete; Stage 2 splits the process roles.
 
 | Concern | Today | Target |
 | :--- | :--- | :--- |

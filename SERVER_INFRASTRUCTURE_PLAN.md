@@ -222,12 +222,12 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 - Fault isolation: an instance whose tick throws is closed and its players land in the nexus, while a second instance in the same process keeps ticking.
 
 ### Acceptance Criteria
-- [ ] Two browser tabs, not partied → separate golem dungeons (each sees only their own monsters).
-- [ ] Same two tabs after partying → the same dungeon instance.
-- [ ] Leaving a dungeon empty for the timeout → `/debug/instances` shows it closed.
-- [ ] A bot script filling the nexus beyond `softCap` creates a second shard.
-- [ ] The game runs on Postgres via docker-compose; SQLite is gone.
-- [ ] All tests and the benchmark (100 players / 500 monsters) still pass.
+- [x] Two browser tabs, not partied → separate golem dungeons (each sees only their own monsters). *Verified with two protocol-level bots that pathfind through the maps (`golem_dungeon:682b69` vs `:468793`).*
+- [x] Same two tabs after partying → the same dungeon instance. *Verified with two bots partying via `/invite` + `/accept` (both in `golem_dungeon:f73165`).*
+- [x] Leaving a dungeon empty for the timeout → `/debug/instances` shows it closed. *Closed instances are removed from the list. Covered by lifecycle tests, including the real sweeper timer; not waited out live (8 min).*
+- [x] A bot script filling the nexus beyond `softCap` creates a second shard. *41 bots → `nexus:c11cb4` with 40 players and `nexus:aa7587` with 1.*
+- [x] The game runs on Postgres via docker-compose; SQLite is gone.
+- [x] All tests and the benchmark (100 players / 500 monsters) still pass. *108 tests; benchmark avg 11.9 ms / p95 15.5 ms per tick.*
 
 ---
 
