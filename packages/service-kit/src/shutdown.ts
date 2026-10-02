@@ -6,20 +6,31 @@ export interface ShutdownOptions {
   shutdown: () => Promise<void>;
   /** Force-exit if shutdown hangs. */
   timeoutMs?: number;
+  /**
+   * Optional graceful phase before shutdown, run on SIGTERM only (what
+   * Docker and Kubernetes send). SIGINT (Ctrl-C) or a second signal skips it.
+   */
+  drain?: {
+    run: () => Promise<void>;
+    /** Shut down anyway after this long. */
+    timeoutMs: number;
+  };
   exit?: (code: number) => void;
 }
 
 /**
  * Installs SIGINT/SIGTERM handlers that run `shutdown` exactly once, then
- * exit with 0 (or 1 on error or timeout). Returns the trigger, e.g. for tests.
+ * exit with 0 (or 1 on error or timeout). Returns the trigger, e.g. for
+ * tests: `trigger("SIGTERM")` drains first if a drain is configured.
  */
 export function handleShutdownSignals(
   options: ShutdownOptions,
-): () => Promise<void> {
+): (signal?: NodeJS.Signals) => Promise<void> {
   const exit = options.exit ?? ((code: number) => process.exit(code));
   let started = false;
+  let draining: Promise<void> | undefined;
 
-  const trigger = async () => {
+  const shutdownNow = async () => {
     if (started) return;
     started = true;
     options.logger.info("Shutting down");
@@ -42,7 +53,36 @@ export function handleShutdownSignals(
     }
   };
 
-  process.once("SIGINT", trigger);
-  process.once("SIGTERM", trigger);
+  const drainThenShutdown = async (drain: NonNullable<ShutdownOptions["drain"]>) => {
+    options.logger.info({ timeoutMs: drain.timeoutMs }, "Draining before shutdown (signal again to skip)");
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        options.logger.warn("Drain timed out");
+        resolve();
+      }, drain.timeoutMs);
+      timer.unref();
+    });
+    try {
+      await Promise.race([drain.run(), timedOut]);
+    } catch (err) {
+      options.logger.error({ err }, "Drain failed");
+    } finally {
+      clearTimeout(timer);
+    }
+    await shutdownNow();
+  };
+
+  const trigger = async (signal?: NodeJS.Signals) => {
+    if (signal === "SIGTERM" && options.drain && !draining && !started) {
+      draining = drainThenShutdown(options.drain);
+      return draining;
+    }
+    // SIGINT, no drain configured, or impatient second signal
+    await shutdownNow();
+  };
+
+  process.on("SIGINT", () => void trigger("SIGINT"));
+  process.on("SIGTERM", () => void trigger("SIGTERM"));
   return trigger;
 }

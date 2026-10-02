@@ -21,6 +21,7 @@ import { FencedCharacterWriter } from "./ownership/FencedCharacterWriter.js";
 import { PlayerLifecycle } from "./players/PlayerLifecycle.js";
 import { buildInternalApi } from "./internalApi.js";
 import { FleetAgent } from "./fleet/FleetAgent.js";
+import { Drainer } from "./fleet/Drainer.js";
 import {
   NO_ALLOCATOR,
   OrchestratorAllocator,
@@ -40,6 +41,11 @@ export interface InstanceServerDeps {
   presence?: Presence;
   /** Defaults to the orchestrator at config.ORCHESTRATOR_URL. */
   allocator?: ZoneAllocator;
+  /**
+   * The orchestrator asked this server to drain (POST /servers/:id/drain).
+   * main.ts drains, stops and exits, exactly like on SIGTERM.
+   */
+  onDrainRequested?: () => void;
 }
 
 export interface InstanceServer {
@@ -52,6 +58,9 @@ export interface InstanceServer {
   readonly internalPort: number | undefined;
   /** Opens the public and internal ports, then joins the fleet. */
   listen(port: number): Promise<number>;
+  /** Moves players off this server (see Drainer); resolves when empty. */
+  drain(): Promise<void>;
+  readonly draining: boolean;
   /** Saves and releases every character, then stops everything. */
   stop(): Promise<void>;
 }
@@ -68,6 +77,7 @@ export async function createInstanceServer({
   allocator = config.ORCHESTRATOR_URL
     ? new OrchestratorAllocator(config.ORCHESTRATOR_URL)
     : NO_ALLOCATOR,
+  onDrainRequested,
 }: InstanceServerDeps): Promise<InstanceServer> {
   const ticketKey = await ticketVerificationKey(config.TICKET_PUBLIC_KEY);
 
@@ -165,6 +175,16 @@ export async function createInstanceServer({
     "Instance server ready",
   );
 
+  const drainer = new Drainer({
+    host,
+    lifecycle,
+    get fleet() {
+      return fleet;
+    },
+    timeoutMs: config.DRAIN_TIMEOUT_SEC * 1000,
+    log: (message, extra) => logger.info(extra ?? {}, message),
+  });
+
   const joinFleet = async (publicPort: number) => {
     if (!config.ORCHESTRATOR_URL) return;
     fleet = new FleetAgent({
@@ -178,6 +198,11 @@ export async function createInstanceServer({
       orchestratorUrl: config.ORCHESTRATOR_URL,
       host,
       intervalMs: config.HEARTBEAT_INTERVAL_MS,
+      onDrainRequested: () => {
+        logger.info("The orchestrator asked this server to drain");
+        if (onDrainRequested) onDrainRequested();
+        else void drainer.drain();
+      },
       log: (level, message, extra) => logger[level](extra ?? {}, message),
     });
     await fleet.start();
@@ -203,6 +228,10 @@ export async function createInstanceServer({
       internalPort = (internalApi.server.address() as AddressInfo).port;
       await joinFleet(publicPort);
       return publicPort;
+    },
+    drain: () => drainer.drain(),
+    get draining() {
+      return drainer.active;
     },
     stop: async () => {
       clearInterval(presenceTimer);

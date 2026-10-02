@@ -100,13 +100,17 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
     const serverRedis = new Redis(redisUrl);
     const broker = new RedisBroker({ redis: serverRedis });
     connections.push({ quit: () => broker.close() }, serverRedis);
-    const server = await createInstanceServer({
+    // Like main.ts: a drain request drains, then stops the server.
+    const server: InstanceServer = await createInstanceServer({
       config,
       logger: createLogger(`instance-server-${serverId}`, logLevel),
       db: prisma,
       redis: serverRedis,
       broker,
       parties,
+      onDrainRequested: () => {
+        if (!server.draining) void server.drain().then(() => server.stop());
+      },
     });
     await server.listen(0);
     servers.set(serverId, server);

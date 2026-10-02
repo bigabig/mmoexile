@@ -24,6 +24,8 @@ export const configSchema = baseConfigSchema.extend({
   /** Players this server should hold at most (placement limit). */
   CAPACITY: z.coerce.number().int().positive().default(200),
   HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
+  /** Draining: how long private instances may finish before players are moved. */
+  DRAIN_TIMEOUT_SEC: z.coerce.number().nonnegative().default(600),
 });
 
 export type Config = z.infer<typeof configSchema>;

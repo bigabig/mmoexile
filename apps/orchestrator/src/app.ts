@@ -113,6 +113,17 @@ export function createOrchestrator({
     },
   );
 
+  // Stop placing players on a server; it learns it with its next heartbeat,
+  // moves its players away and stops.
+  app.post(orchestratorApi.drain.path, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const entry = registry.drain(id);
+    if (!entry) return reply.code(404).send({ error: `Unknown server ${id}` });
+    logger.info({ serverId: id, state: entry.state }, "Drain requested");
+    mirrorServer(id);
+    return { state: entry.state };
+  });
+
   app.post(
     orchestratorApi.allocate.path,
     { schema: { body: orchestratorApi.allocate.body } },

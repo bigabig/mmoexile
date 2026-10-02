@@ -100,4 +100,57 @@ describe("handleShutdownSignals", () => {
 
     expect(exit).toHaveBeenCalledWith(1);
   });
+
+  it("drains on SIGTERM, but SIGINT or a second signal shuts down at once", async () => {
+    const order: string[] = [];
+    let finishDrain!: () => void;
+    const exit = vi.fn();
+    const trigger = handleShutdownSignals({
+      logger: silent,
+      shutdown: async () => {
+        order.push("shutdown");
+      },
+      drain: {
+        run: () =>
+          new Promise<void>((resolve) => {
+            order.push("drain");
+            finishDrain = resolve;
+          }),
+        timeoutMs: 60_000,
+      },
+      exit,
+    });
+
+    const draining = trigger("SIGTERM");
+    expect(order).toEqual(["drain"]);
+    finishDrain();
+    await draining;
+    expect(order).toEqual(["drain", "shutdown"]);
+    expect(exit).toHaveBeenCalledWith(0);
+
+    const impatient: string[] = [];
+    const trigger2 = handleShutdownSignals({
+      logger: silent,
+      shutdown: async () => {
+        impatient.push("shutdown");
+      },
+      drain: { run: () => new Promise(() => impatient.push("drain")), timeoutMs: 60_000 },
+      exit: vi.fn(),
+    });
+    void trigger2("SIGTERM");
+    await trigger2("SIGTERM");
+    expect(impatient).toEqual(["drain", "shutdown"]);
+  });
+
+  it("shuts down when the drain takes too long", async () => {
+    const exit = vi.fn();
+    const trigger = handleShutdownSignals({
+      logger: silent,
+      shutdown: async () => {},
+      drain: { run: () => new Promise(() => {}), timeoutMs: 20 },
+      exit,
+    });
+    await trigger("SIGTERM");
+    expect(exit).toHaveBeenCalledWith(0);
+  });
 });

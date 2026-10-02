@@ -122,8 +122,12 @@ services:
       context: ../..
       dockerfile: infra/docker/node.Dockerfile
       args: { APP: instance-server }
+    # `docker compose stop` sends SIGTERM: the server drains (dungeons get
+    # DRAIN_TIMEOUT_SEC to finish) before Docker would kill it.
+    stop_grace_period: 2m
     environment:
       <<: *realm-env
+      DRAIN_TIMEOUT_SEC: "60"
       SERVER_ID: a
       PORT: "7001"
       PUBLIC_URL: ws://localhost:7001/ws
@@ -136,8 +140,10 @@ services:
   instance-server-b:
     <<: *node-service
     build: *instance-build
+    stop_grace_period: 2m
     environment:
       <<: *realm-env
+      DRAIN_TIMEOUT_SEC: "60"
       SERVER_ID: b
       PORT: "7002"
       PUBLIC_URL: ws://localhost:7002/ws

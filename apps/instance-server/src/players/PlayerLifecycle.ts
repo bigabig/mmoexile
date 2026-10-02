@@ -231,7 +231,12 @@ export class PlayerLifecycle {
     characterId: string,
     targetZoneId: string,
     via?: { sourceInstanceId: InstanceId; portalId: string },
-    options: { excludeThisServer?: boolean } = {},
+    options: {
+      /** Never place on this server (draining). */
+      excludeThisServer?: boolean;
+      /** Tell the player in chat when the zone can't be reached (default). */
+      notifyOnFailure?: boolean;
+    } = {},
   ): Promise<boolean> {
     const player = this.players.get(characterId);
     if (!player || !isZoneId(targetZoneId) || this.handingOff.has(characterId)) {
@@ -252,6 +257,7 @@ export class PlayerLifecycle {
         });
       } catch (err) {
         this.log("Allocation failed", { characterId, targetZoneId, err: String(err) });
+        if (options.notifyOnFailure === false) return false;
         this.deps.host.messageBus.publishChat({
           sender: "System",
           text: "That zone is not available right now. Try again in a moment.",
