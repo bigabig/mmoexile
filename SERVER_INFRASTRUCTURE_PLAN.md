@@ -254,9 +254,11 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 - Every app's `main.ts` uses it, so all services behave identically operationally.
 - Implemented as `loadConfig` (zod), `createLogger` (pino), `createHttpService` (Fastify with zod validators, `x-request-id`, `/health`, `/ready`) and `handleShutdownSignals`. No `fastify-type-provider-zod`: its required peers pull in Swagger/OpenAPI, and the validator hook is a few lines.
 
-### S2.2 `packages/contracts`
+### S2.2 `packages/contracts` ✅
 - zod schemas + TS types for: account-api HTTP API, social HTTP API, instance-server internal API, and **broker subjects** (`chat.global`, `chat.party.<partyId>`, `chat.whisper.<characterId>`, `party.updated.<partyId>`, `session.kick.<characterId>`).
 - Typed HTTP client helpers generated from these schemas.
+- Implemented modules: `accountApi`, `social`, `broker` (channels `chat.global`, `chat.party`, `party.updated`, `session.kick`), `redisKeys`, `placement` (parsing `SERVERS` / `ZONE_PLACEMENT`), and `createHttpClient` (validates responses with the route's schema). Runs in the browser too, so it is held to the same no-I/O rule as `game-core`.
+- Instance servers keep a local party cache (seeded from `social` when a character arrives, updated by `party.updated`); tickets carry the `partyId`, so placement never waits on a network call.
 
 ### S2.3 `packages/auth`
 - **Session token:** JWT (`jose`), `{ sub: accountId, exp: 24h }`, issued by account-api.

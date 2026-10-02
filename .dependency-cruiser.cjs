@@ -29,9 +29,9 @@ module.exports = {
     {
       name: "pure-packages-no-io",
       comment:
-        "game-core, protocol and simulation must stay I/O-free (no Node built-ins, sockets or database).",
+        "game-core, protocol, simulation and contracts must stay I/O-free (no Node built-ins, sockets or database); they also run in the browser.",
       severity: "error",
-      from: { path: "^packages/(game-core|protocol|simulation)/src/" },
+      from: { path: "^packages/(game-core|protocol|simulation|contracts)/src/" },
       to: {
         dependencyTypes: ["core"],
       },
@@ -39,9 +39,9 @@ module.exports = {
     {
       name: "pure-packages-no-io-libraries",
       comment:
-        "game-core, protocol and simulation must not depend on networking or database libraries.",
+        "game-core, protocol, simulation and contracts must not depend on networking or database libraries.",
       severity: "error",
-      from: { path: "^packages/(game-core|protocol|simulation)/src/" },
+      from: { path: "^packages/(game-core|protocol|simulation|contracts)/src/" },
       to: {
         path: "(^|/)node_modules/(ws|@prisma/client|\\.prisma|ioredis|fastify)/",
       },
