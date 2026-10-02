@@ -14,7 +14,9 @@
     "build": "tsc",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push"
+    "db:migrate": "DATABASE_URL=\"${DATABASE_URL:-postgresql://mmoexile:mmoexile@localhost:5432/mmoexile}\" prisma migrate dev",
+    "db:deploy": "DATABASE_URL=\"${DATABASE_URL:-postgresql://mmoexile:mmoexile@localhost:5432/mmoexile}\" prisma migrate deploy",
+    "db:reset": "DATABASE_URL=\"${DATABASE_URL:-postgresql://mmoexile:mmoexile@localhost:5432/mmoexile}\" prisma migrate reset --force"
   },
   "dependencies": {
     "@prisma/client": "^6.4.1"

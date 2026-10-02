@@ -91,10 +91,10 @@ export function persistenceFromSnapshot(
     xp: snapshot.xp,
     x: snapshot.x,
     y: snapshot.y,
-    currentWorld: snapshot.zoneId,
+    lastZoneId: snapshot.zoneId,
     isAlive: snapshot.isAlive,
     equippedWeapon: snapshot.equipment.weapon,
     equippedArmor: snapshot.equipment.armor,
-    inventory: JSON.stringify(snapshot.inventory),
+    inventory: [...snapshot.inventory],
   };
 }

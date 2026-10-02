@@ -1,0 +1,23 @@
+# Local infrastructure for development. Stage 1: only Postgres.
+# Usage: pnpm db:up / pnpm db:down (from the repository root)
+name: mmoexile
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mmoexile
+      POSTGRES_PASSWORD: mmoexile
+      POSTGRES_DB: mmoexile
+    ports:
+      - "${MMOEXILE_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mmoexile -d mmoexile"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  postgres-data:

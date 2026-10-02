@@ -54,10 +54,10 @@ describe("Character snapshots", () => {
 
     const state = persistenceFromSnapshot(snapshotCharacter(world, "hero")!);
 
-    expect(state.currentWorld).toBe("nexus");
+    expect(state.lastZoneId).toBe("nexus");
     expect(state).not.toHaveProperty("mp");
     expect(state.hp).toBe(88);
-    expect(JSON.parse(state.inventory as string)[2]).toBe("robe_magician");
+    expect(state.inventory![2]).toBe("robe_magician");
     expect(world.getPlayerPersistenceState("hero")).toEqual(state);
     world.destroy();
   });

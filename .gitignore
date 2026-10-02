@@ -5,7 +5,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Local SQLite database (recreate with `pnpm db:push`)
+# Local SQLite files from before the move to Postgres
 *.db
 *.db-journal
 

@@ -9,12 +9,13 @@ export interface PlayerPersistenceSnapshot {
   xp?: number;
   x: number;
   y: number;
-  currentWorld: string;
+  /** Zone (not instance) the character is in. */
+  lastZoneId: string;
   isAlive: boolean;
   deathReason?: string;
   equippedWeapon?: string | null;
   equippedArmor?: string | null;
-  inventory?: string | (string | null)[];
+  inventory?: (string | null)[];
 }
 
 export interface BulletSpawnedEvent {

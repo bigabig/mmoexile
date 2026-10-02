@@ -187,7 +187,7 @@ export class WebSocketGateway implements ITransportGateway {
                 playerId: character.id,
                 name: account.nickname,
                 charId: character.id,
-                zoneId: character.currentWorld,
+                zoneId: character.lastZoneId,
                 character: domainCharacter,
               });
 
@@ -227,9 +227,7 @@ export class WebSocketGateway implements ITransportGateway {
                     weapon: character.equippedWeapon,
                     armor: character.equippedArmor,
                   },
-                  inventory: character.inventory
-                    ? JSON.parse(character.inventory)
-                    : new Array(8).fill(null),
+                  inventory: domainCharacter.inventory,
                   xp: character.xp,
                   nextLevelXp: Math.floor(
                     100 * Math.pow(character.level, 1.35),

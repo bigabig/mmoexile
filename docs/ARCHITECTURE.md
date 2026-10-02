@@ -122,7 +122,7 @@ Pure bitECS game simulation.
 
 ### Persistence (`apps/instance-server/src/persistence/` + `@mmoexile/db`)
 
-Asynchronous persistence, out of band from the game loop. Currently backed by SQLite (`packages/db/prisma/dev.db`).
+Asynchronous persistence, out of band from the game loop, backed by PostgreSQL (`pnpm db:up` starts it via `infra/compose`). Schema changes go through committed Prisma migrations (`packages/db/prisma/migrations`). Characters store `lastZoneId` (a zone, never an instance) and their inventory as `jsonb`.
 
 - **`@mmoexile/db`**: Prisma schema and the shared Prisma client.
 - **`repositories/accountRepository`**, **`repositories/characterRepository`**: database access for accounts and characters.

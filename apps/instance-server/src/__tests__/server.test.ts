@@ -365,7 +365,7 @@ describe("Repository, Mapper & Service Layer", () => {
     expect(createInput.class).toBe("wizard");
     expect(createInput.x).toBe(25.0);
     expect(createInput.y).toBe(30.0);
-    expect(typeof createInput.inventory).toBe("string");
+    expect(Array.isArray(createInput.inventory)).toBe(true);
   });
 
   it("updates character state and handles death via CharacterRepository & AccountService", async () => {
@@ -380,7 +380,7 @@ describe("Repository, Mapper & Service Layer", () => {
       mp: 20,
       x: 35.5,
       y: 42.1,
-      currentWorld: "realm",
+      lastZoneId: "overworld",
       isAlive: true,
       equippedWeapon: "sword_iron",
     });
@@ -390,7 +390,7 @@ describe("Repository, Mapper & Service Layer", () => {
     expect(updated?.mp).toBe(20);
     expect(updated?.x).toBe(35.5);
     expect(updated?.y).toBe(42.1);
-    expect(updated?.currentWorld).toBe("realm");
+    expect(updated?.lastZoneId).toBe("overworld");
 
     const deadChar = await characterRepo.markDead(character.id, "Slime Boss");
     expect(deadChar.isAlive).toBe(false);

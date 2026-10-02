@@ -160,7 +160,7 @@ Today, everything runs in **one Node process** (`apps/instance-server/src/index.
 | Client connection | One fixed `ws://host:3001/ws` for the whole session | Reconnects to whichever server hosts the instance |
 | Auth | Token stored in DB, looked up by the gateway | Signed session token, verifiable anywhere |
 | Message bus | `InMemoryMessageBus` | Redis / NATS |
-| Database | SQLite file | Central Postgres |
+| Database | **Done (S1.8):** Postgres via docker-compose, Prisma migrations; tests use Testcontainers | Central Postgres |
 | Regions | None | Gateways |
 
 ### Foundations Already in Place

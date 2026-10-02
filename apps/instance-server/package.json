@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@mmoexile/tsconfig": "workspace:*",
+    "@testcontainers/postgresql": "^12.2.0",
     "@types/node": "^22.13.0",
     "@types/ws": "^8.5.14",
     "tsx": "^4.19.3",

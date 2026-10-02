@@ -12,12 +12,27 @@ export interface CharacterUpdateState {
   xp?: number;
   x: number;
   y: number;
-  currentWorld: string;
+  /** Zone (not instance) the character is in. */
+  lastZoneId: string;
   isAlive: boolean;
   deathReason?: string;
   equippedWeapon?: string | null;
   equippedArmor?: string | null;
-  inventory?: string | (string | null)[];
+  inventory?: (string | null)[];
+}
+
+const INVENTORY_SIZE = 8;
+
+/** Reads the Json inventory column, tolerating malformed data. */
+function parseInventory(value: unknown): (string | null)[] {
+  if (
+    Array.isArray(value) &&
+    value.length === INVENTORY_SIZE &&
+    value.every((slot) => slot === null || typeof slot === "string")
+  ) {
+    return value as (string | null)[];
+  }
+  return new Array(INVENTORY_SIZE).fill(null);
 }
 
 export class CharacterMapper {
@@ -28,15 +43,7 @@ export class CharacterMapper {
     record: PrismaCharacter,
     nickname?: string,
   ): CharacterData {
-    let inventory: (string | null)[];
-    try {
-      inventory = JSON.parse(record.inventory);
-      if (!Array.isArray(inventory) || inventory.length !== 8) {
-        inventory = new Array(8).fill(null);
-      }
-    } catch {
-      inventory = new Array(8).fill(null);
-    }
+    const inventory = parseInventory(record.inventory);
 
     return {
       id: record.id,
@@ -60,7 +67,7 @@ export class CharacterMapper {
   public static toPersistenceCreate(
     domainChar: CharacterData,
     accountId: string,
-    currentWorld: string = "nexus",
+    lastZoneId: string = "nexus",
     x: number = 20.0,
     y: number = 20.0,
   ): Prisma.CharacterUncheckedCreateInput {
@@ -82,8 +89,8 @@ export class CharacterMapper {
       dexterity: effective.dexterity,
       equippedWeapon: domainChar.equipment.weapon,
       equippedArmor: domainChar.equipment.armor,
-      inventory: JSON.stringify(domainChar.inventory),
-      currentWorld,
+      inventory: domainChar.inventory,
+      lastZoneId,
       x,
       y,
       isAlive: true,
@@ -96,14 +103,6 @@ export class CharacterMapper {
   public static toPersistenceUpdate(
     state: CharacterUpdateState,
   ): Prisma.CharacterUpdateInput {
-    let serializedInventory: string | undefined = undefined;
-    if (state.inventory !== undefined) {
-      serializedInventory =
-        typeof state.inventory === "string"
-          ? state.inventory
-          : JSON.stringify(state.inventory);
-    }
-
     return {
       hp: state.hp,
       mp: state.mp !== undefined ? state.mp : undefined,
@@ -111,14 +110,14 @@ export class CharacterMapper {
       xp: state.xp !== undefined ? state.xp : undefined,
       x: state.x,
       y: state.y,
-      currentWorld: state.currentWorld,
+      lastZoneId: state.lastZoneId,
       isAlive: state.isAlive,
       deathReason: state.deathReason,
       equippedWeapon:
         state.equippedWeapon !== undefined ? state.equippedWeapon : undefined,
       equippedArmor:
         state.equippedArmor !== undefined ? state.equippedArmor : undefined,
-      inventory: serializedInventory,
+      inventory: state.inventory,
     };
   }
 }

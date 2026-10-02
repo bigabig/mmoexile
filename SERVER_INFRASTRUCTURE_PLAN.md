@@ -190,12 +190,13 @@ Rules:
 - System messages scoped correctly: level-ups → instance, deaths → global, "entered zone" → target instance only.
 - `s2c_chat` carries a `channel` (`local` / `global` / `party`); the client prefixes global and party messages. Command replies are private `local` system messages.
 
-### S1.8 Postgres
+### S1.8 Postgres ✅
 
 - `infra/compose/docker-compose.yml` with **only** Postgres (first piece of infra); `.env.example` with `DATABASE_URL`.
 - Prisma provider → `postgresql`; move from `db push` to `prisma migrate` with a committed initial migration.
 - Schema changes: `Character.currentWorld` → `lastZoneId`; `inventory` → `Json`.
-- Tests: a separate database schema per test run (or a Postgres testcontainer); document `pnpm db:test:reset`.
+- Tests: a throwaway Postgres container per test run via Testcontainers (Open Decision D7 resolved), or `TEST_DATABASE_URL` to use an existing database. No manual reset needed.
+- Local dev needs no configuration: `@mmoexile/db` falls back to the compose database URL when `DATABASE_URL` is unset. Root scripts: `db:up`, `db:down`, `db:migrate`, `db:deploy`.
 
 ### S1.9 Login Destination
 

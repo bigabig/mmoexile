@@ -1,6 +1,6 @@
 # Realm of the Mad God (RotMG) Voxel MMO Clone
 
-A fast, server-authoritative, 3D isometric bullet-hell MMO clone built with **TypeScript**, **Three.js**, **React**, **Vite**, **Node.js**, **WebSockets**, **bitECS**, and **Prisma** (SQLite for now).
+A fast, server-authoritative, 3D isometric bullet-hell MMO clone built with **TypeScript**, **Three.js**, **React**, **Vite**, **Node.js**, **WebSockets**, **bitECS**, **Prisma**, and **PostgreSQL**.
 
 ---
 
@@ -12,7 +12,7 @@ A fast, server-authoritative, 3D isometric bullet-hell MMO clone built with **Ty
 - **Deterministic Bullet Hell Combat**: Client & server share projectile formulas. Projectiles animate at 60+ FPS locally while the server validates hits and resolves authoritative damage.
 - **Client-Side Prediction & Reconciliation**: Responsive WASD movement with local prediction against 2D tile collision maps, plus server reconciliation and entity interpolation.
 - **Authentic RotMG Camera**: 3D Isometric camera with **Q / R** rotation, ground plane mouse raycasting, and toggleable **Z** off-center view to anticipate incoming bullets.
-- **Persistence & Quick Onboarding**: Instant guest login with localStorage token persistence in SQLite via Prisma (ready for PostgreSQL migration).
+- **Persistence & Quick Onboarding**: Instant guest login with localStorage token persistence in PostgreSQL via Prisma.
 - **Permadeath & Loot**: Dying in the realm triggers permadeath; defeating enemies and bosses drops loot bags.
 
 ---
@@ -45,6 +45,7 @@ The target server infrastructure (realms, gateways, instances, orchestrator) is 
 
 - **Node.js**: v20+ (tested on v24)
 - **pnpm**: tested on v12 (or `corepack enable pnpm`)
+- **Docker** with Compose: runs the local Postgres, and the server tests start their own throwaway Postgres via Testcontainers
 
 ### 2. Install & Initialize
 
@@ -52,8 +53,9 @@ The target server infrastructure (realms, gateways, instances, orchestrator) is 
 # Install dependencies across all workspaces (also generates the Prisma client)
 pnpm install
 
-# Create the local SQLite database
-pnpm db:push
+# Start Postgres (docker compose, port 5432) and apply migrations
+pnpm db:up
+pnpm db:deploy
 ```
 
 ### 3. Run Development Servers

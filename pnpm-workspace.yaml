@@ -7,3 +7,7 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   prisma: true
+  # Testcontainers dependencies: optional native addons / version checks, not needed
+  cpu-features: false
+  protobufjs: false
+  ssh2: false

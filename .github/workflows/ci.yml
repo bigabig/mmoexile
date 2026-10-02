@@ -22,9 +22,9 @@ jobs:
       # Also generates the Prisma client (packages/db postinstall)
       - run: pnpm install --frozen-lockfile
 
-      # Server tests use the local SQLite database
-      - run: pnpm db:push
-
       - run: pnpm lint:deps
       - run: pnpm build
+
+      # Server tests start a throwaway Postgres via Testcontainers (Docker is
+      # available on GitHub's Ubuntu runners)
       - run: pnpm test
