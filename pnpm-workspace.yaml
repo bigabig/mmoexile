@@ -11,3 +11,6 @@ allowBuilds:
   cpu-features: false
   protobufjs: false
   ssh2: false
+  # When copied by `pnpm deploy` (Docker), the db package ships its generated
+  # Prisma client already; its postinstall (prisma generate) must not run
+  '@mmoexile/db': false

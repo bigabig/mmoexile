@@ -19,6 +19,7 @@
     "@mmoexile/simulation": "workspace:*",
     "@msgpack/msgpack": "^3.0.0",
     "bitecs": "^0.4.0",
+    "tsx": "^4.19.3",
     "ws": "^8.18.0",
     "zod": "^4.6.5"
   },
@@ -28,7 +29,6 @@
     "@testcontainers/redis": "^12.2.0",
     "@types/node": "^22.13.0",
     "@types/ws": "^8.5.14",
-    "tsx": "^4.19.3",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
   }

@@ -193,6 +193,9 @@ importers:
       fastify:
         specifier: ^5.12.5
         version: 5.12.5
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.15
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -206,9 +209,6 @@ importers:
       '@types/node':
         specifier: ^22.13.0
         version: 22.20.4
-      tsx:
-        specifier: ^4.19.3
-        version: 4.23.15
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -294,6 +294,9 @@ importers:
       bitecs:
         specifier: ^0.4.0
         version: 0.4.0
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.15
       ws:
         specifier: ^8.18.0
         version: 8.21.3
@@ -316,9 +319,6 @@ importers:
       '@types/ws':
         specifier: ^8.5.14
         version: 8.18.1
-      tsx:
-        specifier: ^4.19.3
-        version: 4.23.15
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -340,6 +340,9 @@ importers:
       fastify:
         specifier: ^5.12.5
         version: 5.12.5
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.15
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -353,9 +356,6 @@ importers:
       '@types/node':
         specifier: ^22.13.0
         version: 22.20.4
-      tsx:
-        specifier: ^4.19.3
-        version: 4.23.15
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -504,6 +504,37 @@ importers:
         version: 3.2.7(@types/node@22.20.4)(jiti@2.7.0)(supports-color@7.2.0)(tsx@4.23.15)(yaml@2.9.1)
 
   packages/tsconfig: {}
+
+  tools/bots:
+    dependencies:
+      '@mmoexile/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@mmoexile/game-core':
+        specifier: workspace:*
+        version: link:../../packages/game-core
+      '@mmoexile/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.15
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.3
+    devDependencies:
+      '@mmoexile/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@types/node':
+        specifier: ^22.13.0
+        version: 22.20.4
+      '@types/ws':
+        specifier: ^8.5.14
+        version: 8.18.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
 
 packages:
 

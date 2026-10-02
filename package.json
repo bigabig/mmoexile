@@ -11,11 +11,13 @@
     "test": "pnpm -r test",
     "lint:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
     "db:up": "docker compose -f infra/compose/docker-compose.yml up -d --wait",
-    "db:down": "docker compose -f infra/compose/docker-compose.yml down",
+    "db:down": "docker compose -f infra/compose/docker-compose.yml --profile realm down",
     "db:migrate": "pnpm --filter @mmoexile/db db:migrate",
     "db:deploy": "pnpm --filter @mmoexile/db db:deploy",
     "dev:account": "pnpm --filter @mmoexile/account-api dev",
-    "dev:social": "pnpm --filter @mmoexile/social dev"
+    "dev:social": "pnpm --filter @mmoexile/social dev",
+    "realm:up": "docker compose -f infra/compose/docker-compose.yml --profile realm up -d --build --wait",
+    "realm:down": "docker compose -f infra/compose/docker-compose.yml --profile realm down"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.4.0",
