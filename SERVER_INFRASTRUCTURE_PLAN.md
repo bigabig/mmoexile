@@ -267,9 +267,9 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 - Replay protection: `jti` claimed once via Redis `SET ticket:<jti> 1 NX EX 60`. The auth package only signs and verifies (signature, expiry, target server); claiming the `jti` happens in the instance server's handoff code (S2.8).
 - Refresh secrets are random, stored only as SHA-256 hashes, and compared in constant time.
 
-### S2.4 `packages/messaging`
-- `Broker` interface: `publish(subject, msg)`, `subscribe(subject, handler)`, pattern subscriptions; typed by `contracts`.
-- Implementations: `InMemoryBroker` (tests), `RedisBroker` (ioredis pub/sub).
+### S2.4 `packages/messaging` ✅
+- `Broker` interface: `publish(channel, msg)`, `subscribe(channel, handler)`; typed by `contracts`. Incoming messages are validated against the channel schema and dropped (with a log) if invalid. Pattern subscriptions were not needed for the Stage 2 channels.
+- Implementations: `InMemoryBroker` (tests), `RedisBroker` (ioredis pub/sub). Both pass one shared test suite; the Redis tests run against a throwaway Redis via Testcontainers (or `TEST_REDIS_URL`).
 - Redis is chosen over NATS for now because we need Redis anyway (leases, presence). The interface keeps NATS possible later.
 
 ### S2.5 `apps/account-api`

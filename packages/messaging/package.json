@@ -1,0 +1,27 @@
+{
+  "name": "@mmoexile/messaging",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mmoexile/contracts": "workspace:*",
+    "ioredis": "^6.0.0"
+  },
+  "devDependencies": {
+    "@mmoexile/tsconfig": "workspace:*",
+    "@testcontainers/redis": "^12.2.0",
+    "@types/node": "^22.13.0",
+    "vitest": "^3.0.0"
+  }
+}
