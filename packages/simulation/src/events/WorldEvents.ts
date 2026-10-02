@@ -17,17 +17,17 @@ export interface PlayerPersistenceSnapshot {
 }
 
 export interface BulletSpawnedEvent {
-  worldId: string;
+  instanceId: string;
   bullet: ProjectileState;
 }
 
 export interface DamageDealtEvent {
-  worldId: string;
+  instanceId: string;
   event: DamageEvent;
 }
 
 export interface EntityDiedEvent {
-  worldId: string;
+  instanceId: string;
   entityId: string;
   killerId?: string;
   isPlayer: boolean;
@@ -41,7 +41,7 @@ export interface PlayerLevelUpEvent {
 }
 
 export interface LootBagSpawnedEvent {
-  worldId: string;
+  instanceId: string;
   bagId: string;
   x: number;
   y: number;
@@ -50,7 +50,7 @@ export interface LootBagSpawnedEvent {
 }
 
 export interface LootBagDespawnedEvent {
-  worldId: string;
+  instanceId: string;
   bagId: string;
 }
 
@@ -71,7 +71,7 @@ export interface ChatBroadcastEvent {
 }
 
 export interface SnapshotEvent {
-  worldId: string;
+  instanceId: string;
   tick: number;
   serverTime: number;
   lastAckSeqs: Record<string, number>;

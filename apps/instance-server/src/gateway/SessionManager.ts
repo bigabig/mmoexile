@@ -38,12 +38,12 @@ export class SessionManager {
     playerId: string,
     charId: string,
     nickname: string,
-    worldId: string,
+    instanceId: string,
   ): void {
     session.playerId = playerId;
     session.charId = charId;
     session.nickname = nickname;
-    session.currentWorldId = worldId;
+    session.currentInstanceId = instanceId;
     this.sessionsByPlayerId.set(playerId, session);
   }
 
@@ -53,7 +53,7 @@ export class SessionManager {
       session.playerId = undefined;
       session.charId = undefined;
       session.nickname = undefined;
-      session.currentWorldId = undefined;
+      session.currentInstanceId = undefined;
     }
   }
 

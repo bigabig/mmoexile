@@ -555,7 +555,7 @@ describe("4-Layer Decoupled MMO Architecture", () => {
 
     const result = world.tick(1 / 30, Date.now());
 
-    expect(result.worldId).toBe("test_tb");
+    expect(result.instanceId).toBe("test_tb");
     expect(result.tick).toBe(1);
     expect(result.snapshot).toBeDefined();
     expect(result.snapshot?.entities.some((e) => e.id === "p_tick")).toBe(true);

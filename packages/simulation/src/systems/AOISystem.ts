@@ -194,7 +194,7 @@ export class AOISystem implements ISystem {
     const allEntities = Array.from(entityCache.values());
 
     world.recordSnapshot({
-      worldId: world.worldId,
+      instanceId: world.instanceId,
       tick: world.currentTick,
       serverTime: now,
       lastAckSeqs,

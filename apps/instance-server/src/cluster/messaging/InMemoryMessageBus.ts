@@ -12,7 +12,7 @@ export class InMemoryMessageBus implements IMessageBus {
     command: PlayerCommand,
   ) => void)[] = [];
   private tickHandlers: ((
-    worldId: string,
+    instanceId: string,
     result: WorldTickResult,
     playerIds: ReadonlySet<string>,
   ) => void)[] = [];
@@ -40,13 +40,13 @@ export class InMemoryMessageBus implements IMessageBus {
   }
 
   public publishTickResult(
-    worldId: string,
+    instanceId: string,
     result: WorldTickResult,
     playerIds: ReadonlySet<string>,
   ): void {
     for (const handler of this.tickHandlers) {
       try {
-        handler(worldId, result, playerIds);
+        handler(instanceId, result, playerIds);
       } catch (err) {
         console.error("[InMemoryMessageBus] Error in tick handler:", err);
       }
@@ -55,7 +55,7 @@ export class InMemoryMessageBus implements IMessageBus {
 
   public onTickResult(
     handler: (
-      worldId: string,
+      instanceId: string,
       result: WorldTickResult,
       playerIds: ReadonlySet<string>,
     ) => void,

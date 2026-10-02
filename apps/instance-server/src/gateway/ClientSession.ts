@@ -27,7 +27,7 @@ export class ClientSession implements ITransportSession {
   public playerId?: string;
   public charId?: string;
   public nickname?: string;
-  public currentWorldId?: string;
+  public currentInstanceId?: string;
 
   constructor(id: string, socket: ITransportSocket | WebSocket) {
     this.id = id;

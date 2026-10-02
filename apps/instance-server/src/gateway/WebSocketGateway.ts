@@ -13,8 +13,7 @@ import {
 } from "@mmoexile/protocol";
 import { SessionManager } from "./SessionManager.js";
 import {
-  WorldCluster,
-  type WorldManager,
+  InstanceHost,
   type IMessageBus,
   InMemoryMessageBus,
 } from "../cluster/index.js";
@@ -24,30 +23,27 @@ import type { ITransportGateway } from "./transport/ITransportGateway.js";
 export class WebSocketGateway implements ITransportGateway {
   private readonly wss: WebSocketServer;
   public readonly sessionManager: SessionManager;
-  public readonly worldManager: WorldManager;
+  public readonly host: InstanceHost;
   public readonly messageBus: IMessageBus;
 
   constructor(
     httpServer: HttpServer,
-    worldManager: WorldManager,
+    host: InstanceHost,
     sessionManager: SessionManager = new SessionManager(),
     messageBus?: IMessageBus,
   ) {
-    this.worldManager = worldManager;
+    this.host = host;
     this.sessionManager = sessionManager;
-    this.messageBus =
-      messageBus ??
-      (worldManager as any).messageBus ??
-      new InMemoryMessageBus();
+    this.messageBus = messageBus ?? host.messageBus ?? new InMemoryMessageBus();
     this.wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-    this.setupWorldManagerHooks();
+    this.setupHostHooks();
     this.setupWebSocketListeners();
   }
 
-  private setupWorldManagerHooks(): void {
+  private setupHostHooks(): void {
     // 1. Tick output broadcast (Batched & Pre-serialized for high performance)
-    this.messageBus.onTickResult((worldId, result, playerIds) => {
+    this.messageBus.onTickResult((_instanceId, result, playerIds) => {
       if (playerIds.size === 0) return;
 
       // A. Pre-serialize spawned bullets once and broadcast to world players
@@ -91,15 +87,15 @@ export class WebSocketGateway implements ITransportGateway {
       }
     });
 
-    // 2. World transfer broadcast
+    // 2. Instance transfer broadcast
     this.messageBus.onPlayerTransfer(
-      ({ playerId, targetWorldId, mapData, spawnPoint }) => {
+      ({ playerId, targetInstanceId, mapData, spawnPoint }) => {
         const session = this.sessionManager.getSessionByPlayerId(playerId);
         if (session && session.isOpen) {
-          session.currentWorldId = targetWorldId;
+          session.currentInstanceId = targetInstanceId;
           const packet: S2C_WorldTransferPacket = {
             type: "s2c_world_transfer",
-            worldId: targetWorldId,
+            worldId: targetInstanceId,
             map: mapData,
             spawnX: spawnPoint.x,
             spawnY: spawnPoint.y,
@@ -110,7 +106,7 @@ export class WebSocketGateway implements ITransportGateway {
     );
 
     // 3. Chat broadcast
-    this.messageBus.onChat(({ sender, text, kind, targetWorldId }) => {
+    this.messageBus.onChat(({ sender, text, kind, targetInstanceId }) => {
       const packet: S2C_ChatPacket = {
         type: "s2c_chat",
         sender,
@@ -120,10 +116,10 @@ export class WebSocketGateway implements ITransportGateway {
       };
       const binary = serializePacket(packet);
 
-      if (targetWorldId) {
-        const instance = this.worldManager.getWorldInstance(targetWorldId);
+      if (targetInstanceId) {
+        const instance = this.host.getInstance(targetInstanceId);
         if (instance) {
-          this.sessionManager.broadcastToPlayers(instance.playerIds, binary);
+          this.sessionManager.broadcastToPlayers(instance.players, binary);
         }
       } else {
         this.sessionManager.broadcastAll(binary);
@@ -147,28 +143,27 @@ export class WebSocketGateway implements ITransportGateway {
                   packet.token,
                 );
 
-              const initialWorld = character.currentWorld || "nexus";
-              const { worldId, map } = this.worldManager.registerPlayer(
-                character.id,
-                account.nickname,
-                character.id,
-                initialWorld,
-                domainCharacter,
-              );
+              const { instanceId, map } = this.host.registerPlayer({
+                playerId: character.id,
+                name: account.nickname,
+                charId: character.id,
+                zoneId: character.currentWorld,
+                character: domainCharacter,
+              });
 
               this.sessionManager.bindPlayer(
                 session,
                 character.id,
                 character.id,
                 account.nickname,
-                worldId,
+                instanceId,
               );
 
               const welcomePacket: S2C_WelcomePacket = {
                 type: "s2c_welcome",
                 playerId: character.id,
                 token: account.token,
-                worldId,
+                worldId: instanceId,
                 map,
                 playerState: {
                   id: character.id,
@@ -204,7 +199,7 @@ export class WebSocketGateway implements ITransportGateway {
               };
 
               session.send(welcomePacket);
-              this.worldManager.broadcastChat(
+              this.host.broadcastChat(
                 "System",
                 `${account.nickname} entered the realm.`,
                 "system",
@@ -304,7 +299,7 @@ export class WebSocketGateway implements ITransportGateway {
 
             case "c2s_chat": {
               if (!session.nickname) return;
-              this.worldManager.broadcastChat(
+              this.host.broadcastChat(
                 session.nickname,
                 packet.text,
                 "player",
@@ -322,7 +317,7 @@ export class WebSocketGateway implements ITransportGateway {
 
       socket.on("close", () => {
         if (session.playerId) {
-          this.worldManager.unregisterPlayer(session.playerId);
+          this.host.unregisterPlayer(session.playerId);
         }
         this.sessionManager.removeSession(socket);
       });

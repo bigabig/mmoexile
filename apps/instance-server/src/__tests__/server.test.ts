@@ -35,7 +35,7 @@ import {
   Identity,
 } from "@mmoexile/game-core";
 import { SpatialSystem, EntityFactory, GameWorld } from "@mmoexile/simulation";
-import { WorldCluster, WorldManager } from "../cluster/index.js";
+import { InstanceHost } from "../cluster/index.js";
 import {
   accountRepo,
   characterRepo,
@@ -43,22 +43,15 @@ import {
   accountService,
 } from "../persistence/index.js";
 
-describe("WorldManager Lossless Transitions", () => {
-  it("transfers player between worlds while 100% preserving stats, equipment, and inventory", () => {
-    const manager = new WorldManager();
+describe("InstanceHost Lossless Transitions", () => {
+  it("transfers player between instances while 100% preserving stats, equipment, and inventory", () => {
+    const host = new InstanceHost();
 
-    const mockSocket = {
-      readyState: 1,
-      send: () => {},
-    } as any;
-
-    const { worldId, playerEid } = manager.registerPlayer(
-      mockSocket,
-      "p_traveler",
-      "Traveler",
-      "p_traveler",
-      "nexus",
-      {
+    const { instanceId, zoneId, playerEid } = host.registerPlayer({
+      playerId: "p_traveler",
+      name: "Traveler",
+      zoneId: "nexus",
+      character: {
         class: "knight",
         level: 5,
         xp: 350,
@@ -76,9 +69,10 @@ describe("WorldManager Lossless Transitions", () => {
           null,
         ]),
       },
-    );
+    });
 
-    expect(worldId).toBe("nexus");
+    expect(zoneId).toBe("nexus");
+    expect(instanceId).toMatch(/^nexus:[0-9a-f]{6}$/);
     expect(Progression.classId[playerEid]).toBe("knight");
     expect(Progression.level[playerEid]).toBe(5);
     expect(Health.current[playerEid]).toBe(140);
@@ -86,10 +80,12 @@ describe("WorldManager Lossless Transitions", () => {
     expect(Inventory.slots[playerEid][0]).toBe("staff_fire");
 
     // Transfer to overworld
-    manager.transferPlayer("p_traveler", "overworld");
+    expect(host.transferPlayer("p_traveler", "overworld")).toBe(true);
 
-    const realmWorld = manager.getWorld("overworld")!;
-    const transferredEid = realmWorld.uuidToEid.get("p_traveler");
+    const target = host.getInstanceForPlayer("p_traveler")!;
+    expect(target.zone.id).toBe("overworld");
+    expect(target.players.has("p_traveler")).toBe(true);
+    const transferredEid = target.world.uuidToEid.get("p_traveler");
 
     expect(transferredEid).toBeDefined();
     // Verify zero data loss!
@@ -101,11 +97,74 @@ describe("WorldManager Lossless Transitions", () => {
     expect(Equipment.armor[transferredEid!]).toBe("armor_iron");
     expect(Inventory.slots[transferredEid!][0]).toBe("staff_fire");
 
-    // Verify removed from old world
-    const nexusWorld = manager.getWorld("nexus")!;
-    expect(nexusWorld.uuidToEid.has("p_traveler")).toBe(false);
+    // Verify removed from the old instance
+    const source = host.getInstance(instanceId)!;
+    expect(source.world.uuidToEid.has("p_traveler")).toBe(false);
+    expect(source.players.has("p_traveler")).toBe(false);
+    expect(source.state).toBe("empty");
 
-    manager.stop();
+    host.stop();
+  });
+});
+
+describe("InstanceHost instance identity", () => {
+  it("starts one instance per zone with unique zone-prefixed ids", () => {
+    const host = new InstanceHost();
+    const ids = host.getAllInstances().map((i) => i.id);
+
+    expect(ids).toHaveLength(Object.keys(ZONES).length);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const instance of host.getAllInstances()) {
+      expect(instance.id.startsWith(`${instance.zone.id}:`)).toBe(true);
+      expect(instance.world.instanceId).toBe(instance.id);
+      expect(instance.world.zoneId).toBe(instance.zone.id);
+      expect(instance.state).toBe("empty");
+    }
+    host.stop();
+  });
+
+  it("runs several independent instances of the same zone", () => {
+    const host = new InstanceHost();
+    const a = host.createInstance("golem_dungeon", { ownerPartyId: "party_a" });
+    const b = host.createInstance("golem_dungeon", { ownerPartyId: "party_b" });
+
+    expect(a.id).not.toBe(b.id);
+    expect(a.world).not.toBe(b.world);
+    expect(a.ownerPartyId).toBe("party_a");
+    expect(host.getInstancesForZone("golem_dungeon")).toHaveLength(3);
+    host.stop();
+  });
+
+  it("tracks players and the empty state per instance", () => {
+    let clock = 1000;
+    const host = new InstanceHost({ now: () => clock });
+    const { instanceId } = host.registerPlayer({
+      playerId: "p1",
+      name: "One",
+      zoneId: "nexus",
+    });
+    const instance = host.getInstance(instanceId)!;
+    expect(instance.state).toBe("running");
+    expect(instance.emptySince).toBeUndefined();
+
+    clock = 5000;
+    host.unregisterPlayer("p1");
+    expect(instance.players.size).toBe(0);
+    expect(instance.state).toBe("empty");
+    expect(instance.emptySince).toBe(5000);
+    host.stop();
+  });
+
+  it("falls back to the nexus for unknown zones", () => {
+    const host = new InstanceHost();
+    const { zoneId } = host.registerPlayer({
+      playerId: "p_lost",
+      name: "Lost",
+      zoneId: "realm_1",
+    });
+    expect(zoneId).toBe("nexus");
+    expect(host.transferPlayer("p_lost", "does_not_exist")).toBe(false);
+    host.stop();
   });
 });
 

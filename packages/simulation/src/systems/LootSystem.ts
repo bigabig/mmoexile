@@ -28,7 +28,7 @@ export class LootSystem implements ISystem {
       if (now - createdAt > maxLifetime) {
         const bagId = Identity.uuid[eid];
         world.recordLootBagDespawned({
-          worldId: world.worldId,
+          instanceId: world.instanceId,
           bagId,
         });
 
@@ -100,7 +100,7 @@ export class LootSystem implements ISystem {
 
       if (bagItems.length === 0) {
         world.recordLootBagDespawned({
-          worldId: world.worldId,
+          instanceId: world.instanceId,
           bagId,
         });
         world.entities.destroyEntity(bagEid);
@@ -158,7 +158,7 @@ export class LootSystem implements ISystem {
 
     if (bagItems.length === 0) {
       world.recordLootBagDespawned({
-        worldId: world.worldId,
+        instanceId: world.instanceId,
         bagId,
       });
       world.entities.destroyEntity(bagEid);
@@ -226,7 +226,7 @@ export class LootSystem implements ISystem {
       ]);
 
       world.recordLootBagSpawned({
-        worldId: world.worldId,
+        instanceId: world.instanceId,
         bagId: Identity.uuid[targetBagEid],
         x: Position.x[targetBagEid],
         y: Position.y[targetBagEid],

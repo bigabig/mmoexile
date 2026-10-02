@@ -104,7 +104,7 @@ describe("Headless Vertical Slice Load Benchmark", () => {
       damageEventsTotal += result.damageEvents.length;
 
       // Verify tick invariants
-      expect(result.worldId).toBe("bench_realm");
+      expect(result.instanceId).toBe("bench_realm");
       expect(result.tick).toBe(startTick + tick + 1);
       expect(result.snapshot).toBeDefined();
     }

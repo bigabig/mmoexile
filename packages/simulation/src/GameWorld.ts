@@ -63,7 +63,8 @@ import { AOISystem } from "./systems/AOISystem.js";
 import { CommandProcessingSystem } from "./systems/CommandProcessingSystem.js";
 
 export class GameWorld {
-  public readonly worldId: string;
+  /** Unique ID of the instance this world simulates, e.g. "golem_dungeon:7f3a9c". */
+  public readonly instanceId: string;
   public readonly mapData: MapData;
   public readonly events: EventBus<WorldEventMap>;
 
@@ -93,8 +94,13 @@ export class GameWorld {
   public readonly inventory: InventorySystem;
   public readonly aoi: AOISystem;
 
-  constructor(worldId: string, mapData: MapData) {
-    this.worldId = worldId;
+  /** The zone (template) this instance was created from. */
+  public get zoneId(): string {
+    return this.mapData.id;
+  }
+
+  constructor(instanceId: string, mapData: MapData) {
+    this.instanceId = instanceId;
     this.mapData = mapData;
     this.events = new EventBus<WorldEventMap>();
 
@@ -147,7 +153,7 @@ export class GameWorld {
   public recordSpawnedProjectile(bullet: ProjectileState): void {
     this.tickBuffer.bullets.push(bullet);
     this.events.emit("bullet_spawned", {
-      worldId: this.worldId,
+      instanceId: this.instanceId,
       bullet,
     });
   }
@@ -155,7 +161,7 @@ export class GameWorld {
   public recordDamageDealt(event: DamageEvent): void {
     this.tickBuffer.damageEvents.push(event);
     this.events.emit("damage_dealt", {
-      worldId: this.worldId,
+      instanceId: this.instanceId,
       event,
     });
   }
@@ -163,7 +169,7 @@ export class GameWorld {
   public recordEntityDied(record: EntityDeathRecord): void {
     this.tickBuffer.deaths.push(record);
     this.events.emit("entity_died", {
-      worldId: this.worldId,
+      instanceId: this.instanceId,
       ...record,
     });
   }
@@ -312,7 +318,7 @@ export class GameWorld {
             xp: Progression.xp[pEid],
             x: Position.x[pEid],
             y: Position.y[pEid],
-            currentWorld: this.worldId,
+            currentWorld: this.zoneId,
             isAlive: Health.current[pEid] > 0,
             equippedWeapon: Equipment.weapon[pEid] ?? null,
             equippedArmor: Equipment.armor[pEid] ?? null,
@@ -324,7 +330,7 @@ export class GameWorld {
       }
     }
 
-    return this.tickBuffer.toResult(this.worldId, this.currentTick, now);
+    return this.tickBuffer.toResult(this.instanceId, this.currentTick, now);
   }
 
   // --- State Persistence Query (Decoupled from tick loop) ---
@@ -354,7 +360,7 @@ export class GameWorld {
           xp: Progression.xp[pEid],
           x: Position.x[pEid],
           y: Position.y[pEid],
-          currentWorld: this.worldId,
+          currentWorld: this.zoneId,
           isAlive: Health.current[pEid] > 0,
           equippedWeapon: Equipment.weapon[pEid] ?? null,
           equippedArmor: Equipment.armor[pEid] ?? null,
@@ -382,7 +388,7 @@ export class GameWorld {
       xp: Progression.xp[eid],
       x: Position.x[eid],
       y: Position.y[eid],
-      currentWorld: this.worldId,
+      currentWorld: this.zoneId,
       isAlive: Health.current[eid] > 0,
       equippedWeapon: Equipment.weapon[eid] ?? null,
       equippedArmor: Equipment.armor[eid] ?? null,

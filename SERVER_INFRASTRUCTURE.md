@@ -146,17 +146,17 @@ This is what a PoE loading screen is. The original RotMG does the same via its `
 
 ## 6. Current State vs. Target
 
-Today, everything runs in **one Node process** (`apps/instance-server/src/index.ts`): HTTP, WebSocket gateway, `WorldCluster`, all worlds, and persistence. The repository already follows the target `apps/` + `packages/` layout (Stage 0).
+Today, everything runs in **one Node process** (`apps/instance-server/src/index.ts`): HTTP, WebSocket gateway, `InstanceHost`, all instances, and persistence. The repository already follows the target `apps/` + `packages/` layout (Stage 0).
 
 | Concern | Today | Target |
 | :--- | :--- | :--- |
-| Zone vs. instance | Zones are defined (`ZONES`: `nexus`, `overworld`, `golem_dungeon`, with access policies), but each zone still has exactly one world, created at startup | Instances created on demand from zones |
+| Zone vs. instance | Zones are defined (`ZONES`: `nexus`, `overworld`, `golem_dungeon`, with access policies), and instances have real IDs (`golem_dungeon:7f3a9c`), but each zone still has exactly one instance, created at startup | Instances created on demand from zones |
 | Private instances | None; every player shares the same golem dungeon | Per-party, owned, with timeout |
 | Public sharding | One Nexus for everyone | N Nexus copies with a player cap |
 | Instance lifecycle | Worlds live forever | creating → running → empty → closed |
 | Execution | Only `InProcessWorldRunner`; all worlds tick on the main thread (worker threads are not yet implemented) | Many processes/cores, many machines |
 | ECS isolation | **Fixed in S1.0:** all `GameWorld`s in a process allocate entity IDs from one shared index (`processEntityIndex`), so the module-global component arrays (`Health.current[eid]`) are never written by two worlds; `destroy()` releases a world's IDs | One shared entity index per process |
-| Zone transfer | In-memory function call (`WorldCluster.transferPlayer`) | Save → release lease → ticket → reconnect → claim |
+| Zone transfer | In-memory function call (`InstanceHost.transferPlayer`) | Save → release lease → ticket → reconnect → claim |
 | Client connection | One fixed `ws://host:3001/ws` for the whole session | Reconnects to whichever server hosts the instance |
 | Auth | Token stored in DB, looked up by the gateway | Signed session token, verifiable anywhere |
 | Message bus | `InMemoryMessageBus` | Redis / NATS |
@@ -175,9 +175,9 @@ Today, everything runs in **one Node process** (`apps/instance-server/src/index.
 
 | Current | Target |
 | :--- | :--- |
-| `GameWorld` / "world" | **Instance** |
+| `GameWorld` / "world" | **Instance** (done in S1.2: `Instance` wraps a `GameWorld`, which now carries `instanceId` and `zoneId`) |
 | `ZONES.*` / `ZoneDefinition` (done in S1.1) | **Zone** (template) |
-| `WorldCluster` | Split into **InstanceServer** (hosts instances) + **Orchestrator** (placement, tickets, registry) |
+| `WorldCluster` | Renamed to `InstanceHost` in S1.2; later split into **InstanceServer** (hosts instances) + **Orchestrator** (placement, tickets, registry) |
 
 ---
 

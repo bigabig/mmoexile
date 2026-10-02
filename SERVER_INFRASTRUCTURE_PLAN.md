@@ -131,7 +131,7 @@ interface ZoneDefinition {
 - Initial policies: `nexus` → `public_sharded` (softCap 40, hardCap 60, timeout 60 s, 1 warm); `overworld` → `public_sharded` (softCap 60, hardCap 85, timeout 300 s); `golem_dungeon` → `party_private` (timeout 480 s).
 - Portals reference `targetZoneId` instead of `targetWorldId`. This also fixes the existing mismatch between portal prefabs (`"realm"`, `"golem_dungeon"`) and map definitions (`"realm_1"`, `"dungeon_golem"`).
 
-### S1.2 Instance Identity and Wrapper
+### S1.2 Instance Identity and Wrapper ✅
 
 - `InstanceId = "<zoneId>:<shortId>"`, e.g. `golem_dungeon:7f3a9c`. Human-readable in logs, globally unique.
 - Rename in `apps/instance-server`: `WorldInstance` → `Instance`, `WorldCluster` → `InstanceHost`. `GameWorld` in `packages/simulation` keeps its name (it is the simulation of one instance) but its constructor takes `instanceId`.

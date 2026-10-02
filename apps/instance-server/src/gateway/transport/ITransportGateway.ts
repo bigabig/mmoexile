@@ -19,7 +19,7 @@ export interface ITransportSession {
   playerId?: string;
   charId?: string;
   nickname?: string;
-  currentWorldId?: string;
+  currentInstanceId?: string;
   send(packet: ServerPacket): void;
   sendBinary(binary: Uint8Array): void;
   close(): void;

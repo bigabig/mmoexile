@@ -65,13 +65,14 @@ Network transport, decoupled from the concrete socket implementation.
 
 ### Cluster (`apps/instance-server/src/cluster/`)
 
-Runs the world instances and routes players between them.
+Hosts the instances of this process and routes players between them.
 
-- **`messaging/IMessageBus` + `InMemoryMessageBus`**: in-process publish/subscribe between gateway and cluster (commands in; tick results, transfers, chat, deaths out).
-- **`WorldCluster`** (also exported as `WorldManager`):
-  - Creates one world per zone at startup (`nexus`, `overworld`, `golem_dungeon`, from `ZONES` in `@mmoexile/game-core`).
-  - Registers and unregisters players, forwards their commands.
-  - Performs world transfers (`transferPlayer()`).
+- **`Instance`**: one live copy of a zone: `id` (`"<zoneId>:<6 hex>"`, e.g. `golem_dungeon:7f3a9c`), `zone`, the `GameWorld`, its runner, `players`, optional `ownerPartyId`, `state` (`creating`/`running`/`empty`/`closed`), `createdAt`, `emptySince`.
+- **`messaging/IMessageBus` + `InMemoryMessageBus`**: in-process publish/subscribe between gateway and host (commands in; tick results, transfers, chat, deaths out).
+- **`InstanceHost`**:
+  - Creates instances from zones (`createInstance(zoneId)`); at startup one instance per zone (`nexus`, `overworld`, `golem_dungeon`, from `ZONES` in `@mmoexile/game-core`). Policy-based placement follows in S1.3.
+  - Registers and unregisters players (`registerPlayer({ playerId, name, zoneId, character })`), forwards their commands.
+  - Moves players between instances (`transferPlayer(playerId, targetZoneId)`).
   - Queues periodic persistence every 150 ticks (5 s).
   - `prepareShutdown()` freezes all runners and snapshots every player for the final flush.
 - **`runners/IWorldRunner`**: contract for driving a world (`start()`, `stop()`, `step()`).
@@ -159,7 +160,7 @@ When a player uses a portal:
 sequenceDiagram
     participant Player
     participant Source as Source World
-    participant Cluster as WorldCluster
+    participant Cluster as InstanceHost
     participant Target as Target World
 
     Player->>Source: interact command
@@ -171,7 +172,7 @@ sequenceDiagram
 ```
 
 - The transfer is an in-memory move within one process; the database is updated by the regular out-of-band saves.
-- **Known limitation:** MP is reset to 100 on transfer (`WorldCluster.transferPlayer` builds the snapshot by hand). Tracked in plan task S1.6.
+- **Known limitation:** MP is reset to 100 on transfer (`InstanceHost.transferPlayer` builds the snapshot by hand). Tracked in plan task S1.6.
 - Moving players *between processes* requires the ticket/lease handoff described in `SERVER_INFRASTRUCTURE.md`.
 
 ---
@@ -201,7 +202,8 @@ apps/instance-server/src/
 ├── cluster/
 │   ├── messaging/            # IMessageBus, InMemoryMessageBus
 │   ├── runners/              # IWorldRunner, InProcessWorldRunner
-│   ├── WorldCluster.ts
+│   ├── Instance.ts
+│   ├── InstanceHost.ts
 │   └── index.ts
 ├── gateway/
 │   ├── transport/            # ITransportGateway interfaces

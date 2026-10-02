@@ -3,7 +3,7 @@ import type { MapData } from "@mmoexile/game-core";
 
 export interface PlayerTransferPayload {
   playerId: string;
-  targetWorldId: string;
+  targetInstanceId: string;
   mapData: MapData;
   spawnPoint: { x: number; y: number };
 }
@@ -12,14 +12,14 @@ export interface ChatPayload {
   sender: string;
   text: string;
   kind: "system" | "player";
-  targetWorldId?: string;
+  targetInstanceId?: string;
 }
 
 export interface PlayerDeathPayload {
   playerId: string;
   charId: string;
   playerName: string;
-  worldName: string;
+  zoneName: string;
 }
 
 export interface IMessageBus {
@@ -31,19 +31,19 @@ export interface IMessageBus {
 
   // Tick Outputs: Simulation -> Gateway
   publishTickResult(
-    worldId: string,
+    instanceId: string,
     result: WorldTickResult,
     playerIds: ReadonlySet<string>,
   ): void;
   onTickResult(
     handler: (
-      worldId: string,
+      instanceId: string,
       result: WorldTickResult,
       playerIds: ReadonlySet<string>,
     ) => void,
   ): () => void;
 
-  // World Transfer: Cluster -> Gateway
+  // Instance Transfer: Host -> Gateway
   publishPlayerTransfer(payload: PlayerTransferPayload): void;
   onPlayerTransfer(
     handler: (payload: PlayerTransferPayload) => void,

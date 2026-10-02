@@ -1,5 +1,5 @@
 import http from "http";
-import { WorldCluster } from "./cluster/index.js";
+import { InstanceHost } from "./cluster/index.js";
 import { WebSocketGateway } from "./gateway/index.js";
 import { persistenceService } from "./persistence/index.js";
 import { disconnectDatabase } from "@mmoexile/db";
@@ -16,11 +16,11 @@ const server = http.createServer((req, res) => {
   res.end("RotMG Voxel MMO Server Running");
 });
 
-// Layer 2: World Cluster
-const cluster = new WorldCluster();
+// Layer 2: Instance Host
+const host = new InstanceHost();
 
 // Layer 1: WebSocket Gateway
-const gateway = new WebSocketGateway(server, cluster);
+const gateway = new WebSocketGateway(server, host);
 
 server.listen(PORT, () => {
   console.log(
@@ -35,7 +35,7 @@ const shutdown = async () => {
   isShuttingDown = true;
   console.log("[Server] Shutting down gracefully...");
   gateway.close();
-  cluster.stop();
+  host.stop();
   persistenceService.stop();
   server.close(() => {
     console.log("[Server] Closed HTTP server.");
@@ -54,13 +54,13 @@ const shutdown = async () => {
     gateway.close();
 
     // 2. Halt simulation runners and snapshot all active player states
-    cluster.prepareShutdown();
+    host.prepareShutdown();
 
     // 3. Await final persistence flush to PostgreSQL
     await persistenceService.stop();
 
     // 4. Destroy world instances
-    cluster.stop();
+    host.stop();
 
     // 5. Close HTTP server and database connection
     server.close(async () => {

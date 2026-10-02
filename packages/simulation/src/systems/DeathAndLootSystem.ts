@@ -48,7 +48,7 @@ export class DeathAndLootSystem implements ISystem {
             );
 
             world.recordLootBagSpawned({
-              worldId: world.worldId,
+              instanceId: world.instanceId,
               bagId: Identity.uuid[bagEid],
               x: Position.x[bagEid],
               y: Position.y[bagEid],

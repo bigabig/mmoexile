@@ -23,7 +23,7 @@ export interface WorldTransferRecord {
 }
 
 export interface WorldTickResult {
-  worldId: string;
+  instanceId: string;
   tick: number;
   serverTime: number;
   snapshot?: SnapshotEvent;
@@ -58,12 +58,12 @@ export class TickBuffer {
   }
 
   public toResult(
-    worldId: string,
+    instanceId: string,
     tick: number,
     serverTime: number,
   ): WorldTickResult {
     const result: WorldTickResult = {
-      worldId,
+      instanceId,
       tick,
       serverTime,
       snapshot: this.snapshot,
