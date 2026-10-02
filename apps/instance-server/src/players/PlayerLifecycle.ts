@@ -8,10 +8,11 @@ import {
 } from "@mmoexile/contracts";
 import {
   InvalidTokenError,
-  signTicket,
   verifyTicket,
+  type TicketKey,
   type VerifiedTicket,
 } from "@mmoexile/auth";
+import type { ZoneAllocator } from "../fleet/ZoneAllocator.js";
 import { isZoneId, type MapData, type ZoneId } from "@mmoexile/game-core";
 import {
   PROTOCOL_VERSION,
@@ -52,7 +53,10 @@ export interface PlayerLifecycleDeps {
   ownership: CharacterOwnership;
   leases: LeaseKeeper;
   placement: StaticPlacement;
-  ticketKey: Uint8Array;
+  /** Public key for verifying tickets; only the orchestrator can sign. */
+  ticketKey: TicketKey;
+  /** Where zone changes are placed (the orchestrator). */
+  allocator: ZoneAllocator;
   /** Party lookup for tickets (the party travels with the player). */
   getPartyId: (characterId: string) => string | undefined;
   /** Tell the client to reconnect elsewhere. */
@@ -77,6 +81,7 @@ export interface PlayerLifecycleDeps {
  */
 export class PlayerLifecycle {
   private players = new Map<string, AdmittedPlayer>();
+  private handingOff = new Set<string>();
   private readonly takeoverWaitMs: number;
   private readonly log: NonNullable<PlayerLifecycleDeps["log"]>;
 
@@ -229,44 +234,70 @@ export class PlayerLifecycle {
 
   /**
    * Moves a character to another zone via reconnect (also when the zone is
-   * hosted here, see decision D4).
+   * hosted here, see decision D4). The orchestrator picks the instance and
+   * issues the ticket first, so a failed allocation leaves the character
+   * where it is.
    */
   async handOff(
     characterId: string,
     targetZoneId: string,
-    via: { sourceInstanceId: InstanceId; portalId: string },
+    via?: { sourceInstanceId: InstanceId; portalId: string },
+    options: { excludeThisServer?: boolean } = {},
   ): Promise<boolean> {
     const player = this.players.get(characterId);
-    if (!player || !isZoneId(targetZoneId)) return false;
-    const target = serverForZone(this.deps.placement, targetZoneId);
-
-    // 1. Freeze: take the character out of the simulation
-    const detached = this.deps.host.detachPlayer(characterId);
-    this.depart(characterId);
-    const ownership = this.deps.leases.untrack(characterId);
-    if (!detached || !ownership) return false;
-
-    // 2. Final save, only if we still own the character
-    if (!(await this.saveAndRelease(ownership, detached.state))) {
-      this.deps.kickSession(characterId, "logged_in_elsewhere");
+    if (!player || !isZoneId(targetZoneId) || this.handingOff.has(characterId)) {
       return false;
     }
+    this.handingOff.add(characterId);
+    try {
+      // 1. Where to? (the target instance is created if needed)
+      let allocation;
+      try {
+        allocation = await this.deps.allocator.allocate({
+          zoneId: targetZoneId,
+          characterId,
+          accountId: player.accountId,
+          partyId: this.deps.getPartyId(characterId),
+          via,
+          excludeServerId: options.excludeThisServer ? this.deps.serverId : undefined,
+        });
+      } catch (err) {
+        this.log("Allocation failed", { characterId, targetZoneId, err: String(err) });
+        this.deps.host.messageBus.publishChat({
+          sender: "System",
+          text: "That zone is not available right now. Try again in a moment.",
+          kind: "system",
+          targetPlayerIds: [characterId],
+        });
+        return false;
+      }
+      if (this.players.get(characterId) !== player) return false; // left meanwhile
 
-    // 3. Ticket for the target server, then tell the client
-    const ticket = await signTicket(
-      {
+      // 2. Freeze: take the character out of the simulation
+      const detached = this.deps.host.detachPlayer(characterId);
+      this.depart(characterId);
+      const ownership = this.deps.leases.untrack(characterId);
+      if (!detached || !ownership) return false;
+
+      // 3. Final save, only if we still own the character
+      if (!(await this.saveAndRelease(ownership, detached.state))) {
+        this.deps.kickSession(characterId, "logged_in_elsewhere");
+        return false;
+      }
+
+      // 4. Send the client to the target with the orchestrator's ticket
+      this.deps.sendReconnect(characterId, allocation.url, allocation.ticket, targetZoneId);
+      this.log("Handed off", {
         characterId,
-        accountId: player.accountId,
-        zoneId: targetZoneId,
-        targetServerId: target.serverId,
-        partyId: this.deps.getPartyId(characterId),
-        via,
-      },
-      this.deps.ticketKey,
-    );
-    this.deps.sendReconnect(characterId, target.url, ticket, targetZoneId);
-    this.log("Handed off", { characterId, targetZoneId, targetServerId: target.serverId });
-    return true;
+        targetZoneId,
+        targetServerId: allocation.serverId,
+        instanceId: allocation.instanceId,
+        ticketId: allocation.ticketId,
+      });
+      return true;
+    } finally {
+      this.handingOff.delete(characterId);
+    }
   }
 
   // --- Leaving ---

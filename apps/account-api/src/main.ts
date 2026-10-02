@@ -5,7 +5,7 @@ import { readConfig } from "./config.js";
 import { buildApp } from "./app.js";
 
 const config = readConfig();
-assertNotDevSecrets(config.NODE_ENV, [config.SESSION_SECRET, config.TICKET_SECRET]);
+assertNotDevSecrets(config.NODE_ENV, [config.SESSION_SECRET]);
 
 const logger = createLogger("account-api", config.LOG_LEVEL);
 const app = buildApp({ config, logger, db: prisma });

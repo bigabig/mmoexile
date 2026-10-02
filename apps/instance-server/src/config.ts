@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { baseConfigSchema, loadConfig } from "@mmoexile/service-kit";
-import { DEV_TICKET_SECRET } from "@mmoexile/auth";
+import { DEV_TICKET_PUBLIC_KEY } from "@mmoexile/auth";
 import { DEV_SERVER_URLS, DEV_ZONE_PLACEMENT } from "@mmoexile/contracts";
 
 export const configSchema = baseConfigSchema.extend({
@@ -9,7 +9,8 @@ export const configSchema = baseConfigSchema.extend({
   SERVER_ID: z.string().min(1).default("a"),
   SERVERS: z.string().default(DEV_SERVER_URLS),
   ZONE_PLACEMENT: z.string().default(DEV_ZONE_PLACEMENT),
-  TICKET_SECRET: z.string().min(32).default(DEV_TICKET_SECRET),
+  /** Ed25519 public key tickets are verified with (base64 PEM body). */
+  TICKET_PUBLIC_KEY: z.string().min(1).default(DEV_TICKET_PUBLIC_KEY),
   REDIS_URL: z.string().default("redis://localhost:6379"),
   /** apps/social, for party commands. */
   SOCIAL_URL: z.string().default("http://localhost:3002"),

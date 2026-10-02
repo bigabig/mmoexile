@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { secretKey, signTicket } from "@mmoexile/auth";
+import { signTicket, ticketSigningKey } from "@mmoexile/auth";
 import {
   orchestratorApi,
   type AllocateRequest,
@@ -14,7 +14,7 @@ import { Allocator } from "./Allocator.js";
 import type { Config } from "./config.js";
 
 export interface OrchestratorDeps {
-  config: Pick<Config, "HEARTBEAT_INTERVAL_MS" | "TICKET_SECRET">;
+  config: Pick<Config, "HEARTBEAT_INTERVAL_MS" | "TICKET_PRIVATE_KEY">;
   logger: Logger;
   redis: Redis;
   now?: () => number;
@@ -45,11 +45,12 @@ export function createOrchestrator({
     deadAfterMs: config.HEARTBEAT_INTERVAL_MS * 3,
   });
   const mirror = new RegistryMirror(redis);
-  const ticketKey = secretKey(config.TICKET_SECRET);
+  const ticketKey = ticketSigningKey(config.TICKET_PRIVATE_KEY);
+  ticketKey.catch(() => {}); // reported by start()
   const allocator = new Allocator({
     registry,
     logger,
-    signTicket: (claims) => signTicket(claims, ticketKey),
+    signTicket: async (claims) => signTicket(claims, await ticketKey),
   });
   let sweepTimer: NodeJS.Timeout | undefined;
 
@@ -134,6 +135,7 @@ export function createOrchestrator({
     registry,
     allocator,
     async start() {
+      await ticketKey; // fail fast on a malformed key
       const restored = await mirror.load();
       registry.restore(restored);
       if (restored.length > 0) {

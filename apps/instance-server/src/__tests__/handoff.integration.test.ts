@@ -3,8 +3,9 @@ import net from "net";
 import WebSocket from "ws";
 import { prisma } from "@mmoexile/db";
 import { Redis, RedisBroker } from "@mmoexile/messaging";
-import { DEV_TICKET_SECRET, secretKey, signTicket } from "@mmoexile/auth";
-import { redisKeys } from "@mmoexile/contracts";
+import { randomUUID } from "node:crypto";
+import { DEV_TICKET_PRIVATE_KEY, signTicket, ticketSigningKey } from "@mmoexile/auth";
+import { redisKeys, type AllocateRequest } from "@mmoexile/contracts";
 import { Health, Position } from "@mmoexile/game-core";
 import {
   deserializePacket,
@@ -17,10 +18,24 @@ import { readConfig } from "../config.js";
 import { createInstanceServer, type InstanceServer } from "../server.js";
 import { CharacterOwnership } from "../ownership/CharacterOwnership.js";
 import { InMemoryPartyDirectory } from "../party/PartyDirectory.js";
+import type { ZoneAllocator } from "../fleet/ZoneAllocator.js";
 
 // --- Harness: two instance servers (a: nexus, b: overworld + dungeon) ---
 
-const ticketKey = secretKey(DEV_TICKET_SECRET);
+const ticketKey = await ticketSigningKey(DEV_TICKET_PRIVATE_KEY);
+
+/** Stand-in for the orchestrator: nexus on a, everything else on b. */
+const allocator: ZoneAllocator = {
+  async allocate(request: AllocateRequest) {
+    const serverId = request.zoneId === "nexus" ? "a" : "b";
+    const ticketId = randomUUID();
+    const ticket = await signTicket(
+      { ...request, ticketId, targetServerId: serverId },
+      ticketKey,
+    );
+    return { serverId, instanceId: "", url: urls[serverId], ticket, ticketId };
+  },
+};
 const connections: { redis: Redis; broker: RedisBroker }[] = [];
 let serverA: InstanceServer;
 let serverB: InstanceServer;
@@ -58,6 +73,7 @@ async function startServer(serverId: "a" | "b", port: number, servers: string) {
     broker,
     // Stand-in for the social service, shared by both servers
     parties,
+    allocator,
   });
   await server.listen(port);
   return server;

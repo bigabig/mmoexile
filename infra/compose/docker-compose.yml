@@ -2,9 +2,13 @@
 #   pnpm db:up      → Postgres + Redis only (for `pnpm dev`)
 #   pnpm realm:up   → everything below, built from this repository
 #
-# Topology (Stage 2): account-api, social, two instance servers with static
-# zone placement, and the client. Instance servers are reached directly by the
-# browser, so their ports are published and listed in SERVERS.
+# Topology (Stage 3): account-api, social, the orchestrator, instance servers
+# that register with it, and the client. Instance servers are reached
+# directly by the browser, so their WebSocket ports are published; their
+# internal ports (orchestrator calls, metrics) are not.
+#
+# The ticket keys below are for this local setup only (committed on
+# purpose); override them via the environment for anything shared.
 name: mmoexile
 
 x-realm-env: &realm-env
@@ -13,8 +17,9 @@ x-realm-env: &realm-env
   SOCIAL_URL: http://social:3002
   SERVERS: a=ws://localhost:7001/ws,b=ws://localhost:7002/ws
   ZONE_PLACEMENT: nexus:a,overworld:b,golem_dungeon:b
+  ORCHESTRATOR_URL: http://orchestrator:3003
   SESSION_SECRET: ${SESSION_SECRET:-compose-local-session-secret-change-me-0001}
-  TICKET_SECRET: ${TICKET_SECRET:-compose-local-ticket-secret-change-me-00001}
+  TICKET_PUBLIC_KEY: ${TICKET_PUBLIC_KEY:-MCowBQYDK2VwAyEA5x4WebokiBgXkMaoYISP5jTRPohe07UOHtwHccapyJw=}
 
 x-node-service: &node-service
   restart: unless-stopped
@@ -97,6 +102,22 @@ services:
       <<: *health
       test: ["CMD", "node", "-e", "fetch('http://localhost:3002/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 
+  orchestrator:
+    <<: *node-service
+    build:
+      context: ../..
+      dockerfile: infra/docker/node.Dockerfile
+      args: { APP: orchestrator }
+    environment:
+      <<: *realm-env
+      PORT: "3003"
+      TICKET_PRIVATE_KEY: ${TICKET_PRIVATE_KEY:-MC4CAQAwBQYDK2VwBCIEIOHkkKV+F4K0ZaOGcbZMuTdQefvVi0gcF9rNxIfS7wBZ}
+    # Published on localhost only, for inspecting and draining the fleet.
+    ports: ["127.0.0.1:3003:3003"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3003/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+
   instance-server-a:
     <<: *node-service
     build: &instance-build
@@ -107,6 +128,8 @@ services:
       <<: *realm-env
       SERVER_ID: a
       PORT: "7001"
+      PUBLIC_URL: ws://localhost:7001/ws
+      INTERNAL_URL: http://instance-server-a:9001
     ports: ["7001:7001"]
     healthcheck: &instance-health
       <<: *health
@@ -119,6 +142,8 @@ services:
       <<: *realm-env
       SERVER_ID: b
       PORT: "7002"
+      PUBLIC_URL: ws://localhost:7002/ws
+      INTERNAL_URL: http://instance-server-b:9001
     ports: ["7002:7002"]
     healthcheck: *instance-health
 

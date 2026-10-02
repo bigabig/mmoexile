@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { HeartbeatBody, InstanceReport } from "@mmoexile/contracts";
 import { Redis } from "@mmoexile/messaging";
-import { DEV_TICKET_SECRET } from "@mmoexile/auth";
+import { DEV_TICKET_PRIVATE_KEY } from "@mmoexile/auth";
 import { createLogger } from "@mmoexile/service-kit";
 import { Registry } from "../Registry.js";
 import { RegistryMirror } from "../RegistryMirror.js";
@@ -131,7 +131,7 @@ describe("Registry mirror", () => {
 
   it("restores the fleet after a restart, before the first heartbeat", async () => {
     const logger = createLogger("test", "silent");
-    const config = { HEARTBEAT_INTERVAL_MS: 2000, TICKET_SECRET: DEV_TICKET_SECRET };
+    const config = { HEARTBEAT_INTERVAL_MS: 2000, TICKET_PRIVATE_KEY: DEV_TICKET_PRIVATE_KEY };
     const first = createOrchestrator({ config, logger, redis });
     first.registry.heartbeat(heartbeat("mirror-s1", [nexus("nexus:dddddd", 4)]));
     await new RegistryMirror(redis).save(first.registry.view(first.registry.get("mirror-s1")!));

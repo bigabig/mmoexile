@@ -1,20 +1,27 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { prisma } from "@mmoexile/db";
-import { secretKey, verifyTicket, DEV_TICKET_SECRET } from "@mmoexile/auth";
-import { MAX_CHARACTERS_PER_ACCOUNT } from "@mmoexile/contracts";
+import { HttpError, MAX_CHARACTERS_PER_ACCOUNT, type AllocateRequest } from "@mmoexile/contracts";
 import { createLogger } from "@mmoexile/service-kit";
 import { readConfig } from "../config.js";
 import { buildApp } from "../app.js";
 
 let app: FastifyInstance;
+/** What the fake orchestrator was asked; set `fleetFull` to answer 503. */
+const allocations: AllocateRequest[] = [];
+let fleetFull = false;
 
 beforeAll(async () => {
-  const config = readConfig({
-    SERVERS: "a=ws://nexus.test/ws,b=ws://wild.test/ws",
-    ZONE_PLACEMENT: "nexus:a,overworld:b,golem_dungeon:b",
+  app = buildApp({
+    config: readConfig({}),
+    logger: createLogger("test", "silent"),
+    db: prisma,
+    allocate: async (request) => {
+      if (fleetFull) throw new HttpError(503, "full");
+      allocations.push(request);
+      return { serverId: "s1", instanceId: "nexus:abcdef", url: "ws://nexus.test/ws", ticket: "t", ticketId: "id" };
+    },
   });
-  app = buildApp({ config, logger: createLogger("test", "silent"), db: prisma });
   await app.ready();
 });
 
@@ -114,7 +121,7 @@ describe("characters", () => {
 });
 
 describe("play", () => {
-  it("returns the nexus server and a ticket for it", async () => {
+  it("asks the orchestrator for a nexus slot and passes on its ticket", async () => {
     const ann = await guest();
     const { character } = (await createCharacter(ann.sessionToken)).json();
 
@@ -125,15 +132,23 @@ describe("play", () => {
       payload: { characterId: character.id },
     });
 
-    const { url, ticket } = res.json();
-    expect(url).toBe("ws://nexus.test/ws");
-    const verified = await verifyTicket(ticket, secretKey(DEV_TICKET_SECRET), "a");
-    expect(verified).toMatchObject({
+    expect(res.json()).toEqual({ url: "ws://nexus.test/ws", ticket: "t" });
+    expect(allocations.at(-1)).toEqual({
+      zoneId: "nexus",
       characterId: character.id,
       accountId: ann.accountId,
-      zoneId: "nexus",
-      targetServerId: "a",
     });
+
+    fleetFull = true;
+    const full = await app.inject({
+      method: "POST",
+      url: "/play",
+      headers: auth(ann.sessionToken),
+      payload: { characterId: character.id },
+    });
+    fleetFull = false;
+    expect(full.statusCode).toBe(503);
+    expect(full.json().error).toMatch(/full/);
   });
 
   it("refuses foreign and dead characters", async () => {

@@ -3,11 +3,12 @@ import { prisma } from "@mmoexile/db";
 import { Redis, RedisBroker } from "@mmoexile/messaging";
 import { createLogger } from "@mmoexile/service-kit";
 import { redisKeys } from "@mmoexile/contracts";
-import { DEV_TICKET_SECRET } from "@mmoexile/auth";
+import { DEV_TICKET_PRIVATE_KEY } from "@mmoexile/auth";
 import {
   createOrchestrator,
   type Orchestrator,
 } from "@mmoexile/orchestrator";
+import { buildApp as buildAccountApi, readConfig as readAccountConfig } from "@mmoexile/account-api";
 import {
   createInstanceServer,
   InMemoryPartyDirectory,
@@ -30,6 +31,8 @@ import {
 export interface Realm {
   orchestrator: Orchestrator;
   orchestratorUrl: string;
+  /** account-api base URL (login, characters, /play). */
+  accountApiUrl: string;
   servers: Map<string, InstanceServer>;
   redis: Redis;
   heartbeatMs: number;
@@ -63,7 +66,7 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
 
   const newOrchestrator = () =>
     createOrchestrator({
-      config: { HEARTBEAT_INTERVAL_MS: heartbeatMs, TICKET_SECRET: DEV_TICKET_SECRET },
+      config: { HEARTBEAT_INTERVAL_MS: heartbeatMs, TICKET_PRIVATE_KEY: DEV_TICKET_PRIVATE_KEY },
       logger: createLogger("orchestrator", logLevel),
       redis,
     });
@@ -73,6 +76,14 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
   await orchestrator.app.listen({ port: 0, host: "127.0.0.1" });
   const orchestratorPort = (orchestrator.app.server.address() as { port: number }).port;
   const orchestratorUrl = `http://127.0.0.1:${orchestratorPort}`;
+
+  const accountApi = buildAccountApi({
+    config: readAccountConfig({ ORCHESTRATOR_URL: orchestratorUrl }),
+    logger: createLogger("account-api", logLevel),
+    db: prisma,
+  });
+  await accountApi.listen({ port: 0, host: "127.0.0.1" });
+  const accountApiUrl = `http://127.0.0.1:${(accountApi.server.address() as { port: number }).port}`;
 
   const servers = new Map<string, InstanceServer>();
 
@@ -111,6 +122,7 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
       return orchestrator;
     },
     orchestratorUrl,
+    accountApiUrl,
     servers,
     redis,
     heartbeatMs,
@@ -127,6 +139,7 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
     },
     async stop() {
       for (const server of servers.values()) await server.stop().catch(() => {});
+      await accountApi.close();
       await orchestrator.stop();
       await sharedBroker.close();
       for (const c of connections.reverse()) await c.quit().catch(() => {});

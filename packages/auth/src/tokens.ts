@@ -1,12 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { SignJWT, jwtVerify, errors } from "jose";
+import {
+  SignJWT,
+  jwtVerify,
+  errors,
+  exportPKCS8,
+  exportSPKI,
+  generateKeyPair,
+  importPKCS8,
+  importSPKI,
+  type CryptoKey,
+} from "jose";
 
 /**
- * Two kinds of signed tokens (JWT, HS256):
- * - Session token: "this is account X". Issued by account-api, verifiable by
- *   any service that knows the session secret.
- * - Transfer ticket: "character C may enter zone Z on server S", valid for
- *   seconds. Required on every connection to an instance server.
+ * Two kinds of signed tokens (JWT):
+ * - Session token (HS256): "this is account X". Issued by account-api,
+ *   verifiable by any service that knows the session secret.
+ * - Transfer ticket (Ed25519): "character C may enter instance I on server
+ *   S", valid for seconds. Required on every connection to an instance
+ *   server. Only the orchestrator holds the private key; instance servers
+ *   get the public key, so a compromised instance server cannot mint tickets.
  */
 
 const MIN_SECRET_LENGTH = 32;
@@ -16,16 +28,19 @@ const MIN_SECRET_LENGTH = 32;
  * Services refuse to start with these when NODE_ENV=production.
  */
 export const DEV_SESSION_SECRET = "dev-only-session-secret-do-not-use-in-prod";
-export const DEV_TICKET_SECRET = "dev-only-ticket-secret-do-not-use-in-prod!";
+/** Ed25519 key pair for tickets (base64 DER, the body of a PEM file). */
+export const DEV_TICKET_PRIVATE_KEY =
+  "MC4CAQAwBQYDK2VwBCIEIOf3DAcrV3OP8tN0pNxPDbeLrza0V9aFUx9hjcQY/BB5";
+export const DEV_TICKET_PUBLIC_KEY =
+  "MCowBQYDK2VwAyEARobAg+JoG5LFPbKJz6cA3+Rw5gvVIrSHYioptgJeAQY=";
+
+const DEV_SECRETS = [DEV_SESSION_SECRET, DEV_TICKET_PRIVATE_KEY, DEV_TICKET_PUBLIC_KEY];
 
 export function assertNotDevSecrets(
   nodeEnv: string,
   secrets: string[],
 ): void {
-  if (
-    nodeEnv === "production" &&
-    secrets.some((s) => s === DEV_SESSION_SECRET || s === DEV_TICKET_SECRET)
-  ) {
+  if (nodeEnv === "production" && secrets.some((s) => DEV_SECRETS.includes(s))) {
     throw new Error("Development signing secrets are not allowed in production");
   }
 }
@@ -47,9 +62,19 @@ export class InvalidTokenError extends Error {
   }
 }
 
-async function verify(token: string, key: Uint8Array, audience: string) {
+const TICKET_ALG = "EdDSA";
+
+/** An imported ticket key (private for signing, public for verifying). */
+export type TicketKey = CryptoKey;
+
+async function verify(
+  token: string,
+  key: Uint8Array | CryptoKey,
+  audience: string,
+  algorithm: string,
+) {
   try {
-    return (await jwtVerify(token, key, { audience, algorithms: ["HS256"] }))
+    return (await jwtVerify(token, key, { audience, algorithms: [algorithm] }))
       .payload;
   } catch (err) {
     throw new InvalidTokenError(
@@ -83,7 +108,7 @@ export async function verifySessionToken(
   token: string,
   key: Uint8Array,
 ): Promise<SessionClaims> {
-  const payload = await verify(token, key, SESSION_AUDIENCE);
+  const payload = await verify(token, key, SESSION_AUDIENCE, "HS256");
   if (typeof payload.sub !== "string" || typeof payload.name !== "string") {
     throw new InvalidTokenError("invalid");
   }
@@ -91,6 +116,34 @@ export async function verifySessionToken(
 }
 
 // --- Transfer tickets ---
+
+/** Accepts a PEM file's content, or just its base64 body (one line, env-friendly). */
+function toPem(value: string, label: "PRIVATE KEY" | "PUBLIC KEY"): string {
+  const trimmed = value.trim().replace(/\\n/g, "\n");
+  if (trimmed.startsWith("-----BEGIN")) return trimmed;
+  const body = trimmed.match(/.{1,64}/g)?.join("\n") ?? "";
+  return `-----BEGIN ${label}-----\n${body}\n-----END ${label}-----`;
+}
+
+/** The orchestrator's key for signing tickets. */
+export function ticketSigningKey(privateKey: string): Promise<CryptoKey> {
+  return importPKCS8(toPem(privateKey, "PRIVATE KEY"), TICKET_ALG);
+}
+
+/** The key instance servers verify tickets with. */
+export function ticketVerificationKey(publicKey: string): Promise<CryptoKey> {
+  return importSPKI(toPem(publicKey, "PUBLIC KEY"), TICKET_ALG);
+}
+
+/** A fresh key pair, as base64 bodies (see `pnpm --filter @mmoexile/auth keygen`). */
+export async function generateTicketKeyPair(): Promise<{ privateKey: string; publicKey: string }> {
+  const pair = await generateKeyPair(TICKET_ALG, { extractable: true });
+  const body = (pem: string) => pem.replace(/-----[A-Z ]+-----/g, "").replace(/\s/g, "");
+  return {
+    privateKey: body(await exportPKCS8(pair.privateKey)),
+    publicKey: body(await exportSPKI(pair.publicKey)),
+  };
+}
 
 export interface TicketClaims {
   characterId: string;
@@ -114,7 +167,7 @@ export interface VerifiedTicket extends TicketClaims {
 
 export async function signTicket(
   claims: TicketClaims & { ticketId?: string },
-  key: Uint8Array,
+  key: CryptoKey,
   ttlSeconds = 30,
 ): Promise<string> {
   return new SignJWT({
@@ -125,7 +178,7 @@ export async function signTicket(
     party: claims.partyId,
     via: claims.via,
   })
-    .setProtectedHeader({ alg: "HS256" })
+    .setProtectedHeader({ alg: TICKET_ALG })
     .setJti(claims.ticketId ?? randomUUID())
     .setSubject(claims.characterId)
     .setAudience(TICKET_AUDIENCE)
@@ -140,10 +193,10 @@ export async function signTicket(
  */
 export async function verifyTicket(
   token: string,
-  key: Uint8Array,
+  key: CryptoKey,
   expectedServerId: string,
 ): Promise<VerifiedTicket> {
-  const p = await verify(token, key, TICKET_AUDIENCE);
+  const p = await verify(token, key, TICKET_AUDIENCE, TICKET_ALG);
   if (
     typeof p.jti !== "string" ||
     typeof p.sub !== "string" ||

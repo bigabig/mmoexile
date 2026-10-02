@@ -1,9 +1,11 @@
 import { Redis } from "@mmoexile/messaging";
 import { createLogger, handleShutdownSignals } from "@mmoexile/service-kit";
+import { assertNotDevSecrets } from "@mmoexile/auth";
 import { readConfig } from "./config.js";
 import { createOrchestrator } from "./app.js";
 
 const config = readConfig();
+assertNotDevSecrets(config.NODE_ENV, [config.TICKET_PRIVATE_KEY]);
 const logger = createLogger("orchestrator", config.LOG_LEVEL);
 const redis = new Redis(config.REDIS_URL);
 const orchestrator = createOrchestrator({ config, logger, redis });

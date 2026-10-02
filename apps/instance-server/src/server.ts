@@ -2,7 +2,7 @@ import http from "http";
 import type { AddressInfo } from "net";
 import type { PrismaClient } from "@mmoexile/db";
 import type { Broker, Redis } from "@mmoexile/messaging";
-import { secretKey } from "@mmoexile/auth";
+import { ticketVerificationKey } from "@mmoexile/auth";
 import { parseStaticPlacement, serverForZone } from "@mmoexile/contracts";
 import type { Logger } from "@mmoexile/service-kit";
 import { InstanceHost } from "./cluster/index.js";
@@ -22,6 +22,11 @@ import { FencedCharacterWriter } from "./ownership/FencedCharacterWriter.js";
 import { PlayerLifecycle } from "./players/PlayerLifecycle.js";
 import { buildInternalApi } from "./internalApi.js";
 import { FleetAgent } from "./fleet/FleetAgent.js";
+import {
+  NO_ALLOCATOR,
+  OrchestratorAllocator,
+  type ZoneAllocator,
+} from "./fleet/ZoneAllocator.js";
 import type { Config } from "./config.js";
 
 export interface InstanceServerDeps {
@@ -34,6 +39,8 @@ export interface InstanceServerDeps {
   parties?: PartyDirectory;
   /** Defaults to Redis presence. */
   presence?: Presence;
+  /** Defaults to the orchestrator at config.ORCHESTRATOR_URL. */
+  allocator?: ZoneAllocator;
 }
 
 export interface InstanceServer {
@@ -59,9 +66,12 @@ export async function createInstanceServer({
   broker,
   parties = new SocialPartyDirectory(config.SOCIAL_URL),
   presence = new RedisPresence(redis, config.SERVER_ID),
+  allocator = config.ORCHESTRATOR_URL
+    ? new OrchestratorAllocator(config.ORCHESTRATOR_URL)
+    : NO_ALLOCATOR,
 }: InstanceServerDeps): Promise<InstanceServer> {
   const placement = parseStaticPlacement(config.SERVERS, config.ZONE_PLACEMENT);
-  const ticketKey = secretKey(config.TICKET_SECRET);
+  const ticketKey = await ticketVerificationKey(config.TICKET_PUBLIC_KEY);
   const hostsZone = (zoneId: string) =>
     placement.zones.get(zoneId) === config.SERVER_ID;
 
@@ -113,6 +123,7 @@ export async function createInstanceServer({
     leases,
     placement,
     ticketKey,
+    allocator,
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
     onAdmitted: (player) => {
       void presence.set(player.characterId, player.name);

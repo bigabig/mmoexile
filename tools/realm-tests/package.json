@@ -8,6 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@mmoexile/account-api": "workspace:*",
     "@mmoexile/auth": "workspace:*",
     "@mmoexile/contracts": "workspace:*",
     "@mmoexile/db": "workspace:*",

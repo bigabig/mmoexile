@@ -6,7 +6,7 @@ import { readConfig } from "./config.js";
 import { createInstanceServer } from "./server.js";
 
 const config = readConfig();
-assertNotDevSecrets(config.NODE_ENV, [config.TICKET_SECRET]);
+assertNotDevSecrets(config.NODE_ENV, [config.TICKET_PUBLIC_KEY]);
 
 const logger = createLogger(`instance-server-${config.SERVER_ID}`, config.LOG_LEVEL);
 const redis = new Redis(config.REDIS_URL);

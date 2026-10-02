@@ -5,15 +5,17 @@ import {
   hashSecret,
   secretKey,
   signSessionToken,
-  signTicket,
   verifySessionToken,
   type SessionClaims,
 } from "@mmoexile/auth";
 import {
   accountApi,
+  createHttpClient,
+  HttpError,
   MAX_CHARACTERS_PER_ACCOUNT,
-  parseStaticPlacement,
-  serverForZone,
+  orchestratorApi,
+  type AllocateRequest,
+  type AllocateResponse,
 } from "@mmoexile/contracts";
 import { createHttpService, type Logger } from "@mmoexile/service-kit";
 import type { Config } from "./config.js";
@@ -23,6 +25,8 @@ export interface AppDeps {
   config: Config;
   logger: Logger;
   db: PrismaClient;
+  /** Defaults to the orchestrator's POST /allocate at config.ORCHESTRATOR_URL. */
+  allocate?: (request: AllocateRequest) => Promise<AllocateResponse>;
 }
 
 declare module "fastify" {
@@ -34,10 +38,10 @@ declare module "fastify" {
 /** Where every login starts (see plan S1.9). */
 const LOGIN_ZONE = "nexus";
 
-export function buildApp({ config, logger, db }: AppDeps): FastifyInstance {
+export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInstance {
   const sessionKey = secretKey(config.SESSION_SECRET);
-  const ticketKey = secretKey(config.TICKET_SECRET);
-  const placement = parseStaticPlacement(config.SERVERS, config.ZONE_PLACEMENT);
+  const orchestrator = createHttpClient({ baseUrl: config.ORCHESTRATOR_URL });
+  allocate ??= (request) => orchestrator(orchestratorApi.allocate, request);
 
   const app = createHttpService({
     logger,
@@ -174,17 +178,18 @@ export function buildApp({ config, logger, db }: AppDeps): FastifyInstance {
         return reply.code(409).send({ error: "This character is dead" });
       }
 
-      const target = serverForZone(placement, LOGIN_ZONE);
-      const ticket = await signTicket(
-        {
-          characterId,
-          accountId,
-          zoneId: LOGIN_ZONE,
-          targetServerId: target.serverId,
-        },
-        ticketKey,
-      );
-      return { url: target.url, ticket };
+      // The orchestrator is the single ticket issuer.
+      try {
+        const allocation = await allocate({ zoneId: LOGIN_ZONE, characterId, accountId });
+        logger.info({ characterId, ticketId: allocation.ticketId, serverId: allocation.serverId }, "Play");
+        return { url: allocation.url, ticket: allocation.ticket };
+      } catch (err) {
+        logger.warn({ err, characterId }, "Allocation for login failed");
+        const busy = err instanceof HttpError && err.status === 503;
+        return reply.code(503).send({
+          error: busy ? "All servers are full, try again soon" : "Game servers are unavailable",
+        });
+      }
     },
   );
 
