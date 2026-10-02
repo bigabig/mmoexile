@@ -177,7 +177,7 @@ export class WebSocketGateway implements ITransportGateway {
 
           switch (packet.type) {
             case "c2s_join": {
-              const { account, character, domainCharacter } =
+              const { account, token, character, domainCharacter } =
                 await accountService.loginOrRegister(
                   packet.nickname,
                   packet.token,
@@ -204,7 +204,7 @@ export class WebSocketGateway implements ITransportGateway {
               const welcomePacket: S2C_WelcomePacket = {
                 type: "s2c_welcome",
                 playerId: character.id,
-                token: account.token,
+                token,
                 instanceId,
                 zoneId,
                 map,

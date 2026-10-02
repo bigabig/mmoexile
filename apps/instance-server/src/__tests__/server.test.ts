@@ -238,12 +238,14 @@ describe("InstanceHost placement", () => {
 
 describe("Database & Account Persistence", () => {
   it("creates guest account with default wizard character", async () => {
-    const { account, character } =
+    const { account, token, character } =
       await accountService.loginOrRegister("TestHero");
 
     expect(account.id).toBeDefined();
     expect(account.nickname).toBe("TestHero");
-    expect(account.token).toBeDefined();
+    expect(token).toBeDefined();
+    // Only the hash of the token is stored
+    expect(account.refreshSecretHash).not.toBe(token);
     expect(character).toBeDefined();
     expect(character.class).toBe("wizard");
     expect(character.hp).toBe(110);
@@ -255,7 +257,7 @@ describe("Database & Account Persistence", () => {
 
     const loaded = await accountService.loginOrRegister(
       "DifferentName",
-      account.token,
+      token,
     );
     expect(loaded.account.id).toBe(account.id);
     expect(loaded.character.id).toBe(character.id);

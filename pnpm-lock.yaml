@@ -218,6 +218,9 @@ importers:
 
   apps/instance-server:
     dependencies:
+      '@mmoexile/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@mmoexile/db':
         specifier: workspace:*
         version: link:../../packages/db

@@ -1,5 +1,6 @@
 import { Account, Character } from "@mmoexile/db";
 import { prisma } from "@mmoexile/db";
+import { hashSecret } from "@mmoexile/auth";
 
 export class AccountRepository {
   /**
@@ -12,13 +13,14 @@ export class AccountRepository {
   }
 
   /**
-   * Finds an account by auth token, including its active characters ordered by most recent.
+   * Finds an account by the client's token (its refresh secret), including its
+   * active character. Only the hash of the token is stored.
    */
   async findByToken(
     token: string,
   ): Promise<(Account & { characters: Character[] }) | null> {
     return prisma.account.findUnique({
-      where: { token },
+      where: { refreshSecretHash: hashSecret(token) },
       include: {
         characters: {
           where: { isAlive: true },
@@ -39,7 +41,7 @@ export class AccountRepository {
     return prisma.account.create({
       data: {
         nickname: data.nickname,
-        token: data.token,
+        refreshSecretHash: hashSecret(data.token),
       },
     });
   }

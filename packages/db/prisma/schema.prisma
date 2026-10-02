@@ -9,10 +9,11 @@ datasource db {
 
 model Account {
   id         String      @id @default(uuid())
-  nickname   String
-  token      String      @unique
-  createdAt  DateTime    @default(now())
-  characters Character[]
+  nickname          String
+  /// SHA-256 of the client's refresh secret; the secret itself is never stored
+  refreshSecretHash String      @unique
+  createdAt         DateTime    @default(now())
+  characters        Character[]
 }
 
 model Character {

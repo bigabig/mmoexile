@@ -15,6 +15,8 @@ import {
 
 export interface AccountLoginResult {
   account: Account;
+  /** The client's token (refresh secret); only its hash is stored. */
+  token: string;
   character: Character;
   domainCharacter: CharacterData;
 }
@@ -29,6 +31,7 @@ export class AccountService {
     chosenClass: string = "wizard",
   ): Promise<AccountLoginResult> {
     let account = null;
+    let clientToken = token;
 
     if (token) {
       account = await accountRepo.findByToken(token);
@@ -50,6 +53,7 @@ export class AccountService {
         nickname: cleanNick,
         token: newToken,
       });
+      clientToken = newToken;
     }
 
     // Find active character for account
@@ -78,7 +82,7 @@ export class AccountService {
       account.nickname,
     );
 
-    return { account, character, domainCharacter };
+    return { account, token: clientToken!, character, domainCharacter };
   }
 
   /**

@@ -9,6 +9,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@mmoexile/auth": "workspace:*",
     "@mmoexile/db": "workspace:*",
     "@mmoexile/game-core": "workspace:*",
     "@mmoexile/protocol": "workspace:*",
