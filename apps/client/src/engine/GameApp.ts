@@ -18,6 +18,7 @@ import { ProjectileRenderer } from "./ProjectileRenderer.js";
 import { CameraController } from "./CameraController.js";
 import { InputManager } from "./InputManager.js";
 import { NetworkManager } from "./NetworkManager.js";
+import type { ChatChannel } from "@mmoexile/protocol";
 
 export interface GameAppCallbacks {
   onHpChange?: (hp: number, maxHp: number) => void;
@@ -33,7 +34,12 @@ export interface GameAppCallbacks {
   }) => void;
   onWorldChange?: (worldName: string) => void;
   onPortalPrompt?: (portalName: string | null) => void;
-  onChat?: (sender: string, text: string, kind: "system" | "player") => void;
+  onChat?: (
+    sender: string,
+    text: string,
+    kind: "system" | "player",
+    channel: ChatChannel,
+  ) => void;
   onDeath?: () => void;
   onNearbyLootBag?: (bag: EntityState | null) => void;
 }
@@ -157,8 +163,8 @@ export class GameApp {
         this.callbacks.onWorldChange?.(map.name);
         this.cameraCtrl.setFollowTarget(spawnX, spawnY);
       },
-      onChat: (sender, text, kind) => {
-        this.callbacks.onChat?.(sender, text, kind);
+      onChat: (sender, text, kind, channel) => {
+        this.callbacks.onChat?.(sender, text, kind, channel);
       },
     });
 

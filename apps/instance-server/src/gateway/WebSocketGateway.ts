@@ -117,12 +117,15 @@ export class WebSocketGateway implements ITransportGateway {
 
     // 3. Chat broadcast
     this.messageBus.onChat(
-      ({ sender, text, kind, targetInstanceId, targetPlayerIds }) => {
+      ({ sender, text, kind, targetInstanceId, targetPlayerIds, channel }) => {
       const packet: S2C_ChatPacket = {
         type: "s2c_chat",
         sender,
         text,
         kind,
+        channel:
+          channel ??
+          (targetInstanceId || targetPlayerIds ? "local" : "global"),
         timestamp: Date.now(),
       };
       const binary = serializePacket(packet);
@@ -338,10 +341,12 @@ export class WebSocketGateway implements ITransportGateway {
             case "c2s_chat": {
               if (!session.nickname || !session.playerId) return;
               if (this.commands.handle(session.playerId, packet.text)) break;
+              // Plain chat stays inside the sender's instance (like RotMG).
               this.host.broadcastChat(
                 session.nickname,
                 packet.text,
                 "player",
+                this.host.getInstanceForPlayer(session.playerId)?.id,
               );
               break;
             }

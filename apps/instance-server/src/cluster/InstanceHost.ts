@@ -298,16 +298,17 @@ export class InstanceHost implements InstancePool {
       });
     }
 
-    // 2. Level ups
+    // 2. Level ups: announced to the instance
     for (const lvl of result.levelUps) {
       this.broadcastChat(
         "Level Up",
         `🎉 ${lvl.playerName} has reached Level ${lvl.newLevel}!`,
         "system",
+        instance.id,
       );
     }
 
-    // 3. Deaths
+    // 3. Deaths: announced to everyone (permadeath)
     for (const death of result.deaths) {
       if (!death.isPlayer) continue;
       const info = this.playerInfo.get(death.entityId);
@@ -483,6 +484,7 @@ export class InstanceHost implements InstancePool {
         "System",
         `${info.name} entered ${target.mapData.name}`,
         "system",
+        target.id,
       );
     }
     return true;

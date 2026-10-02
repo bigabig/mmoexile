@@ -138,11 +138,15 @@ export interface S2C_InstanceTransferPacket {
   spawnY: number;
 }
 
+/** Who a chat message was sent to: the current instance, everyone, or the party. */
+export type ChatChannel = "local" | "global" | "party";
+
 export interface S2C_ChatPacket {
   type: "s2c_chat";
   sender: string;
   text: string;
   kind: "system" | "player";
+  channel: ChatChannel;
   timestamp: number;
 }
 

@@ -127,3 +127,57 @@ describe("Party chat commands and shared instances", () => {
     expect(commands.handle("alice", "hello /invite")).toBe(false);
   });
 });
+
+describe("Chat scopes", () => {
+  function setup() {
+    const parties = new PartyService();
+    const host = new InstanceHost({
+      sweepIntervalMs: 0,
+      getPartyId: (id) => parties.getPartyId(id),
+    });
+    const commands = new ChatCommands(host, parties);
+    const chat: ChatPayload[] = [];
+    host.messageBus.onChat((c) => chat.push(c));
+    const a = host.registerPlayer({ playerId: "alice", name: "Alice" });
+    host.registerPlayer({ playerId: "bob", name: "Bob" });
+    return { parties, host, commands, chat, nexusId: a.instanceId };
+  }
+
+  it("/g sends player chat to everyone", () => {
+    const { commands, chat } = setup();
+    commands.handle("alice", "/g hello world");
+    expect(chat.at(-1)).toMatchObject({
+      sender: "Alice",
+      text: "hello world",
+      kind: "player",
+      channel: "global",
+    });
+    expect(chat.at(-1)?.targetPlayerIds).toBeUndefined();
+    expect(chat.at(-1)?.targetInstanceId).toBeUndefined();
+  });
+
+  it("/p sends player chat to party members only", () => {
+    const { commands, chat } = setup();
+    commands.handle("alice", "/p anyone?");
+    expect(chat.at(-1)?.text).toMatch(/not in a party/);
+
+    commands.handle("alice", "/invite Bob");
+    commands.handle("bob", "/accept");
+    commands.handle("bob", "/p hi team");
+    expect(chat.at(-1)).toMatchObject({
+      sender: "Bob",
+      channel: "party",
+      targetPlayerIds: ["alice", "bob"],
+    });
+  });
+
+  it("announces zone entries only inside the entered instance", () => {
+    const { host, chat, nexusId } = setup();
+    host.transferPlayer("alice", "overworld");
+    const overworld = host.getInstanceForPlayer("alice")!;
+    const entry = chat.find((c) => c.text === "Alice entered Realm of the Ancients");
+    expect(entry?.targetInstanceId).toBe(overworld.id);
+    expect(entry?.targetInstanceId).not.toBe(nexusId);
+    host.stop();
+  });
+});

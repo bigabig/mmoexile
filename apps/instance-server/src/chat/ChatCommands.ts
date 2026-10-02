@@ -29,10 +29,16 @@ export class ChatCommands {
       case "party":
         this.list(playerId);
         break;
+      case "g":
+        this.say(playerId, args.join(" "), "global");
+        break;
+      case "p":
+        this.say(playerId, args.join(" "), "party");
+        break;
       default:
         this.tell(
           [playerId],
-          `Unknown command /${command}. Try /invite <name>, /accept, /leave, /party.`,
+          `Unknown command /${command}. Try /g <text>, /p <text>, /invite <name>, /accept, /leave, /party.`,
         );
     }
     return true;
@@ -99,6 +105,31 @@ export class ChatCommands {
     this.tell([playerId], `Party (${names.length}/${this.parties.maxSize}): ${names.join(", ")}`);
   }
 
+  /** Player chat to everyone (/g) or to the party (/p). */
+  private say(
+    playerId: string,
+    text: string,
+    channel: "global" | "party",
+  ): void {
+    if (!text) return;
+    let targetPlayerIds: string[] | undefined;
+    if (channel === "party") {
+      const party = this.parties.getParty(playerId);
+      if (!party) {
+        this.tell([playerId], "You are not in a party.");
+        return;
+      }
+      targetPlayerIds = party.members;
+    }
+    this.host.messageBus.publishChat({
+      sender: this.name(playerId),
+      text,
+      kind: "player",
+      channel,
+      targetPlayerIds,
+    });
+  }
+
   private name(playerId: string): string {
     return this.host.getPlayerName(playerId) ?? "Someone";
   }
@@ -106,9 +137,10 @@ export class ChatCommands {
   private tell(playerIds: string[], text: string): void {
     if (playerIds.length === 0) return;
     this.host.messageBus.publishChat({
-      sender: "Party",
+      sender: "System",
       text,
       kind: "system",
+      channel: "local",
       targetPlayerIds: playerIds,
     });
   }

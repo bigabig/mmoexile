@@ -1,11 +1,19 @@
 import React, { useState, useRef, useEffect } from "react";
+import type { ChatChannel } from "@mmoexile/protocol";
 
 export interface ChatMessage {
   id: string;
   sender: string;
   text: string;
   kind: "system" | "player";
+  channel: ChatChannel;
 }
+
+const CHANNEL_PREFIX: Record<ChatChannel, { label: string; color: string } | null> = {
+  local: null,
+  global: { label: "[Global] ", color: "#a78bfa" },
+  party: { label: "[Party] ", color: "#34d399" },
+};
 
 interface ChatBoxProps {
   messages: ChatMessage[];
@@ -87,6 +95,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               </span>
             ) : (
               <span>
+                {CHANNEL_PREFIX[msg.channel] && (
+                  <span style={{ color: CHANNEL_PREFIX[msg.channel]!.color }}>
+                    {CHANNEL_PREFIX[msg.channel]!.label}
+                  </span>
+                )}
                 <strong style={{ color: "#38bdf8" }}>{msg.sender}: </strong>
                 <span style={{ color: "#f1f5f9" }}>{msg.text}</span>
               </span>

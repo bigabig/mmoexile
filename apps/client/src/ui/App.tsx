@@ -85,10 +85,10 @@ export const App: React.FC = () => {
           gameAppRef.current.inputMgr.isLootModalOpen = !!bag;
         }
       },
-      onChat: (sender, text, kind) => {
+      onChat: (sender, text, kind, channel) => {
         setChatMessages((prev) => [
           ...prev,
-          { id: Math.random().toString(), sender, text, kind },
+          { id: Math.random().toString(), sender, text, kind, channel },
         ]);
       },
       onDeath: () => {

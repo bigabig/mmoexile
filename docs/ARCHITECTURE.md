@@ -88,7 +88,8 @@ Hosts the instances of this process and routes players between them.
 ### Parties and chat commands (`apps/instance-server/src/party/`, `src/chat/`)
 
 - **`PartyService`**: in-process party registry (invite with 60 s expiry, accept, leave, max 6, leader handover, disband at one member). `InstanceHost` asks it for a character's party during placement, so party members share `party_private` instances. Moves to the `social` app in Stage 2.
-- **`ChatCommands`**: `/invite <name>`, `/accept`, `/leave`, `/party`. Replies are private system messages (`targetPlayerIds`).
+- **`ChatCommands`**: `/invite <name>`, `/accept`, `/leave`, `/party`, plus `/g <text>` (global) and `/p <text>` (party). Replies are private system messages (`targetPlayerIds`).
+- **Chat scopes**: plain chat stays in the sender's instance. Level-ups go to the instance, zone entries to the entered instance, deaths to everyone. Every `s2c_chat` carries a `channel` (`local`, `global`, `party`) that the client shows as a prefix.
 - The gateway sends `s2c_party_update` to members on every change, and removes disconnecting players from their party.
 
 ### Simulation (`packages/simulation/src/`)

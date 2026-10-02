@@ -184,10 +184,11 @@ Rules:
 - Removed the unused in-tick `player_state_persist` event (it ran `JSON.stringify` inside the tick every 150 ticks with no listener).
 - `s2c_world_transfer` → `s2c_instance_transfer { instanceId, zoneId, map, spawnX, spawnY }`.
 
-### S1.7 Chat Scopes
+### S1.7 Chat Scopes ✅
 
 - Default chat is **instance-local** (like RotMG); `/g <text>` for global; `/p <text>` for party.
 - System messages scoped correctly: level-ups → instance, deaths → global, "entered zone" → target instance only.
+- `s2c_chat` carries a `channel` (`local` / `global` / `party`); the client prefixes global and party messages. Command replies are private `local` system messages.
 
 ### S1.8 Postgres
 

@@ -1,5 +1,6 @@
 import type { PlayerCommand, WorldTickResult } from "@mmoexile/simulation";
 import type { MapData } from "@mmoexile/game-core";
+import type { ChatChannel } from "@mmoexile/protocol";
 
 export interface PlayerTransferPayload {
   playerId: string;
@@ -17,6 +18,8 @@ export interface ChatPayload {
   targetInstanceId?: string;
   /** Only these players receive it (takes precedence over targetInstanceId). */
   targetPlayerIds?: string[];
+  /** Shown to players; defaults to "local" when targeted, else "global". */
+  channel?: ChatChannel;
 }
 
 export interface PlayerDeathPayload {

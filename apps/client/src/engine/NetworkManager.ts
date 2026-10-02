@@ -11,6 +11,7 @@ import {
   deserializePacket,
   serializePacket,
   EntityState,
+  ChatChannel,
 } from "@mmoexile/protocol";
 
 export interface NetworkCallbacks {
@@ -25,7 +26,12 @@ export interface NetworkCallbacks {
     spawnX: number,
     spawnY: number,
   ) => void;
-  onChat?: (sender: string, text: string, kind: "system" | "player") => void;
+  onChat?: (
+    sender: string,
+    text: string,
+    kind: "system" | "player",
+    channel: ChatChannel,
+  ) => void;
   onDisconnected?: () => void;
 }
 
@@ -312,7 +318,12 @@ export class NetworkManager {
       }
 
       case "s2c_chat": {
-        this.callbacks.onChat?.(packet.sender, packet.text, packet.kind);
+        this.callbacks.onChat?.(
+          packet.sender,
+          packet.text,
+          packet.kind,
+          packet.channel,
+        );
         break;
       }
     }
