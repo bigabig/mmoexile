@@ -5,18 +5,9 @@ import { persistenceService } from "./persistence/index.js";
 import { disconnectDatabase } from "@mmoexile/db";
 import { gracefulShutdown } from "./shutdown.js";
 import { PartyService } from "./party/PartyService.js";
+import { createHttpHandler } from "./http.js";
 
 const PORT = Number(process.env.PORT) || 3001;
-
-const server = http.createServer((req, res) => {
-  if (req.url === "/health") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", uptime: process.uptime() }));
-    return;
-  }
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("RotMG Voxel MMO Server Running");
-});
 
 // Parties decide who shares private instances
 const parties = new PartyService();
@@ -25,6 +16,13 @@ const parties = new PartyService();
 const host = new InstanceHost({
   getPartyId: (characterId) => parties.getPartyId(characterId),
 });
+
+// HTTP: /health, plus /debug/instances outside production
+const server = http.createServer(
+  createHttpHandler(host, {
+    debugEndpoints: process.env.NODE_ENV !== "production",
+  }),
+);
 
 // Layer 1: WebSocket Gateway
 const gateway = new WebSocketGateway(server, host, parties);

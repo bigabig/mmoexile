@@ -203,14 +203,15 @@ Rules:
 - On login, characters always spawn in a **nexus shard**, never directly into a private instance (PoE sends you to town after a disconnect). Keeps "rejoin a still-alive dungeon" as a later feature.
 - The policy lives in the login flow (gateway); `InstanceHost.registerPlayer` additionally refuses non-public zones as a safety net.
 
-### S1.10 Explicit Non-Goal: Worker Threads
+### S1.10 Explicit Non-Goal: Worker Threads ✅
 
 We scale by running **more instance-server processes** (Stage 2+), not threads inside one process. This matches the one-process-per-container model of Docker/Kubernetes/Agones and avoids a second concurrency model. `IWorldRunner` stays, but `InProcessWorldRunner` remains the only implementation.
 
-### S1.11 Introspection
+### S1.11 Introspection ✅
 
 - `GET /health` includes instance count and player count.
 - `GET /debug/instances` (dev only): list of instances with zone, players, state, age.
+- Routes live in `src/http.ts`; `/debug/*` is enabled unless `NODE_ENV=production`.
 
 ### Tests
 - Unit: `InstanceManager` rules per policy (fill-first, caps, party reuse, portal binding).

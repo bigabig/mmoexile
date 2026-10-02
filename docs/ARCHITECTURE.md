@@ -132,6 +132,13 @@ Asynchronous persistence, out of band from the game loop, backed by PostgreSQL (
 
 ---
 
+### HTTP endpoints (`apps/instance-server/src/http.ts`)
+
+- `GET /health`: status, uptime, number of instances and players.
+- `GET /debug/instances` (disabled when `NODE_ENV=production`): every instance with id, zone, state, players, owner party, age, time spent empty, and current tick.
+
+---
+
 ## 4. Tick Lifecycle
 
 Each world ticks at 30 Hz:
@@ -236,8 +243,9 @@ apps/instance-server/src/
 │   ├── persistenceService.ts
 │   └── index.ts
 ├── __tests__/                # host/instances, persistence, shutdown order
+├── http.ts                   # /health and /debug/instances
 ├── shutdown.ts               # graceful shutdown sequence
-└── index.ts                  # entry point, HTTP /health, signal handling
+└── index.ts                  # entry point, wiring, signal handling
 
 packages/simulation/src/
 ├── commands/                 # CommandQueue, PlayerCommand
