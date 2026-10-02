@@ -12,7 +12,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run --exclude 'src/**/*.bench.test.ts'",
+    "bench": "vitest run src/__tests__/simulation.bench.test.ts"
   },
   "dependencies": {
     "@mmoexile/game-core": "workspace:*",

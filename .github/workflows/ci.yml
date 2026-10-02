@@ -28,3 +28,6 @@ jobs:
       # Server tests start a throwaway Postgres via Testcontainers (Docker is
       # available on GitHub's Ubuntu runners)
       - run: pnpm test
+
+      # Wall-clock benchmark, run alone so other test suites don't skew it
+      - run: pnpm bench

@@ -118,6 +118,9 @@ pnpm --filter @mmoexile/bots hop -- --bots 20 --minutes 2 --api http://localhost
 # Run all unit and integration tests
 pnpm test
 
+# Tick benchmark (100 players, 500 monsters), run on its own
+pnpm bench
+
 # Check dependency boundaries between apps and packages
 pnpm lint:deps
 
