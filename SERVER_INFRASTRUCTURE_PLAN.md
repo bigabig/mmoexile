@@ -168,12 +168,13 @@ Rules:
 - Uses an injectable clock so lifecycle tests run instantly.
 - **Per-instance fault isolation:** each instance's tick runs inside its own error boundary. If a tick throws, only that instance is closed (state `crashed`, logged with its instance ID and zone): its players' last good state is saved and they are moved to a nexus shard with a system message. All other instances in the process keep running. A failure inside the host itself (outside any tick) still crashes the process, which is what the container restart is for.
 
-### S1.5 Parties (minimal)
+### S1.5 Parties (minimal) ✅
 
 - In-process `PartyService` in `apps/instance-server/src/party/` (moves to the `social` app in Stage 2).
 - Chat commands for now (no UI work): `/invite <name>`, `/accept`, `/leave`, `/party` (list).
 - A new packet `s2c_party_update { partyId, members[] }` so the HUD can show members later.
-- Max party size: 6 (configurable).
+- Max party size: 6 (configurable). Invites expire after 60 s; the leader role passes to the next member; a party of one is disbanded.
+- Disconnecting leaves the party (until parties move to the `social` service in Stage 2).
 
 ### S1.6 Transfers Through the Directory
 

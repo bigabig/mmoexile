@@ -73,6 +73,8 @@ export interface InstanceHostOptions {
   sweepIntervalMs?: number;
   /** Placement policy; defaults to the zone access rules (InstanceManager). */
   placement?: InstanceDirectory;
+  /** Looks up a character's party, so party members share private instances. */
+  getPartyId?: (characterId: string) => string | undefined;
   generateId?: (zoneId: ZoneId) => InstanceId;
   now?: () => number;
 }
@@ -88,6 +90,7 @@ export class InstanceHost implements InstancePool {
   private readonly generateId: (zoneId: ZoneId) => InstanceId;
   private readonly now: () => number;
   private readonly placement: InstanceDirectory;
+  private readonly getPartyId: (characterId: string) => string | undefined;
   private sweepTimer: NodeJS.Timeout | null = null;
   public readonly messageBus: IMessageBus;
 
@@ -96,6 +99,7 @@ export class InstanceHost implements InstancePool {
     this.generateId = options.generateId ?? generateInstanceId;
     this.now = options.now ?? Date.now;
     this.placement = options.placement ?? new InstanceManager(this);
+    this.getPartyId = options.getPartyId ?? (() => undefined);
 
     // Keep warm instances (e.g. one nexus) ready; everything else is created
     // on demand by the placement policy.
@@ -253,6 +257,19 @@ export class InstanceHost implements InstancePool {
     return [...this.instances.values()];
   }
 
+  public getPlayerName(playerId: string): string | undefined {
+    return this.playerInfo.get(playerId)?.name;
+  }
+
+  /** Finds an online player by name (case-insensitive). */
+  public findPlayerByName(name: string): string | undefined {
+    const wanted = name.toLowerCase();
+    for (const [playerId, info] of this.playerInfo) {
+      if (info.name.toLowerCase() === wanted) return playerId;
+    }
+    return undefined;
+  }
+
   public getInstanceForPlayer(playerId: string): Instance | undefined {
     const instanceId = this.playerInstance.get(playerId);
     return instanceId ? this.instances.get(instanceId) : undefined;
@@ -343,7 +360,11 @@ export class InstanceHost implements InstancePool {
       ZONES[options.zoneId].access.kind === "public_sharded"
         ? options.zoneId
         : "nexus";
-    const instance = this.placement.resolve({ zoneId, characterId: charId });
+    const instance = this.placement.resolve({
+      zoneId,
+      characterId: charId,
+      partyId: this.getPartyId(charId),
+    });
     this.addPlayerToInstance(instance, playerId);
 
     let inventory: (string | null)[] | undefined = undefined;
@@ -422,6 +443,7 @@ export class InstanceHost implements InstancePool {
       target = this.placement.resolve({
         zoneId: targetZoneId,
         characterId: info.charId,
+        partyId: this.getPartyId(info.charId),
         via,
       });
     } catch (err) {

@@ -19,7 +19,8 @@ export type PacketType =
   | "s2c_bullet_spawn"
   | "s2c_damage"
   | "s2c_world_transfer"
-  | "s2c_chat";
+  | "s2c_chat"
+  | "s2c_party_update";
 
 export interface C2S_JoinPacket {
   type: "c2s_join";
@@ -142,13 +143,27 @@ export interface S2C_ChatPacket {
   timestamp: number;
 }
 
+export interface PartyMemberInfo {
+  id: string;
+  name: string;
+  isLeader: boolean;
+}
+
+/** Sent to every member when a party changes; partyId null = not in a party. */
+export interface S2C_PartyUpdatePacket {
+  type: "s2c_party_update";
+  partyId: string | null;
+  members: PartyMemberInfo[];
+}
+
 export type ServerPacket =
   | S2C_WelcomePacket
   | S2C_SnapshotPacket
   | S2C_BulletSpawnPacket
   | S2C_DamagePacket
   | S2C_WorldTransferPacket
-  | S2C_ChatPacket;
+  | S2C_ChatPacket
+  | S2C_PartyUpdatePacket;
 
 export type GamePacket = ClientPacket | ServerPacket;
 

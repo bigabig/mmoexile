@@ -10,6 +10,7 @@ import {
   S2C_DamagePacket,
   S2C_WorldTransferPacket,
   S2C_ChatPacket,
+  S2C_PartyUpdatePacket,
 } from "@mmoexile/protocol";
 import { SessionManager } from "./SessionManager.js";
 import {
@@ -19,25 +20,33 @@ import {
 } from "../cluster/index.js";
 import { accountService } from "../persistence/index.js";
 import type { ITransportGateway } from "./transport/ITransportGateway.js";
+import type { PartyChange, PartyService } from "../party/PartyService.js";
+import { ChatCommands } from "../chat/ChatCommands.js";
 
 export class WebSocketGateway implements ITransportGateway {
   private readonly wss: WebSocketServer;
   public readonly sessionManager: SessionManager;
   public readonly host: InstanceHost;
+  public readonly parties: PartyService;
   public readonly messageBus: IMessageBus;
+  private readonly commands: ChatCommands;
 
   constructor(
     httpServer: HttpServer,
     host: InstanceHost,
+    parties: PartyService,
     sessionManager: SessionManager = new SessionManager(),
     messageBus?: IMessageBus,
   ) {
     this.host = host;
+    this.parties = parties;
+    this.commands = new ChatCommands(host, parties);
     this.sessionManager = sessionManager;
     this.messageBus = messageBus ?? host.messageBus ?? new InMemoryMessageBus();
     this.wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
     this.setupHostHooks();
+    this.parties.onChange((change) => this.sendPartyUpdate(change));
     this.setupWebSocketListeners();
   }
 
@@ -129,6 +138,29 @@ export class WebSocketGateway implements ITransportGateway {
       }
       },
     );
+  }
+
+  private sendPartyUpdate({ party, removed }: PartyChange): void {
+    if (party) {
+      const packet: S2C_PartyUpdatePacket = {
+        type: "s2c_party_update",
+        partyId: party.id,
+        members: party.members.map((id) => ({
+          id,
+          name: this.host.getPlayerName(id) ?? "Unknown",
+          isLeader: id === party.leaderId,
+        })),
+      };
+      this.sessionManager.broadcastToPlayers(party.members, packet);
+    }
+    if (removed.length > 0) {
+      const packet: S2C_PartyUpdatePacket = {
+        type: "s2c_party_update",
+        partyId: null,
+        members: [],
+      };
+      this.sessionManager.broadcastToPlayers(removed, packet);
+    }
   }
 
   private setupWebSocketListeners(): void {
@@ -302,7 +334,8 @@ export class WebSocketGateway implements ITransportGateway {
             }
 
             case "c2s_chat": {
-              if (!session.nickname) return;
+              if (!session.nickname || !session.playerId) return;
+              if (this.commands.handle(session.playerId, packet.text)) break;
               this.host.broadcastChat(
                 session.nickname,
                 packet.text,
@@ -321,6 +354,20 @@ export class WebSocketGateway implements ITransportGateway {
 
       socket.on("close", () => {
         if (session.playerId) {
+          const change = this.parties.leave(session.playerId);
+          if (change) {
+            const remaining = change.party
+              ? change.party.members
+              : change.removed.filter((id) => id !== session.playerId);
+            this.messageBus.publishChat({
+              sender: "Party",
+              text: change.party
+                ? `${session.nickname ?? "A member"} disconnected and left the party.`
+                : `${session.nickname ?? "A member"} disconnected. Your party was disbanded.`,
+              kind: "system",
+              targetPlayerIds: remaining,
+            });
+          }
           this.host.unregisterPlayer(session.playerId);
         }
         this.sessionManager.removeSession(socket);

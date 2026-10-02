@@ -4,6 +4,7 @@ import { WebSocketGateway } from "./gateway/index.js";
 import { persistenceService } from "./persistence/index.js";
 import { disconnectDatabase } from "@mmoexile/db";
 import { gracefulShutdown } from "./shutdown.js";
+import { PartyService } from "./party/PartyService.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -17,11 +18,16 @@ const server = http.createServer((req, res) => {
   res.end("RotMG Voxel MMO Server Running");
 });
 
+// Parties decide who shares private instances
+const parties = new PartyService();
+
 // Layer 2: Instance Host
-const host = new InstanceHost();
+const host = new InstanceHost({
+  getPartyId: (characterId) => parties.getPartyId(characterId),
+});
 
 // Layer 1: WebSocket Gateway
-const gateway = new WebSocketGateway(server, host);
+const gateway = new WebSocketGateway(server, host, parties);
 
 server.listen(PORT, () => {
   console.log(
