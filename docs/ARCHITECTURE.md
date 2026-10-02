@@ -181,11 +181,12 @@ sequenceDiagram
     Source-->>Cluster: WorldTickResult.transfers (targetZoneId)
     Cluster->>Source: Read player state, removePlayer()
     Cluster->>Target: addPlayer(snapshot) at spawn point
-    Cluster->>Player: s2c_world_transfer (worldId, map, spawn)
+    Cluster->>Player: s2c_instance_transfer (instanceId, zoneId, map, spawn)
 ```
 
 - The transfer is an in-memory move within one process; the database is updated by the regular out-of-band saves.
-- **Known limitation:** MP is reset to 100 on transfer (`InstanceHost.transferPlayer` builds the snapshot by hand). Tracked in plan task S1.6.
+- Transfers, periodic saves and crash evacuations all use one `CharacterSnapshot` (`snapshotCharacter()` in `@mmoexile/simulation`), so they can never disagree about what a character's state is.
+- MP is not simulated yet (no mana component); snapshots omit it so the persisted value is left untouched.
 - Moving players *between processes* requires the ticket/lease handoff described in `SERVER_INFRASTRUCTURE.md`.
 
 ---

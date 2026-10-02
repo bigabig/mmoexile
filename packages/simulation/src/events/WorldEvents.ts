@@ -3,6 +3,7 @@ import type { EntityState } from "@mmoexile/protocol";
 
 export interface PlayerPersistenceSnapshot {
   hp: number;
+  /** Not simulated yet; omitted so persisted MP is left untouched. */
   mp?: number;
   level?: number;
   xp?: number;
@@ -60,11 +61,6 @@ export interface WorldTransferRequestedEvent {
   portalId: string;
 }
 
-export interface PlayerStatePersistEvent {
-  playerId: string;
-  state: PlayerPersistenceSnapshot;
-}
-
 export interface ChatBroadcastEvent {
   sender: string;
   text: string;
@@ -89,7 +85,6 @@ export interface WorldEventMap {
   loot_bag_spawned: LootBagSpawnedEvent;
   loot_bag_despawned: LootBagDespawnedEvent;
   world_transfer_requested: WorldTransferRequestedEvent;
-  player_state_persist: PlayerStatePersistEvent;
   chat_broadcast: ChatBroadcastEvent;
   snapshot: SnapshotEvent;
 }

@@ -176,10 +176,12 @@ Rules:
 - Max party size: 6 (configurable). Invites expire after 60 s; the leader role passes to the next member; a party of one is disbanded.
 - Disconnecting leaves the party (until parties move to the `social` service in Stage 2).
 
-### S1.6 Transfers Through the Directory
+### S1.6 Transfers Through the Directory ✅
 
 - `transferPlayer(characterId, target: { zoneId, viaPortalId? })` → `InstanceManager.resolve(...)` → move the character.
-- **Character snapshot:** introduce one function, `snapshotCharacter(world, characterId) → CharacterState`, used for transfers, saves, and (in Stage 2) handoffs. It replaces the hand-built `SpawnPlayerOptions` in `transferPlayer`, which today hard-codes `mp: 100`.
+- **Character snapshot:** introduce one function, `snapshotCharacter(world, characterId) → CharacterSnapshot`, used for transfers, saves, and (in Stage 2) handoffs. It replaces the hand-built `SpawnPlayerOptions` in `transferPlayer`.
+- Correction found while implementing: MP is not simulated at all (no mana component; the `mp` spawn option is ignored). The bug was that every save wrote `mp: 100`. Snapshots now omit MP so the stored value is untouched until a mana system exists.
+- Removed the unused in-tick `player_state_persist` event (it ran `JSON.stringify` inside the tick every 150 ticks with no listener).
 - `s2c_world_transfer` → `s2c_instance_transfer { instanceId, zoneId, map, spawnX, spawnY }`.
 
 ### S1.7 Chat Scopes

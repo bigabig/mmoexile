@@ -14,12 +14,13 @@ import {
 } from "@mmoexile/protocol";
 
 export interface NetworkCallbacks {
-  onWelcome?: (playerId: string, worldId: string, map: MapData) => void;
+  onWelcome?: (playerId: string, instanceId: string, map: MapData) => void;
   onSnapshot?: (entities: EntityState[]) => void;
   onBulletSpawn?: (bullet: ProjectileState) => void;
   onDamage?: (event: DamageEvent) => void;
-  onWorldTransfer?: (
-    worldId: string,
+  onInstanceTransfer?: (
+    instanceId: string,
+    zoneId: string,
     map: MapData,
     spawnX: number,
     spawnY: number,
@@ -234,7 +235,11 @@ export class NetworkManager {
         this.localPos.y = packet.playerState.y;
         this.localSpeed = packet.playerState.classId === "knight" ? 4.8 : 5.5;
         this.pendingInputs = [];
-        this.callbacks.onWelcome?.(packet.playerId, packet.worldId, packet.map);
+        this.callbacks.onWelcome?.(
+          packet.playerId,
+          packet.instanceId,
+          packet.map,
+        );
         break;
       }
 
@@ -291,13 +296,14 @@ export class NetworkManager {
         break;
       }
 
-      case "s2c_world_transfer": {
+      case "s2c_instance_transfer": {
         this.currentMap = packet.map;
         this.localPos.x = packet.spawnX;
         this.localPos.y = packet.spawnY;
         this.pendingInputs = [];
-        this.callbacks.onWorldTransfer?.(
-          packet.worldId,
+        this.callbacks.onInstanceTransfer?.(
+          packet.instanceId,
+          packet.zoneId,
           packet.map,
           packet.spawnX,
           packet.spawnY,

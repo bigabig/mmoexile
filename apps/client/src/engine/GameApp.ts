@@ -111,7 +111,7 @@ export class GameApp {
 
     // 7. Network Manager
     this.networkMgr = new NetworkManager({
-      onWelcome: (playerId, worldId, map) => {
+      onWelcome: (playerId, _instanceId, map) => {
         this.entityMgr.localPlayerId = playerId;
         this.mapRenderer.setMap(map);
         this.currentWorldName = map.name;
@@ -149,7 +149,7 @@ export class GameApp {
       onDamage: (event) => {
         // Damage event handling
       },
-      onWorldTransfer: (worldId, map, spawnX, spawnY) => {
+      onInstanceTransfer: (_instanceId, _zoneId, map, spawnX, spawnY) => {
         this.projectileRenderer.clear();
         this.entityMgr.clear();
         this.mapRenderer.setMap(map);

@@ -18,7 +18,7 @@ export type PacketType =
   | "s2c_snapshot"
   | "s2c_bullet_spawn"
   | "s2c_damage"
-  | "s2c_world_transfer"
+  | "s2c_instance_transfer"
   | "s2c_chat"
   | "s2c_party_update";
 
@@ -104,7 +104,8 @@ export interface S2C_WelcomePacket {
   type: "s2c_welcome";
   playerId: string;
   token: string;
-  worldId: string;
+  instanceId: string;
+  zoneId: string;
   map: MapData;
   playerState: EntityState;
 }
@@ -127,9 +128,11 @@ export interface S2C_DamagePacket {
   event: DamageEvent;
 }
 
-export interface S2C_WorldTransferPacket {
-  type: "s2c_world_transfer";
-  worldId: string;
+/** The player was moved into another instance (portal, crash, …). */
+export interface S2C_InstanceTransferPacket {
+  type: "s2c_instance_transfer";
+  instanceId: string;
+  zoneId: string;
   map: MapData;
   spawnX: number;
   spawnY: number;
@@ -161,7 +164,7 @@ export type ServerPacket =
   | S2C_SnapshotPacket
   | S2C_BulletSpawnPacket
   | S2C_DamagePacket
-  | S2C_WorldTransferPacket
+  | S2C_InstanceTransferPacket
   | S2C_ChatPacket
   | S2C_PartyUpdatePacket;
 

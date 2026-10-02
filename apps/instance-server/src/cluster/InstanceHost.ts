@@ -4,17 +4,13 @@ import {
   type MapData,
   type ZoneId,
   type CharacterData,
-  Health,
-  Progression,
-  Equipment,
-  Inventory,
-  Identity,
 } from "@mmoexile/game-core";
 import {
   GameWorld,
+  snapshotCharacter,
+  spawnOptionsFromSnapshot,
   type WorldTickResult,
   type PlayerCommand,
-  type SpawnPlayerOptions,
 } from "@mmoexile/simulation";
 import { InProcessWorldRunner } from "./runners/InProcessWorldRunner.js";
 import {
@@ -461,36 +457,23 @@ export class InstanceHost implements InstancePool {
     target: Instance,
   ): boolean {
     const info = this.playerInfo.get(playerId);
-    const eid = source.world.uuidToEid.get(playerId);
-    if (eid === undefined) return false;
+    const snapshot = snapshotCharacter(source.world, playerId);
+    if (!snapshot) return false;
 
-    // 1. Snapshot the player and remove them from the source instance
-    const playerData: SpawnPlayerOptions = {
-      id: playerId,
-      name: Identity.name[eid],
-      classId: Progression.classId[eid],
-      level: Progression.level[eid],
-      xp: Progression.xp[eid],
-      hp: Health.current[eid],
-      mp: 100,
-      x: target.mapData.spawnPoint.x,
-      y: target.mapData.spawnPoint.y,
-      equipment: {
-        weapon: Equipment.weapon[eid],
-        armor: Equipment.armor[eid],
-      },
-      inventory: [...(Inventory.slots[eid] || new Array(8).fill(null))],
-    };
+    // 1. Remove the player from the source instance
     this.removePlayerFromInstance(source, playerId);
 
-    // 2. Spawn them in the target instance
+    // 2. Spawn them in the target instance with their full state
     this.addPlayerToInstance(target, playerId);
-    target.world.addPlayer(playerData);
+    target.world.addPlayer(
+      spawnOptionsFromSnapshot(snapshot, target.mapData.spawnPoint),
+    );
 
     // 3. Tell the gateway
     this.messageBus.publishPlayerTransfer({
       playerId,
       targetInstanceId: target.id,
+      zoneId: target.zone.id,
       mapData: target.mapData,
       spawnPoint: target.mapData.spawnPoint,
     });

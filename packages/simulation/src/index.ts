@@ -19,3 +19,4 @@ export * from "./systems/LootSystem.js";
 export * from "./systems/InventorySystem.js";
 export * from "./systems/AOISystem.js";
 export * from "./ecs/entityIndex.js";
+export * from "./snapshot/characterSnapshot.js";

@@ -8,7 +8,7 @@ import {
   S2C_SnapshotPacket,
   S2C_BulletSpawnPacket,
   S2C_DamagePacket,
-  S2C_WorldTransferPacket,
+  S2C_InstanceTransferPacket,
   S2C_ChatPacket,
   S2C_PartyUpdatePacket,
 } from "@mmoexile/protocol";
@@ -98,13 +98,14 @@ export class WebSocketGateway implements ITransportGateway {
 
     // 2. Instance transfer broadcast
     this.messageBus.onPlayerTransfer(
-      ({ playerId, targetInstanceId, mapData, spawnPoint }) => {
+      ({ playerId, targetInstanceId, zoneId, mapData, spawnPoint }) => {
         const session = this.sessionManager.getSessionByPlayerId(playerId);
         if (session && session.isOpen) {
           session.currentInstanceId = targetInstanceId;
-          const packet: S2C_WorldTransferPacket = {
-            type: "s2c_world_transfer",
-            worldId: targetInstanceId,
+          const packet: S2C_InstanceTransferPacket = {
+            type: "s2c_instance_transfer",
+            instanceId: targetInstanceId,
+            zoneId,
             map: mapData,
             spawnX: spawnPoint.x,
             spawnY: spawnPoint.y,
@@ -179,7 +180,7 @@ export class WebSocketGateway implements ITransportGateway {
                   packet.token,
                 );
 
-              const { instanceId, map } = this.host.registerPlayer({
+              const { instanceId, zoneId, map } = this.host.registerPlayer({
                 playerId: character.id,
                 name: account.nickname,
                 charId: character.id,
@@ -199,7 +200,8 @@ export class WebSocketGateway implements ITransportGateway {
                 type: "s2c_welcome",
                 playerId: character.id,
                 token: account.token,
-                worldId: instanceId,
+                instanceId,
+                zoneId,
                 map,
                 playerState: {
                   id: character.id,

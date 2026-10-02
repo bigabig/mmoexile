@@ -41,6 +41,10 @@ import {
 } from "./ecs/EntityFactory.js";
 import { EntityManager } from "./ecs/EntityManager.js";
 import { processEntityIndex } from "./ecs/entityIndex.js";
+import {
+  snapshotCharacter,
+  persistenceFromSnapshot,
+} from "./snapshot/characterSnapshot.js";
 import { CommandQueue } from "./commands/CommandQueue.js";
 import type { PlayerCommand } from "./commands/PlayerCommand.js";
 import {
@@ -297,39 +301,6 @@ export class GameWorld {
     // 10. Build and emit network replication snapshot
     this.aoi.update(this, dt, now);
 
-    // 11. Periodic state persistence emit (every 150 ticks = 5 seconds)
-    if (this.currentTick % 150 === 0) {
-      const players = query(this.ecsWorld, [
-        Player,
-        Position,
-        Health,
-        Progression,
-        Equipment,
-        Inventory,
-      ]);
-
-      for (const pEid of players) {
-        this.events.emit("player_state_persist", {
-          playerId: Identity.uuid[pEid],
-          state: {
-            hp: Health.current[pEid],
-            mp: 100,
-            level: Progression.level[pEid],
-            xp: Progression.xp[pEid],
-            x: Position.x[pEid],
-            y: Position.y[pEid],
-            currentWorld: this.zoneId,
-            isAlive: Health.current[pEid] > 0,
-            equippedWeapon: Equipment.weapon[pEid] ?? null,
-            equippedArmor: Equipment.armor[pEid] ?? null,
-            inventory: JSON.stringify(
-              Inventory.slots[pEid] || new Array(8).fill(null),
-            ),
-          },
-        });
-      }
-    }
-
     return this.tickBuffer.toResult(this.instanceId, this.currentTick, now);
   }
 
@@ -339,36 +310,14 @@ export class GameWorld {
     playerId: string;
     state: PlayerPersistenceSnapshot;
   }[] {
-    const players = query(this.ecsWorld, [
-      Player,
-      Position,
-      Health,
-      Progression,
-      Equipment,
-      Inventory,
-    ]);
-
     const results: { playerId: string; state: PlayerPersistenceSnapshot }[] =
       [];
-    for (const pEid of players) {
-      results.push({
-        playerId: Identity.uuid[pEid],
-        state: {
-          hp: Health.current[pEid],
-          mp: 100,
-          level: Progression.level[pEid],
-          xp: Progression.xp[pEid],
-          x: Position.x[pEid],
-          y: Position.y[pEid],
-          currentWorld: this.zoneId,
-          isAlive: Health.current[pEid] > 0,
-          equippedWeapon: Equipment.weapon[pEid] ?? null,
-          equippedArmor: Equipment.armor[pEid] ?? null,
-          inventory: JSON.stringify(
-            Inventory.slots[pEid] || new Array(8).fill(null),
-          ),
-        },
-      });
+    for (const pEid of query(this.ecsWorld, [Player])) {
+      const playerId = Identity.uuid[pEid];
+      const snapshot = snapshotCharacter(this, playerId);
+      if (snapshot) {
+        results.push({ playerId, state: persistenceFromSnapshot(snapshot) });
+      }
     }
     return results;
   }
@@ -376,26 +325,8 @@ export class GameWorld {
   public getPlayerPersistenceState(
     playerId: string,
   ): PlayerPersistenceSnapshot | null {
-    const eid = this.uuidToEid.get(playerId);
-    if (eid === undefined || !hasComponent(this.ecsWorld, eid, Player)) {
-      return null;
-    }
-
-    return {
-      hp: Health.current[eid],
-      mp: 100,
-      level: Progression.level[eid],
-      xp: Progression.xp[eid],
-      x: Position.x[eid],
-      y: Position.y[eid],
-      currentWorld: this.zoneId,
-      isAlive: Health.current[eid] > 0,
-      equippedWeapon: Equipment.weapon[eid] ?? null,
-      equippedArmor: Equipment.armor[eid] ?? null,
-      inventory: JSON.stringify(
-        Inventory.slots[eid] || new Array(8).fill(null),
-      ),
-    };
+    const snapshot = snapshotCharacter(this, playerId);
+    return snapshot ? persistenceFromSnapshot(snapshot) : null;
   }
 
   // --- Direct Player Action Handlers (for backward compatibility / testing) ---

@@ -4,6 +4,7 @@ import type { MapData } from "@mmoexile/game-core";
 export interface PlayerTransferPayload {
   playerId: string;
   targetInstanceId: string;
+  zoneId: string;
   mapData: MapData;
   spawnPoint: { x: number; y: number };
 }
