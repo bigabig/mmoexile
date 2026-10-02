@@ -198,9 +198,10 @@ Rules:
 - Tests: a throwaway Postgres container per test run via Testcontainers (Open Decision D7 resolved), or `TEST_DATABASE_URL` to use an existing database. No manual reset needed.
 - Local dev needs no configuration: `@mmoexile/db` falls back to the compose database URL when `DATABASE_URL` is unset. Root scripts: `db:up`, `db:down`, `db:migrate`, `db:deploy`.
 
-### S1.9 Login Destination
+### S1.9 Login Destination ✅
 
 - On login, characters always spawn in a **nexus shard**, never directly into a private instance (PoE sends you to town after a disconnect). Keeps "rejoin a still-alive dungeon" as a later feature.
+- The policy lives in the login flow (gateway); `InstanceHost.registerPlayer` additionally refuses non-public zones as a safety net.
 
 ### S1.10 Explicit Non-Goal: Worker Threads
 

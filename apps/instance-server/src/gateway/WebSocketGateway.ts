@@ -183,11 +183,13 @@ export class WebSocketGateway implements ITransportGateway {
                   packet.token,
                 );
 
+              // Logins always start in a nexus shard (like PoE sending you to
+              // town); character.lastZoneId is kept for later features.
               const { instanceId, zoneId, map } = this.host.registerPlayer({
                 playerId: character.id,
                 name: account.nickname,
                 charId: character.id,
-                zoneId: character.lastZoneId,
+                zoneId: "nexus",
                 character: domainCharacter,
               });
 
