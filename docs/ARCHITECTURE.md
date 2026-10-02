@@ -179,19 +179,19 @@ sequenceDiagram
 
 ## 6. Graceful Shutdown
 
-On `SIGINT`/`SIGTERM` the server shuts down in order, so no character data is lost:
+On `SIGINT`/`SIGTERM` the server runs `gracefulShutdown()` (`apps/instance-server/src/shutdown.ts`). The order guarantees that every online player is saved before the instances holding their state are destroyed:
 
 ```mermaid
 flowchart TD
     S["SIGINT / SIGTERM"] --> G["1. gateway.close()<br/>stop accepting connections"]
-    G --> P["2. cluster.prepareShutdown()<br/>stop runners, snapshot all players"]
+    G --> P["2. host.prepareShutdown()<br/>stop runners, queue a final snapshot of every player"]
     P --> F["3. await persistenceService.stop()<br/>flush queue, wait for in-flight writes"]
-    F --> C["4. cluster.stop()<br/>destroy worlds"]
-    C --> H["5. server.close()"]
-    H --> D["6. await disconnectDatabase(), exit"]
+    F --> C["4. host.stop()<br/>destroy instances"]
+    C --> D["5. gateway.disconnectAll() + close HTTP server<br/>clients receive close code 1001"]
+    D --> X["6. await disconnectDatabase(), exit(0)"]
 ```
 
-A 10-second timer force-exits if any step hangs.
+If the flush fails, the sequence stops before destroying instances and the process exits with code 1. A 10-second timer force-exits if any step hangs. The order is covered by `__tests__/shutdown.test.ts`.
 
 ---
 
@@ -217,8 +217,9 @@ apps/instance-server/src/
 │   ├── accountService.ts
 │   ├── persistenceService.ts
 │   └── index.ts
-├── __tests__/server.test.ts  # cluster transfers + persistence
-└── index.ts                  # entry point, HTTP /health, shutdown
+├── __tests__/                # host/instances, persistence, shutdown order
+├── shutdown.ts               # graceful shutdown sequence
+└── index.ts                  # entry point, HTTP /health, signal handling
 
 packages/simulation/src/
 ├── commands/                 # CommandQueue, PlayerCommand

@@ -329,6 +329,16 @@ export class WebSocketGateway implements ITransportGateway {
   }
 
   public close(): void {
+    // ws does not close existing connections here, only stops accepting new ones.
     this.wss.close();
+  }
+
+  public disconnectAll(
+    code: number = 1001,
+    reason: string = "Server shutting down",
+  ): void {
+    for (const client of this.wss.clients) {
+      client.close(code, reason);
+    }
   }
 }

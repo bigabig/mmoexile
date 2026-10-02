@@ -31,6 +31,9 @@ export interface ITransportSession {
 export interface ITransportGateway {
   readonly sessionManager: SessionManager;
   start?(): Promise<void> | void;
+  /** Stop accepting new connections; existing ones stay open. */
   close(): Promise<void> | void;
+  /** Close every open client connection (used at the end of shutdown). */
+  disconnectAll(code?: number, reason?: string): void;
 }
 
