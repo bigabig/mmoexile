@@ -270,7 +270,7 @@ export const LootBag = {
 };
 
 export const Portal = {
-  targetWorldId: [] as string[],
+  targetZoneId: [] as string[],
   name: [] as string[],
   kind: [] as string[],
 };

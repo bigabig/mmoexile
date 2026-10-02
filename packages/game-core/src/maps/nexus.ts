@@ -71,11 +71,11 @@ export function createNexusMap(): MapData {
       overrides: {
         Position: { x: 20, y: 9, angle: 0 },
         Identity: {
-          uuid: "portal_to_realm_1",
+          uuid: "portal_to_overworld",
           name: "Realm of the Ancients",
         },
         Portal: {
-          targetWorldId: "realm_1",
+          targetZoneId: "overworld",
           name: "Realm of the Ancients",
           kind: "realm",
         },

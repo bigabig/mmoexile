@@ -36,7 +36,7 @@ export const NexusPortalPrefab: PortalPrefab = {
       isTrigger: true,
     },
     Portal: {
-      targetWorldId: "nexus",
+      targetZoneId: "nexus",
       name: "Nexus Portal",
       kind: "nexus",
     },
@@ -78,7 +78,7 @@ export const RealmPortalPrefab: PortalPrefab = {
       isTrigger: true,
     },
     Portal: {
-      targetWorldId: "realm",
+      targetZoneId: "overworld",
       name: "Realm Portal",
       kind: "realm",
     },
@@ -120,7 +120,7 @@ export const GolemDungeonPortalPrefab: PortalPrefab = {
       isTrigger: true,
     },
     Portal: {
-      targetWorldId: "golem_dungeon",
+      targetZoneId: "golem_dungeon",
       name: "Golem Lair Portal",
       kind: "dungeon",
     },

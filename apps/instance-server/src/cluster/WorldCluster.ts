@@ -1,5 +1,5 @@
 import {
-  STATIC_MAPS,
+  ZONES,
   MapData,
   CharacterData,
   Health,
@@ -87,9 +87,10 @@ export class WorldCluster {
   }
 
   private initStaticWorlds(): void {
-    this.createWorld("nexus", STATIC_MAPS.nexus());
-    this.createWorld("realm_1", STATIC_MAPS.realm_1());
-    this.createWorld("dungeon_golem", STATIC_MAPS.dungeon_golem());
+    // One world per zone, keyed by zone ID, until instancing arrives (S1.2/S1.3).
+    for (const zone of Object.values(ZONES)) {
+      this.createWorld(zone.id, zone.createMap());
+    }
   }
 
   public onTickOutput(listener: TickOutputListener): () => void {
@@ -159,7 +160,7 @@ export class WorldCluster {
   ): void {
     // 1. Process world transfers requested this tick
     for (const transfer of result.transfers) {
-      this.transferPlayer(transfer.playerId, transfer.targetWorldId);
+      this.transferPlayer(transfer.playerId, transfer.targetZoneId);
     }
 
     // 2. Process player level ups

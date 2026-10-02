@@ -9,7 +9,7 @@ import {
   computeBaseStatsForLevel,
   computeEffectiveStats,
   canEquipItem,
-  STATIC_MAPS,
+  ZONES,
   Position,
   Velocity,
   Speed,
@@ -40,7 +40,7 @@ import { GameWorld } from "../GameWorld.js";
 
 describe("SpatialSystem", () => {
   it("inserts and queries entities within radius", () => {
-    const world = new GameWorld("test_spatial", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_spatial", ZONES.nexus.createMap());
     const spatial = new SpatialSystem(4);
 
     const e1 = EntityFactory.spawnMonster(world.ecsWorld, "slime", 10, 10);
@@ -59,7 +59,7 @@ describe("SpatialSystem", () => {
   });
 
   it("updates entity location in grid", () => {
-    const world = new GameWorld("test_spatial_update", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_spatial_update", ZONES.nexus.createMap());
     const spatial = new SpatialSystem(4);
     const e1 = EntityFactory.spawnMonster(world.ecsWorld, "slime", 2, 2);
     spatial.insert(e1, 2, 2);
@@ -79,7 +79,7 @@ describe("SpatialSystem", () => {
 
 describe("Monster AI & bitECS Simulation", () => {
   it("initializes monster entity in bitECS with prefab stats and AI", () => {
-    const world = new GameWorld("test_monster_init", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_monster_init", ZONES.nexus.createMap());
     const slimeEid = EntityFactory.spawnMonster(
       world.ecsWorld,
       "slime",
@@ -96,7 +96,7 @@ describe("Monster AI & bitECS Simulation", () => {
   });
 
   it("sets movement intent and fires projectiles within range in GameWorld", () => {
-    const world = new GameWorld("test_ai_intent", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_ai_intent", ZONES.nexus.createMap());
     // Clear initial spawners/monsters
     world.spatial.clear();
 
@@ -131,7 +131,7 @@ describe("Monster AI & bitECS Simulation", () => {
   });
 
   it("golem boss evaluates phase transitions and enrages on health threshold", () => {
-    const world = new GameWorld("test_golem", STATIC_MAPS.dungeon_golem());
+    const world = new GameWorld("test_golem", ZONES.golem_dungeon.createMap());
 
     const golemEid = world.spawnMonster("golem_boss", 18, 18);
     expect(AI.currentPhaseIndex[golemEid]).toBe(0);
@@ -185,7 +185,7 @@ describe("Monster AI & bitECS Simulation", () => {
 
 describe("GameWorld & Subsystems Integration", () => {
   it("simulates player movement, inputs, and tile collisions", () => {
-    const world = new GameWorld("move_test", STATIC_MAPS.nexus());
+    const world = new GameWorld("move_test", ZONES.nexus.createMap());
     const playerEid = world.addPlayer({
       id: "p_move",
       name: "Runner",
@@ -211,7 +211,7 @@ describe("GameWorld & Subsystems Integration", () => {
   });
 
   it("handles player shooting, projectile simulation, spatial hit detection, and damage", () => {
-    const world = new GameWorld("combat_test", STATIC_MAPS.nexus());
+    const world = new GameWorld("combat_test", ZONES.nexus.createMap());
     world.spatial.clear();
 
     const playerEid = world.addPlayer({
@@ -247,7 +247,7 @@ describe("GameWorld & Subsystems Integration", () => {
   });
 
   it("handles loot bag dropping, proximity looting, and inventory management", () => {
-    const world = new GameWorld("loot_test", STATIC_MAPS.nexus());
+    const world = new GameWorld("loot_test", ZONES.nexus.createMap());
     const playerEid = world.addPlayer({
       id: "p_looter",
       name: "Looter",
@@ -289,7 +289,7 @@ describe("GameWorld & Subsystems Integration", () => {
 
 describe("Projectile Simulation in bitECS", () => {
   it("spawns projectile entity and tracks trajectory", () => {
-    const world = new GameWorld("bullet_world", STATIC_MAPS.nexus());
+    const world = new GameWorld("bullet_world", ZONES.nexus.createMap());
     let emitted = false;
     world.events.on("bullet_spawned", (evt) => {
       if (evt.bullet.id === "test_p") {
@@ -318,7 +318,7 @@ describe("Projectile Simulation in bitECS", () => {
 
 describe("SpawnerSystem & bitECS Relations", () => {
   it("initializes spawners from map definitions and tracks spawned monsters via SpawnedBy relation", () => {
-    const dungeonMap = STATIC_MAPS.dungeon_golem();
+    const dungeonMap = ZONES.golem_dungeon.createMap();
     const world = new GameWorld("test_dungeon", dungeonMap);
 
     const spawners = query(world.ecsWorld, [SpawnerTag, Spawner, Position]);
@@ -344,7 +344,7 @@ describe("SpawnerSystem & bitECS Relations", () => {
   });
 
   it("respawns monsters when below maxCount after respawnSec elapses", () => {
-    const dungeonMap = STATIC_MAPS.dungeon_golem();
+    const dungeonMap = ZONES.golem_dungeon.createMap();
     const world = new GameWorld("test_dungeon_respawn", dungeonMap);
 
     const slimeSpawnerEid = world.uuidToEid.get("spawner_dungeon_slimes")!;
@@ -379,7 +379,7 @@ describe("SpawnerSystem & bitECS Relations", () => {
 
 describe("EntityFactory Strict Prefab Instantiation & Error Handling", () => {
   it("instantiates spawner entities through the spawner prefab with SpawnerTag and SoA components", () => {
-    const world = new GameWorld("test_spawner_factory", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_spawner_factory", ZONES.nexus.createMap());
     const spawnerEid = EntityFactory.spawnSpawner(world.ecsWorld, {
       id: "spawner_1",
       x: 12,
@@ -403,7 +403,7 @@ describe("EntityFactory Strict Prefab Instantiation & Error Handling", () => {
 
   it("spawns non-enemy entities via SpawnerSystem using generic prefabId and instantiatePrefab", () => {
     const customMap = {
-      ...STATIC_MAPS.nexus(),
+      ...ZONES.nexus.createMap(),
       entities: [
         {
           prefabId: "spawner",
@@ -433,7 +433,7 @@ describe("EntityFactory Strict Prefab Instantiation & Error Handling", () => {
   });
 
   it("throws an error when spawning a player with an unknown classId", () => {
-    const world = new GameWorld("test_player_err", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_player_err", ZONES.nexus.createMap());
     expect(() => {
       EntityFactory.spawnPlayer(world.ecsWorld, {
         id: "p_err",
@@ -446,7 +446,7 @@ describe("EntityFactory Strict Prefab Instantiation & Error Handling", () => {
   });
 
   it("throws an error when spawning a projectile with an unknown prefabId", () => {
-    const world = new GameWorld("test_proj_err", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_proj_err", ZONES.nexus.createMap());
     expect(() => {
       EntityFactory.spawnProjectile(world.ecsWorld, {
         ownerEid: 1,
@@ -463,7 +463,7 @@ describe("EntityFactory Strict Prefab Instantiation & Error Handling", () => {
   });
 
   it("throws an error when spawning a loot bag with an unknown bagKind", () => {
-    const world = new GameWorld("test_bag_err", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_bag_err", ZONES.nexus.createMap());
     expect(() => {
       EntityFactory.spawnLootBag(
         world.ecsWorld,
@@ -476,11 +476,11 @@ describe("EntityFactory Strict Prefab Instantiation & Error Handling", () => {
   });
 
   it("throws an error when spawning a portal with an unknown portal prefab", () => {
-    const world = new GameWorld("test_portal_err", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_portal_err", ZONES.nexus.createMap());
     expect(() => {
       EntityFactory.spawnPortal(world.ecsWorld, {
         id: "port_err",
-        targetWorldId: "void",
+        targetZoneId: "void",
         name: "Void Portal",
         kind: "void_portal",
         x: 0,
@@ -492,7 +492,7 @@ describe("EntityFactory Strict Prefab Instantiation & Error Handling", () => {
 
 describe("4-Layer Decoupled MMO Architecture", () => {
   it("EntityManager centralizes entity creation, spatial indexing, and destruction", () => {
-    const world = new GameWorld("test_em", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_em", ZONES.nexus.createMap());
     const mEid = world.entities.spawnMonster("slime", 15, 15);
     const mUuid = world.entities.getUuid(mEid);
 
@@ -517,7 +517,7 @@ describe("4-Layer Decoupled MMO Architecture", () => {
   });
 
   it("CommandQueue ingests player commands and CommandProcessingSystem executes them at tick start", () => {
-    const world = new GameWorld("test_cmd", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_cmd", ZONES.nexus.createMap());
     const pEid = world.entities.spawnPlayer({
       id: "p_cmd",
       name: "Commander",
@@ -544,7 +544,7 @@ describe("4-Layer Decoupled MMO Architecture", () => {
   });
 
   it("TickBuffer returns structured tick output deltas without blocking tick loop", () => {
-    const world = new GameWorld("test_tb", STATIC_MAPS.nexus());
+    const world = new GameWorld("test_tb", ZONES.nexus.createMap());
     world.entities.spawnPlayer({
       id: "p_tick",
       name: "Ticker",

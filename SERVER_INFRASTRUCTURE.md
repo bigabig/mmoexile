@@ -24,7 +24,7 @@ Realm                        one universe: one character DB, one economy
 | **Node** | One machine (VPS, cloud VM, Kubernetes node). | 1 → many per gateway | The single dev machine |
 | **Instance Server** | A process hosting many instances. Accepts game connections and heartbeats to the orchestrator. | ≈ 1 per CPU core | The single Node process |
 | **Instance** | One running copy of a zone, with a unique ID, an owner/access policy, and a lifecycle. | Hundreds per server | `GameWorld` |
-| **Zone** (template) | Static definition: map layout, spawns, rules. Instances are created *from* it (PoE calls these *areas*). | Dozens | `STATIC_MAPS.*` |
+| **Zone** (template) | Static definition: map layout, spawns, rules. Instances are created *from* it (PoE calls these *areas*). | Dozens | `ZONES.*` (`ZoneDefinition`) |
 
 ### Instance Kinds
 
@@ -150,7 +150,7 @@ Today, everything runs in **one Node process** (`apps/instance-server/src/index.
 
 | Concern | Today | Target |
 | :--- | :--- | :--- |
-| Zone vs. instance | Conflated: three hard-coded worlds (`nexus`, `realm_1`, `dungeon_golem`) created at startup | Instances created on demand from zones |
+| Zone vs. instance | Zones are defined (`ZONES`: `nexus`, `overworld`, `golem_dungeon`, with access policies), but each zone still has exactly one world, created at startup | Instances created on demand from zones |
 | Private instances | None; every player shares the same golem dungeon | Per-party, owned, with timeout |
 | Public sharding | One Nexus for everyone | N Nexus copies with a player cap |
 | Instance lifecycle | Worlds live forever | creating → running → empty → closed |
@@ -176,7 +176,7 @@ Today, everything runs in **one Node process** (`apps/instance-server/src/index.
 | Current | Target |
 | :--- | :--- |
 | `GameWorld` / "world" | **Instance** |
-| `STATIC_MAPS.*` / `MapData` | **Zone** (template) |
+| `ZONES.*` / `ZoneDefinition` (done in S1.1) | **Zone** (template) |
 | `WorldCluster` | Split into **InstanceServer** (hosts instances) + **Orchestrator** (placement, tickets, registry) |
 
 ---

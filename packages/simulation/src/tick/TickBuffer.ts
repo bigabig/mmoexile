@@ -19,7 +19,7 @@ export interface PlayerLevelUpRecord {
 
 export interface WorldTransferRecord {
   playerId: string;
-  targetWorldId: string;
+  targetZoneId: string;
 }
 
 export interface WorldTickResult {

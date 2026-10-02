@@ -3,7 +3,7 @@ import { MapData, MapEntityDef, TileType, WallType } from "./types.js";
 /**
  * Creates the static 64x64 Realm Overworld map
  */
-export function createRealmMap(): MapData {
+export function createOverworldMap(): MapData {
   const width = 64;
   const height = 64;
   const ground = new Array(width * height).fill(TileType.GRASS);
@@ -79,7 +79,7 @@ export function createRealmMap(): MapData {
           name: "Nexus Portal",
         },
         Portal: {
-          targetWorldId: "nexus",
+          targetZoneId: "nexus",
           name: "Nexus Portal",
           kind: "nexus",
         },
@@ -95,7 +95,7 @@ export function createRealmMap(): MapData {
           name: "Golem Lair Dungeon",
         },
         Portal: {
-          targetWorldId: "dungeon_golem",
+          targetZoneId: "golem_dungeon",
           name: "Golem Lair Dungeon",
           kind: "dungeon",
         },
@@ -173,7 +173,7 @@ export function createRealmMap(): MapData {
   ];
 
   return {
-    id: "realm_1",
+    id: "overworld",
     name: "Realm of the Ancients",
     width,
     height,

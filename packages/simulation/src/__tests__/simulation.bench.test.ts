@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { STATIC_MAPS, Position, Health } from "@mmoexile/game-core";
+import { ZONES, Position, Health } from "@mmoexile/game-core";
 import { GameWorld } from "../GameWorld.js";
 
 describe("Headless Vertical Slice Load Benchmark", () => {
   it("executes 100 active players and 500 monsters under 33.33ms tick deadline", async () => {
     // 1. Initialize large realm world instance
-    const world = new GameWorld("bench_realm", STATIC_MAPS.realm_1());
+    const world = new GameWorld("bench_realm", ZONES.overworld.createMap());
 
     const NUM_PLAYERS = 100;
     const NUM_MONSTERS = 500;

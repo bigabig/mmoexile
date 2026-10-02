@@ -30,7 +30,7 @@ export interface EntityState {
   xp?: number;
   nextLevelXp?: number;
   tier?: string;
-  targetWorldId?: string;
+  targetZoneId?: string;
   itemIds?: string[];
   portalKind?: string;
 }

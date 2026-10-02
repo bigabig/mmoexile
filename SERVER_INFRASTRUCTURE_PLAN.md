@@ -106,12 +106,12 @@ Any behavior change, renaming `GameWorld` (Stage 1), Turborepo (revisit when bui
 - Add a regression test: two `GameWorld`s, spawn entities in both, assert each world's component values are independent.
 - Watch memory: component arrays grow to the highest live eid; the shared index recycles removed eids.
 
-### S1.1 Zone Model (`game-core/zones`)
+### S1.1 Zone Model (`game-core/zones`) ✅
 
 Replace `STATIC_MAPS` + string world IDs with explicit zone definitions:
 
 ```ts
-type ZoneId = "nexus" | "realm" | "golem_dungeon";   // extended as content grows
+type ZoneId = "nexus" | "overworld" | "golem_dungeon";   // extended as content grows
 
 type AccessPolicy =
   | { kind: "public_sharded"; softCap: number; hardCap: number }
@@ -128,7 +128,7 @@ interface ZoneDefinition {
 }
 ```
 
-- Initial policies: `nexus` → `public_sharded` (softCap 40, hardCap 60, timeout 60 s, 1 warm); `realm` → `public_sharded` (softCap 60, hardCap 85); `golem_dungeon` → `party_private` (timeout 480 s).
+- Initial policies: `nexus` → `public_sharded` (softCap 40, hardCap 60, timeout 60 s, 1 warm); `overworld` → `public_sharded` (softCap 60, hardCap 85, timeout 300 s); `golem_dungeon` → `party_private` (timeout 480 s).
 - Portals reference `targetZoneId` instead of `targetWorldId`. This also fixes the existing mismatch between portal prefabs (`"realm"`, `"golem_dungeon"`) and map definitions (`"realm_1"`, `"dungeon_golem"`).
 
 ### S1.2 Instance Identity and Wrapper
@@ -236,10 +236,10 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 | `account-api` | 3000 | `apps/account-api` | Login, characters, first ticket |
 | `social` | 3002 | `apps/social` | Parties, chat moderation, presence queries |
 | `instance-server-a` | 7001 | `apps/instance-server` | Hosts `nexus` |
-| `instance-server-b` | 7002 | `apps/instance-server` | Hosts `realm` and `golem_dungeon` |
+| `instance-server-b` | 7002 | `apps/instance-server` | Hosts `overworld` and `golem_dungeon` |
 | `client` | 8080 | nginx + `apps/client/dist` | Static client, proxies `/api` to account-api |
 
-**Static placement:** in Stage 2, which server hosts which zone is a config table (`ZONE_PLACEMENT=nexus:a,realm:b,golem_dungeon:b`). This is the classic "zone server" model of older MMOs and a deliberate stepping stone: it gives us real cross-server handoffs without an orchestrator. The **target server** resolves the concrete instance (it runs its own `InstanceManager` from Stage 1).
+**Static placement:** in Stage 2, which server hosts which zone is a config table (`ZONE_PLACEMENT=nexus:a,overworld:b,golem_dungeon:b`). This is the classic "zone server" model of older MMOs and a deliberate stepping stone: it gives us real cross-server handoffs without an orchestrator. The **target server** resolves the concrete instance (it runs its own `InstanceManager` from Stage 1).
 
 ### S2.1 `packages/service-kit`
 - Env config loading + validation (zod), structured logging (pino), `/health` + `/ready` endpoints, graceful shutdown hooks, request/correlation IDs.
@@ -356,7 +356,7 @@ The client keeps **one** connection (to its current instance server). Social fea
 
 ### Acceptance Criteria
 - [ ] `pnpm realm:up` brings up the full topology; the game is playable at `http://localhost:8080`.
-- [ ] Entering the realm portal visibly reconnects from server A to server B (loading screen, server ID in the debug overlay), with HP/MP/XP/inventory preserved.
+- [ ] Entering the overworld portal visibly reconnects from server A to server B (loading screen, server ID in the debug overlay), with HP/MP/XP/inventory preserved.
 - [ ] Logging into the same character in a second tab kicks the first tab.
 - [ ] `docker kill instance-server-b` while in the dungeon → the player gets disconnected; logging in again works after ≤30 s and loses ≤5 s of progress; no duplicated items.
 - [ ] Global chat and party chat reach players on both servers.

@@ -9,3 +9,4 @@ export * from "./combat/index.js";
 export * from "./voxels/thumbnail.js";
 export * from "./components/index.js";
 export * from "./characters/index.js";
+export * from "./zones/index.js";

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { entityExists, getAllEntities } from "bitecs";
-import { STATIC_MAPS, Health, Position } from "@mmoexile/game-core";
+import { ZONES, Health, Position } from "@mmoexile/game-core";
 import { GameWorld } from "../GameWorld.js";
 
 /**
@@ -11,8 +11,8 @@ import { GameWorld } from "../GameWorld.js";
  */
 describe("Entity isolation between GameWorlds in one process", () => {
   it("never hands out the same entity ID in two worlds", () => {
-    const a = new GameWorld("iso_a", STATIC_MAPS.nexus());
-    const b = new GameWorld("iso_b", STATIC_MAPS.realm_1());
+    const a = new GameWorld("iso_a", ZONES.nexus.createMap());
+    const b = new GameWorld("iso_b", ZONES.overworld.createMap());
 
     const idsA = new Set(getAllEntities(a.ecsWorld));
     const idsB = getAllEntities(b.ecsWorld);
@@ -26,7 +26,7 @@ describe("Entity isolation between GameWorlds in one process", () => {
   });
 
   it("keeps component data of one world unaffected by another", () => {
-    const a = new GameWorld("iso_a", STATIC_MAPS.nexus());
+    const a = new GameWorld("iso_a", ZONES.nexus.createMap());
     const eidA = a.addPlayer({
       id: "player_a",
       name: "Alice",
@@ -36,7 +36,7 @@ describe("Entity isolation between GameWorlds in one process", () => {
       y: 10,
     });
 
-    const b = new GameWorld("iso_b", STATIC_MAPS.nexus());
+    const b = new GameWorld("iso_b", ZONES.nexus.createMap());
     const eidB = b.addPlayer({
       id: "player_b",
       name: "Bob",
@@ -56,8 +56,8 @@ describe("Entity isolation between GameWorlds in one process", () => {
   });
 
   it("releases all entity IDs when a world is destroyed", () => {
-    const a = new GameWorld("iso_a", STATIC_MAPS.realm_1());
-    const b = new GameWorld("iso_b", STATIC_MAPS.nexus());
+    const a = new GameWorld("iso_a", ZONES.overworld.createMap());
+    const b = new GameWorld("iso_b", ZONES.nexus.createMap());
     const idsA = getAllEntities(a.ecsWorld);
     expect(idsA.length).toBeGreaterThan(0);
 

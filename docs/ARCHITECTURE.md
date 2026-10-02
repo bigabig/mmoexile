@@ -69,7 +69,7 @@ Runs the world instances and routes players between them.
 
 - **`messaging/IMessageBus` + `InMemoryMessageBus`**: in-process publish/subscribe between gateway and cluster (commands in; tick results, transfers, chat, deaths out).
 - **`WorldCluster`** (also exported as `WorldManager`):
-  - Creates the three static worlds at startup (`nexus`, `realm_1`, `dungeon_golem`).
+  - Creates one world per zone at startup (`nexus`, `overworld`, `golem_dungeon`, from `ZONES` in `@mmoexile/game-core`).
   - Registers and unregisters players, forwards their commands.
   - Performs world transfers (`transferPlayer()`).
   - Queues periodic persistence every 150 ticks (5 s).
@@ -164,7 +164,7 @@ sequenceDiagram
 
     Player->>Source: interact command
     Source->>Source: MovementSystem.handleInteract finds a portal within 1.8 tiles
-    Source-->>Cluster: WorldTickResult.transfers (targetWorldId)
+    Source-->>Cluster: WorldTickResult.transfers (targetZoneId)
     Cluster->>Source: Read player state, removePlayer()
     Cluster->>Target: addPlayer(snapshot) at spawn point
     Cluster->>Player: s2c_world_transfer (worldId, map, spawn)

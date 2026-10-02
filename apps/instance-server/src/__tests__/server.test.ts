@@ -9,7 +9,7 @@ import {
   computeBaseStatsForLevel,
   computeEffectiveStats,
   canEquipItem,
-  STATIC_MAPS,
+  ZONES,
   Position,
   Velocity,
   Speed,
@@ -85,10 +85,10 @@ describe("WorldManager Lossless Transitions", () => {
     expect(Equipment.weapon[playerEid]).toBe("sword_iron");
     expect(Inventory.slots[playerEid][0]).toBe("staff_fire");
 
-    // Transfer to realm_1
-    manager.transferPlayer("p_traveler", "realm_1");
+    // Transfer to overworld
+    manager.transferPlayer("p_traveler", "overworld");
 
-    const realmWorld = manager.getWorld("realm_1")!;
+    const realmWorld = manager.getWorld("overworld")!;
     const transferredEid = realmWorld.uuidToEid.get("p_traveler");
 
     expect(transferredEid).toBeDefined();

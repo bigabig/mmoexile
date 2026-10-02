@@ -132,7 +132,7 @@ export class MovementSystem implements ISystem {
       if (vec2Dist(playerPos, portalPos) <= 1.8) {
         world.recordWorldTransfer({
           playerId: Identity.uuid[playerEid],
-          targetWorldId: Portal.targetWorldId[portalEid],
+          targetZoneId: Portal.targetZoneId[portalEid],
         });
         break;
       }

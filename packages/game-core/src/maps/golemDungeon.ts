@@ -61,7 +61,7 @@ export function createGolemDungeonMap(): MapData {
           name: "Exit to Nexus",
         },
         Portal: {
-          targetWorldId: "nexus",
+          targetZoneId: "nexus",
           name: "Exit to Nexus",
           kind: "nexus",
         },
@@ -105,7 +105,7 @@ export function createGolemDungeonMap(): MapData {
   ];
 
   return {
-    id: "dungeon_golem",
+    id: "golem_dungeon",
     name: "Golem Lair Dungeon",
     width,
     height,

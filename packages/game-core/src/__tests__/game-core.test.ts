@@ -8,7 +8,7 @@ import {
 } from "../math/vec2.js";
 import { BUILTIN_VOXEL_MODELS } from "../voxels/models/index.js";
 import { getVoxel } from "../voxels/types.js";
-import { STATIC_MAPS } from "../maps/index.js";
+import { ZONES, isZoneId } from "../zones/index.js";
 import { isSolidTile } from "../maps/types.js";
 import {
   TileType,
@@ -134,7 +134,7 @@ describe("Static Maps & Tiles", () => {
   });
 
   it("initializes static maps with valid bounds, entities, and spawn points", () => {
-    const nexus = STATIC_MAPS.nexus();
+    const nexus = ZONES.nexus.createMap();
     expect(nexus.width).toBe(40);
     expect(nexus.height).toBe(40);
     expect(nexus.entities.length).toBeGreaterThan(0);
@@ -152,13 +152,45 @@ describe("Static Maps & Tiles", () => {
     // Outer wall must be solid
     expect(isSolidTile(nexus, 0, 0)).toBe(true);
 
-    // Verify all static maps have valid prefabs configured
-    for (const [key, mapFn] of Object.entries(STATIC_MAPS)) {
-      const map = mapFn();
+    // Verify all zone maps have valid prefabs configured
+    for (const zone of Object.values(ZONES)) {
+      const map = zone.createMap();
       expect(map.id).toBeDefined();
       expect(map.entities.length).toBeGreaterThan(0);
       for (const ent of map.entities) {
         expect(getPrefab(ent.prefabId)).toBeDefined();
+      }
+    }
+  });
+});
+
+describe("Zones", () => {
+  it("keys every zone by its own id and builds a map with the same id", () => {
+    for (const [key, zone] of Object.entries(ZONES)) {
+      expect(zone.id).toBe(key);
+      expect(zone.createMap().id).toBe(zone.id);
+    }
+  });
+
+  it("points every portal at an existing zone", () => {
+    const targets: string[] = [];
+    for (const zone of Object.values(ZONES)) {
+      for (const ent of zone.createMap().entities) {
+        const prefabTarget = (getPrefab(ent.prefabId) as any)?.components
+          ?.Portal?.targetZoneId;
+        const overrideTarget = (ent.overrides as any)?.Portal?.targetZoneId;
+        const target = overrideTarget ?? prefabTarget;
+        if (target !== undefined) targets.push(target);
+      }
+    }
+    expect(targets.length).toBeGreaterThan(0);
+    expect(targets.filter((t) => !isZoneId(t))).toEqual([]);
+  });
+
+  it("gives sharded zones a soft cap below the hard cap", () => {
+    for (const zone of Object.values(ZONES)) {
+      if (zone.access.kind === "public_sharded") {
+        expect(zone.access.softCap).toBeLessThanOrEqual(zone.access.hardCap);
       }
     }
   });

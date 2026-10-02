@@ -48,7 +48,7 @@ export interface SpawnProjectileOptions {
 
 export interface SpawnPortalOptions {
   id: string;
-  targetWorldId: string;
+  targetZoneId: string;
   name: string;
   kind: string;
   prefabId?: string;
@@ -307,7 +307,7 @@ export class EntityFactory {
       Position: { x: options.x, y: options.y, angle: 0 },
       Identity: { uuid: options.id, name: options.name },
       Portal: {
-        targetWorldId: options.targetWorldId,
+        targetZoneId: options.targetZoneId,
         name: options.name,
         kind: options.kind,
       },
