@@ -116,7 +116,7 @@ type ZoneId = "nexus" | "overworld" | "golem_dungeon";   // extended as content 
 type AccessPolicy =
   | { kind: "public_sharded"; softCap: number; hardCap: number }
   | { kind: "party_private" }
-  | { kind: "portal_bound" };          // see Open Decision D1
+  | { kind: "portal_bound" };          // see Decision D1
 
 interface ZoneDefinition {
   id: ZoneId;
@@ -195,7 +195,7 @@ Rules:
 - `infra/compose/docker-compose.yml` with **only** Postgres (first piece of infra); `.env.example` with `DATABASE_URL`.
 - Prisma provider → `postgresql`; move from `db push` to `prisma migrate` with a committed initial migration.
 - Schema changes: `Character.currentWorld` → `lastZoneId`; `inventory` → `Json`.
-- Tests: a throwaway Postgres container per test run via Testcontainers (Open Decision D7 resolved), or `TEST_DATABASE_URL` to use an existing database. No manual reset needed.
+- Tests: a throwaway Postgres container per test run via Testcontainers (Decision D7), or `TEST_DATABASE_URL` to use an existing database. No manual reset needed.
 - Local dev needs no configuration: `@mmoexile/db` falls back to the compose database URL when `DATABASE_URL` is unset. Root scripts: `db:up`, `db:down`, `db:migrate`, `db:deploy`.
 
 ### S1.9 Login Destination ✅
@@ -474,16 +474,16 @@ The client keeps **one** connection (to its current instance server). Social fea
 
 ---
 
-## Open Decisions
+## Decisions
 
-Decide these when the relevant stage starts; the plan above uses the **bold** default.
+D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10-02 before Stage 2. D5 stays open.
 
-| # | Decision | Options | Default |
+| # | Decision | Outcome | Why |
 | :--- | :--- | :--- | :--- |
-| D1 | Dungeon access model | **PoE-style `party_private`** vs. RotMG-style `portal_bound` (a boss drops a portal; everyone who enters shares that instance) | `party_private` for the golem dungeon; `portal_bound` available for future realm dungeons |
-| D2 | HTTP framework | **Fastify** vs. Hono vs. Express | Fastify |
-| D3 | Broker | **Redis** vs. NATS | Redis (needed anyway for leases) |
-| D4 | Same-server transfer fast path | **Always reconnect** vs. skip reconnect when target is local | Always reconnect until Stage 3 is done, then optimize |
-| D5 | Build orchestration | Plain `pnpm -r` vs. Turborepo | `pnpm -r`; adopt Turborepo when builds get slow |
-| D6 | Characters per account | **Multiple** vs. one active | Multiple, from Stage 2 |
-| D7 | Postgres in tests | Separate schema per run vs. **testcontainers** | Testcontainers if Docker is available, schema-per-run fallback |
+| D1 | Dungeon access model | ✅ **PoE-style `party_private`** for the golem dungeon; RotMG-style `portal_bound` implemented and available for future dungeons | Matches the PoE instancing model this project follows |
+| D2 | HTTP framework | ✅ **Fastify** | Mature and fast, built-in schema validation with zod via a type provider, pino logging included |
+| D3 | Broker | ✅ **Redis only** (pub/sub for messages, keys for leases, tickets, presence) | One piece of infrastructure; pub/sub's fire-and-forget delivery is fine for chat and events. NATS stays possible behind the `Broker` interface |
+| D4 | Same-server transfers | ✅ **Always reconnect**, every zone change goes through the handoff | One code path; the handoff and lease logic is exercised on every portal, like PoE's loading screens |
+| D5 | Build orchestration | Open: plain `pnpm -r`; adopt Turborepo when builds get slow | |
+| D6 | Characters per account | ✅ **Multiple**, with character select and create screens in the client | Matches RotMG and PoE; leases and tickets are per character from the start |
+| D7 | Postgres in tests | ✅ **Testcontainers** (or `TEST_DATABASE_URL`) | Self-contained `pnpm test`, works in CI |

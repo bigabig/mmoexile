@@ -147,7 +147,7 @@ describe("InstanceManager: party_private", () => {
 });
 
 describe("InstanceManager: portal_bound", () => {
-  // No zone uses portal_bound yet (see Open Decision D1), so test it with a
+  // No zone uses portal_bound yet (see Decision D1 in the plan), so test it with a
   // temporarily reconfigured zone.
   function withPortalBoundDungeon(run: () => void) {
     const original = ZONES.golem_dungeon.access;
