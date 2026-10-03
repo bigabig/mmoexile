@@ -19,7 +19,8 @@
     "realm:up": "docker compose -f infra/compose/docker-compose.yml --profile realm up -d --build --wait",
     "realm:down": "docker compose -f infra/compose/docker-compose.yml --profile realm down",
     "bench": "pnpm --filter @mmoexile/simulation bench",
-    "dev:orchestrator": "pnpm --filter @mmoexile/orchestrator dev"
+    "dev:orchestrator": "pnpm --filter @mmoexile/orchestrator dev",
+    "chaos": "pnpm --filter @mmoexile/bots chaos"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.4.0",

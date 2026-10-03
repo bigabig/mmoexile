@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "hop": "tsx src/hop.ts",
-    "build": "tsc --noEmit"
+    "build": "tsc --noEmit",
+    "chaos": "tsx src/chaos.ts"
   },
   "dependencies": {
     "@mmoexile/contracts": "workspace:*",

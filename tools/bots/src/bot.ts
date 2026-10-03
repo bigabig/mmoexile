@@ -138,6 +138,16 @@ export class Bot {
     }
   }
 
+  /** Connected and in a zone (not kicked, not between servers). */
+  get online(): boolean {
+    return (
+      this.socket?.readyState === WebSocket.OPEN &&
+      this.map !== null &&
+      this.kicked === null &&
+      !this.disconnected
+    );
+  }
+
   say(text: string): void {
     this.send({ type: "c2s_chat", text });
   }

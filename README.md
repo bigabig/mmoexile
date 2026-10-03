@@ -115,7 +115,7 @@ pnpm --filter @mmoexile/bots hop -- --bots 60 --minutes 5 --route nexus,overworl
 
 ### 6. Experiment: Scale, Kill and Drain Servers
 
-With the realm running and the Grafana dashboard open:
+`pnpm chaos` runs the failure experiments automatically under bot load and checks the results (see [`TESTS.md`](TESTS.md)). To try them by hand, with the realm running and the Grafana dashboard open:
 
 ```bash
 # Start with one server: stopping sends SIGTERM, so the servers drain first
@@ -156,6 +156,8 @@ docker compose -f infra/compose/docker-compose.yml --profile realm restart orche
 ---
 
 ## Running Tests & Builds
+
+See [`TESTS.md`](TESTS.md) for what each kind of test is for and how to run smoke, load, soak and chaos tests against the Docker realm.
 
 ```bash
 # Run all unit and integration tests (incl. tools/realm-tests: a whole realm in one process)
