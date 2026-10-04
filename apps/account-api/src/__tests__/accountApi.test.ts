@@ -137,6 +137,7 @@ describe("play", () => {
       zoneId: "nexus",
       characterId: character.id,
       accountId: ann.accountId,
+      region: "local",
     });
 
     fleetFull = true;

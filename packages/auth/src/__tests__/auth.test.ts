@@ -47,7 +47,7 @@ describe("session tokens", () => {
 
   it("does not accept a ticket as a session token", async () => {
     const ticket = await signTicket(
-      { characterId: "c", accountId: "a", zoneId: "nexus", targetServerId: "s" },
+      { characterId: "c", accountId: "a", zoneId: "nexus", targetServerId: "s", region: "eu" },
       signing,
     );
     await expect(verifySessionToken(ticket, key)).rejects.toBeInstanceOf(InvalidTokenError);
@@ -61,6 +61,7 @@ describe("transfer tickets", () => {
     zoneId: "golem_dungeon",
     instanceId: "golem_dungeon:7f3a9c",
     targetServerId: "b",
+    region: "eu",
     partyId: "party_1",
     via: { sourceInstanceId: "overworld:abc123", portalId: "portal_to_dungeon_1" },
   };

@@ -1,15 +1,25 @@
 import { redisKeys } from "@mmoexile/contracts";
 import type { Redis } from "@mmoexile/messaging";
 
+/** One online character. */
+export interface PresenceEntry {
+  characterId: string;
+  name: string;
+  /** The region the player chose at login (for the party leader rule). */
+  homeRegion: string;
+}
+
 /**
- * Who is online, and by which name, across all servers. Used for
- * /invite <name>. Entries expire unless refreshed by the hosting server.
+ * Who is online, by which name and in which home region, across all
+ * servers. Used for /invite <name> and to place a party's instances in the
+ * leader's region. Entries expire unless refreshed by the hosting server.
  */
 export interface Presence {
-  set(characterId: string, name: string): Promise<void>;
+  set(entry: PresenceEntry): Promise<void>;
   remove(characterId: string, name: string): Promise<void>;
   findByName(name: string): Promise<string | undefined>;
   nameOf(characterId: string): Promise<string | undefined>;
+  homeRegionOf(characterId: string): Promise<string | undefined>;
 }
 
 export class RedisPresence implements Presence {
@@ -19,8 +29,8 @@ export class RedisPresence implements Presence {
     private readonly ttlSeconds = 60,
   ) {}
 
-  async set(characterId: string, name: string): Promise<void> {
-    const value = JSON.stringify({ name, serverId: this.serverId });
+  async set({ characterId, name, homeRegion }: PresenceEntry): Promise<void> {
+    const value = JSON.stringify({ name, homeRegion, serverId: this.serverId });
     await this.redis
       .multi()
       .set(redisKeys.presence(characterId), value, "EX", this.ttlSeconds)
@@ -43,25 +53,36 @@ export class RedisPresence implements Presence {
   }
 
   async nameOf(characterId: string): Promise<string | undefined> {
+    return (await this.get(characterId))?.name;
+  }
+
+  async homeRegionOf(characterId: string): Promise<string | undefined> {
+    return (await this.get(characterId))?.homeRegion;
+  }
+
+  private async get(characterId: string): Promise<{ name?: string; homeRegion?: string } | undefined> {
     const raw = await this.redis.get(redisKeys.presence(characterId));
-    return raw ? JSON.parse(raw).name : undefined;
+    return raw ? JSON.parse(raw) : undefined;
   }
 }
 
 export class InMemoryPresence implements Presence {
-  private names = new Map<string, string>();
-  async set(characterId: string, name: string) {
-    this.names.set(characterId, name);
+  private entries = new Map<string, PresenceEntry>();
+  async set(entry: PresenceEntry) {
+    this.entries.set(entry.characterId, entry);
   }
   async remove(characterId: string) {
-    this.names.delete(characterId);
+    this.entries.delete(characterId);
   }
   async findByName(name: string) {
     const wanted = name.toLowerCase();
-    for (const [id, n] of this.names) if (n.toLowerCase() === wanted) return id;
+    for (const e of this.entries.values()) if (e.name.toLowerCase() === wanted) return e.characterId;
     return undefined;
   }
   async nameOf(characterId: string) {
-    return this.names.get(characterId);
+    return this.entries.get(characterId)?.name;
+  }
+  async homeRegionOf(characterId: string) {
+    return this.entries.get(characterId)?.homeRegion;
   }
 }

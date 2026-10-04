@@ -1,6 +1,6 @@
 import type { Character, PrismaClient } from "@mmoexile/db";
 import type { Redis, Broker } from "@mmoexile/messaging";
-import { channels, redisKeys } from "@mmoexile/contracts";
+import { channels, redisKeys, RegionId } from "@mmoexile/contracts";
 import {
   InvalidTokenError,
   verifyTicket,
@@ -33,6 +33,11 @@ export interface AdmittedPlayer {
   record: Character;
   /** Entered through a portal (zone change) rather than a fresh login. */
   arrivedViaPortal: boolean;
+  /**
+   * The region the player chose at login (from the ticket). Public zones
+   * are allocated there, also when this server is in another region.
+   */
+  homeRegion: string;
 }
 
 export type AdmitResult =
@@ -130,7 +135,7 @@ export class PlayerLifecycle {
       if (err instanceof InvalidTokenError) return { ok: false, reason: "invalid_ticket" };
       throw err;
     }
-    if (!isZoneId(ticket.zoneId)) {
+    if (!isZoneId(ticket.zoneId) || !RegionId.safeParse(ticket.region).success) {
       return { ok: false, reason: "invalid_ticket" };
     }
     if (!(await this.claimTicket(ticket))) {
@@ -179,6 +184,7 @@ export class PlayerLifecycle {
       character,
       record,
       arrivedViaPortal: ticket.via !== undefined,
+      homeRegion: ticket.region,
     };
     this.players.set(player.characterId, player);
     this.deps.onAdmitted?.(player, ticket);
@@ -259,6 +265,7 @@ export class PlayerLifecycle {
           zoneId: targetZoneId,
           characterId,
           accountId: player.accountId,
+          region: player.homeRegion,
           partyId: this.deps.getPartyId(characterId),
           via,
           excludeServerId: options.excludeThisServer ? this.deps.serverId : undefined,

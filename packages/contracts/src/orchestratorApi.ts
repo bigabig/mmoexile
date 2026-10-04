@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LOCAL_REGION, RegionId } from "./regions.js";
 
 /**
  * HTTP API of apps/orchestrator, and the internal API every instance server
@@ -31,7 +32,7 @@ export const ServerIdentity = z.object({
   url: z.string(),
   /** Internal HTTP base URL (instance creation, metrics). */
   internalUrl: z.string(),
-  region: z.string().default("local"),
+  region: RegionId.default(LOCAL_REGION),
   /** Players this server should hold at most. */
   capacity: z.number().int().positive(),
 });
@@ -63,6 +64,12 @@ export const AllocateRequest = z.object({
   zoneId: z.string(),
   characterId: z.string(),
   accountId: z.string(),
+  /**
+   * The player's home region (chosen at login). It goes into the ticket, so
+   * the player keeps it across handoffs, also while visiting a party's
+   * dungeon in another region.
+   */
+  region: RegionId,
   partyId: z.string().optional(),
   via: PortalVia.optional(),
   /** Join this public instance if it still has room. */

@@ -130,6 +130,7 @@ describe("Allocator", () => {
     zoneId: "golem_dungeon",
     characterId,
     accountId: "acc",
+    region: "local",
     ...extra,
   });
 
@@ -144,6 +145,7 @@ describe("Allocator", () => {
       instanceId: results[0].instanceId,
       targetServerId: results[0].serverId,
       partyId: "party_1",
+      region: "local",
     });
   });
 

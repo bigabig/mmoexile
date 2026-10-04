@@ -4,3 +4,4 @@ export * from "./broker.js";
 export * from "./redisKeys.js";
 export * from "./httpClient.js";
 export * from "./orchestratorApi.js";
+export * from "./regions.js";

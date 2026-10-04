@@ -33,7 +33,7 @@ describe("Draining a server", () => {
     const players = await Promise.all(Array.from({ length: 10 }, () => newCharacter()));
     const clients = await Promise.all(
       players.map(async (c) => {
-        const allocation = await call(orchestratorApi.allocate, { zoneId: "nexus", ...c });
+        const allocation = await call(orchestratorApi.allocate, { zoneId: "nexus", region: "local", ...c });
         const client = new TestClient(allocation.url, allocation.ticket);
         await client.welcome();
         return { ...c, client, serverId: allocation.serverId };
@@ -60,7 +60,7 @@ describe("Draining a server", () => {
     // Empty → stopped; nothing is placed there any more
     await until(() => realm.orchestrator.registry.get(drained)?.state === "stopped", 10_000, "stopped");
     realm.servers.delete(drained);
-    const next = await call(orchestratorApi.allocate, { zoneId: "golem_dungeon", characterId: "x", accountId: "a" });
+    const next = await call(orchestratorApi.allocate, { zoneId: "golem_dungeon", region: "local", characterId: "x", accountId: "a" });
     expect(next.serverId).not.toBe(drained);
     clients.forEach((c) => c.client.close());
   });
@@ -78,6 +78,7 @@ describe("Draining a server", () => {
         zoneId: "golem_dungeon",
         instanceId: dungeon.id,
         targetServerId: "s-dungeon",
+        region: "local",
       },
       await ticketSigningKey(DEV_TICKET_PRIVATE_KEY),
     );

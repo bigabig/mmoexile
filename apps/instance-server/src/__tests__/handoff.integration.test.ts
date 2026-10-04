@@ -25,8 +25,10 @@ import type { ZoneAllocator } from "../fleet/ZoneAllocator.js";
 const ticketKey = await ticketSigningKey(DEV_TICKET_PRIVATE_KEY);
 
 /** Stand-in for the orchestrator: nexus on a, everything else on b. */
+const allocations: AllocateRequest[] = [];
 const allocator: ZoneAllocator = {
   async allocate(request: AllocateRequest) {
+    allocations.push(request);
     const serverId = request.zoneId === "nexus" ? "a" : "b";
     const ticketId = randomUUID();
     const ticket = await signTicket(
@@ -144,8 +146,11 @@ async function newCharacter(): Promise<{ characterId: string; accountId: string 
   return { characterId: character.id, accountId: account.id };
 }
 
-const loginTicket = (c: { characterId: string; accountId: string }, server = "a") =>
-  signTicket({ ...c, zoneId: "nexus", targetServerId: server }, ticketKey);
+const loginTicket = (
+  c: { characterId: string; accountId: string },
+  server = "a",
+  region = "local",
+) => signTicket({ ...c, zoneId: "nexus", targetServerId: server, region }, ticketKey);
 
 const until = async (check: () => boolean | Promise<boolean>, timeoutMs = 5000) => {
   const start = Date.now();
@@ -192,13 +197,16 @@ describe("Ticket admission", () => {
 
     const oldClient = new TestClient(urls.a, await loginTicket(c), 1);
     expect((await oldClient.next("s2c_kicked")).reason).toBe("version_mismatch");
+
+    const badRegion = new TestClient(urls.a, await loginTicket(c, "a", "Not A Region"));
+    expect((await badRegion.next("s2c_kicked")).reason).toBe("invalid_ticket");
   });
 });
 
 describe("Portal handoff between servers", () => {
   it("saves on A, releases, and continues on B with the same state", async () => {
     const c = await newCharacter();
-    const client = new TestClient(urls.a, await loginTicket(c));
+    const client = new TestClient(urls.a, await loginTicket(c, "a", "eu"));
     await client.next("s2c_welcome");
 
     // Change state on A, then stand at the nexus portal (20, 9) and use it
@@ -221,6 +229,10 @@ describe("Portal handoff between servers", () => {
     expect(welcome.zoneId).toBe("overworld");
     expect(welcome.playerState.hp).toBe(42); // saved by A before releasing
     expect(await leaseHolder(c.characterId)).toBe("b");
+    // The home region travels with the player: from the login ticket into
+    // the allocation, and from there into the next ticket.
+    expect(allocations.filter((a) => a.characterId === c.characterId).map((a) => a.region)).toEqual(["eu"]);
+    expect(serverB.lifecycle.get(c.characterId)?.homeRegion).toBe("eu");
     onB.close();
     await until(async () => (await leaseHolder(c.characterId)) === null);
   });

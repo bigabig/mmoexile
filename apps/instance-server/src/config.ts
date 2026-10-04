@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { baseConfigSchema, loadConfig } from "@mmoexile/service-kit";
 import { DEV_TICKET_PUBLIC_KEY } from "@mmoexile/auth";
+import { LOCAL_REGION, RegionId } from "@mmoexile/contracts";
 
 export const configSchema = baseConfigSchema.extend({
   PORT: z.coerce.number().int().nonnegative().default(3001),
@@ -20,7 +21,8 @@ export const configSchema = baseConfigSchema.extend({
   INTERNAL_URL: z.string().optional(),
   /** Empty disables fleet registration (tests, standalone runs). */
   ORCHESTRATOR_URL: z.string().default("http://localhost:3003"),
-  REGION: z.string().default("local"),
+  /** Region this server runs in; it only hosts players placed there. */
+  REGION: RegionId.default(LOCAL_REGION),
   /** Players this server should hold at most (placement limit). */
   CAPACITY: z.coerce.number().int().positive().default(200),
   HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(2000),

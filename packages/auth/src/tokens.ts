@@ -154,6 +154,12 @@ export interface TicketClaims {
   instanceId?: string;
   /** Server the ticket is valid for; other servers must reject it. */
   targetServerId: string;
+  /**
+   * The player's home region, chosen at login. Not where the target server
+   * is: a player visiting a party dungeon abroad keeps their home region
+   * and returns to its hubs afterwards.
+   */
+  region: string;
   partyId?: string;
   /** Portal used, for portal_bound zones. */
   via?: { sourceInstanceId: string; portalId: string };
@@ -179,6 +185,7 @@ export async function signTicket(
     // `iat` has whole seconds only; this times handoffs to the millisecond.
     iatMs: Date.now(),
     srv: claims.targetServerId,
+    region: claims.region,
     party: claims.partyId,
     via: claims.via,
   })
@@ -207,6 +214,7 @@ export async function verifyTicket(
     typeof p.acc !== "string" ||
     typeof p.zone !== "string" ||
     typeof p.srv !== "string" ||
+    typeof p.region !== "string" ||
     typeof p.exp !== "number"
   ) {
     throw new InvalidTokenError("invalid");
@@ -222,6 +230,7 @@ export async function verifyTicket(
     zoneId: p.zone,
     instanceId: typeof p.inst === "string" ? p.inst : undefined,
     targetServerId: p.srv,
+    region: p.region,
     partyId: typeof p.party === "string" ? p.party : undefined,
     via:
       via &&

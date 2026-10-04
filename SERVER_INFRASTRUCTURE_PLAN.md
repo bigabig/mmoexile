@@ -540,12 +540,17 @@ What a region means:
 - **Chat, parties and friends stay global.** They go through central services that don't care about regions.
 - **Handoffs between regions cost round trips to the central services**: lease, fenced save, load. Stage 4 measures this cost and reduces it where cheap.
 
-### S4.1 Region Model
+### S4.1 Region Model ✅
 - `packages/contracts`: a region ID type (`[a-z0-9-]+`), validated wherever regions appear.
 - The home region is **not stored** (no account column, no browser storage): the selector preselects the fastest region every time, and the ticket carries the choice for the session.
 - Tickets carry the player's home region (`region` claim). The instance server keeps it per admitted player and passes it on with every allocation, so a player visiting a leader's dungeon abroad comes back to their own region's hubs.
 - Presence entries gain `homeRegion`, so the leader rule can look up a leader's region by character ID.
 - Instance servers already report `REGION` in heartbeats; their configuration now requires an explicit value in compose (default stays `local` for `pnpm dev`).
+- *Implementation notes:*
+  - *`RegionId` and `LOCAL_REGION` live in `packages/contracts/src/regions.ts`; the instance server's `REGION` setting and the heartbeat's `region` are validated with it.*
+  - *`AllocateRequest.region` is required (no silent default), and the orchestrator copies it into the ticket's `region` claim. A ticket with a missing or malformed region is rejected as `invalid_ticket`.*
+  - *`AdmittedPlayer.homeRegion` comes from the ticket and goes into every allocation the player triggers, so it survives any number of handoffs. Until S4.4, account-api logs everyone in with `local`.*
+  - *`Presence.set` takes `{ characterId, name, homeRegion }`, and `homeRegionOf(characterId)` answers the leader lookup.*
 
 ### S4.2 `apps/directory`
 - A tiny, stateless, global service: `GET /realms` → `[{ id, name, accountApiUrl, regions: [{ id, name, pingUrl }] }]`. Configured by environment (`REALM_NAME`, `REGIONS="eu=Europe=http://localhost:7100/ping,us=North America=http://localhost:7200/ping"`), cacheable (`Cache-Control`). One realm for now; the shape allows more later.

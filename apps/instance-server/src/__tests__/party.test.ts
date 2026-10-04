@@ -29,7 +29,7 @@ async function setup() {
 
   const join = async (playerId: string, name: string) => {
     const registered = host.registerPlayer({ playerId, name });
-    await presence.set(playerId, name);
+    await presence.set({ characterId: playerId, name, homeRegion: "local" });
     return registered;
   };
   const { instanceId: nexusId } = await join("alice", "Alice");

@@ -139,7 +139,7 @@ describe("Orchestrator restart", () => {
     const pending = orchestrator.app.inject({
       method: "POST",
       url: "/allocate",
-      payload: { zoneId: "nexus", characterId: "c", accountId: "a" },
+      payload: { zoneId: "nexus", characterId: "c", accountId: "a", region: "local" },
     });
     await new Promise((r) => setTimeout(r, 100));
     orchestrator.registry.heartbeat({

@@ -146,7 +146,7 @@ export async function createInstanceServer({
         { kind: player.arrivedViaPortal ? "zone_change" : "login" },
         Math.max(0, Date.now() - ticket.issuedAt) / 1000,
       );
-      void presence.set(player.characterId, player.name);
+      void presence.set(player);
       parties
         .getParty(player.characterId)
         .then((party) => partyCache.seed(player.characterId, party))
@@ -183,7 +183,7 @@ export async function createInstanceServer({
   // Keep presence entries of local players alive.
   const presenceTimer = setInterval(() => {
     for (const player of lifecycle.all()) {
-      void presence.set(player.characterId, player.name);
+      void presence.set(player);
     }
   }, 20_000);
   presenceTimer.unref();

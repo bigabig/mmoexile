@@ -22,7 +22,7 @@ afterAll(async () => {
 describe("Allocation across the fleet", () => {
   it("a ticket admits the character into exactly the allocated instance", async () => {
     const c = await newCharacter();
-    const allocation = await call(orchestratorApi.allocate, { zoneId: "golem_dungeon", ...c });
+    const allocation = await call(orchestratorApi.allocate, { zoneId: "golem_dungeon", region: "local", ...c });
     expect(allocation.url).toBe(realm.orchestrator.registry.get(allocation.serverId)!.url);
 
     const client = new TestClient(allocation.url, allocation.ticket);
@@ -33,8 +33,8 @@ describe("Allocation across the fleet", () => {
   });
 
   it("public zones fill one shard before opening another", async () => {
-    const first = await call(orchestratorApi.allocate, { zoneId: "overworld", characterId: "p1", accountId: "a" });
-    const second = await call(orchestratorApi.allocate, { zoneId: "overworld", characterId: "p2", accountId: "a" });
+    const first = await call(orchestratorApi.allocate, { zoneId: "overworld", region: "local", characterId: "p1", accountId: "a" });
+    const second = await call(orchestratorApi.allocate, { zoneId: "overworld", region: "local", characterId: "p2", accountId: "a" });
     expect(second.instanceId).toBe(first.instanceId);
   });
 
@@ -48,6 +48,7 @@ describe("Allocation across the fleet", () => {
         zoneId: "golem_dungeon",
         characterId: `spread-${i}`,
         accountId: "a",
+        region: "local",
       });
       counts[serverId]++;
     }

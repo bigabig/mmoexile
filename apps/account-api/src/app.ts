@@ -12,6 +12,7 @@ import {
   accountApi,
   createHttpClient,
   HttpError,
+  LOCAL_REGION,
   MAX_CHARACTERS_PER_ACCOUNT,
   orchestratorApi,
   type AllocateRequest,
@@ -197,7 +198,7 @@ export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInst
 
       // The orchestrator is the single ticket issuer.
       try {
-        const allocation = await allocate({ zoneId: LOGIN_ZONE, characterId, accountId });
+        const allocation = await allocate({ zoneId: LOGIN_ZONE, characterId, accountId, region: LOCAL_REGION });
         logger.info({ characterId, ticketId: allocation.ticketId, serverId: allocation.serverId }, "Play");
         plays.inc({ result: "ok" });
         return { url: allocation.url, ticket: allocation.ticket };
