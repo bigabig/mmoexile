@@ -75,6 +75,8 @@ export const AllocateRequest = z.object({
    * party_private instance is created there (decision D9).
    */
   leaderRegion: RegionId.optional(),
+  /** Region of the server the player leaves (handoffs only; for metrics). */
+  fromRegion: RegionId.optional(),
   partyId: z.string().optional(),
   via: PortalVia.optional(),
   /** Join this public instance if it still has room. */

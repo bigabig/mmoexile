@@ -29,6 +29,7 @@ export type TicketSigner = (claims: {
   targetServerId: string;
   /** The player's home region (not necessarily the server's). */
   region: string;
+  fromRegion?: string;
   partyId?: string;
   via?: { sourceInstanceId: string; portalId: string };
 }) => Promise<string>;
@@ -83,6 +84,7 @@ export class Allocator {
       instanceId: instance.id,
       targetServerId: server.serverId,
       region: request.region,
+      fromRegion: request.fromRegion,
       partyId: request.partyId,
       via: request.via,
     });

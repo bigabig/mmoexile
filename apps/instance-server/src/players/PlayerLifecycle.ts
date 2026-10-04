@@ -46,6 +46,8 @@ export type AdmitResult =
 
 export interface PlayerLifecycleDeps {
   serverId: string;
+  /** This server's region (sent with handoffs, for metrics). */
+  region?: string;
   host: InstanceHost;
   db: PrismaClient;
   redis: Redis;
@@ -276,6 +278,7 @@ export class PlayerLifecycle {
           accountId: player.accountId,
           region: player.homeRegion,
           leaderRegion,
+          fromRegion: this.deps.region,
           partyId: this.deps.getPartyId(characterId),
           via,
           excludeServerId: options.excludeThisServer ? this.deps.serverId : undefined,

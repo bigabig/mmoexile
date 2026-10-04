@@ -72,6 +72,17 @@ describe("Regions", () => {
     expect(regionOf(ben.id)).toBe("us");
     expect(back.instanceId).toBe(usNexus);
 
+    // The cross-region handoffs are labelled as such
+    const metricsOf = async (serverId: string) =>
+      (await fetch(`http://127.0.0.1:${realm.servers.get(serverId)!.internalPort}/metrics`)).text();
+    const crossRegion = (await metricsOf("us1"))
+      .split("\n")
+      .filter((line) => line.startsWith("mmoexile_handoff_duration_seconds_count"))
+      .filter((line) => ['kind="zone_change"', 'from_region="eu"', 'to_region="us"'].every((l) => line.includes(l)));
+    expect(crossRegion).toHaveLength(1);
+    expect(crossRegion[0]).toMatch(/ 1$/);
+    expect(await metricsOf("us1")).toMatch(/mmoexile_players\{[^}]*region="us"[^}]*\} 1/);
+
     anna.client.close();
     ben.client.close();
   });

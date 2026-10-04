@@ -48,7 +48,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(mmoexile_players)"
+          "expr": "sum(mmoexile_players{region=~\"$region\"})"
         }
       ],
       "id": 1
@@ -89,7 +89,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(mmoexile_instances)"
+          "expr": "sum(mmoexile_instances{region=~\"$region\"})"
         }
       ],
       "id": 2
@@ -130,7 +130,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(mmoexile_fleet_servers{state=\"ready\"}) or vector(0)"
+          "expr": "sum(mmoexile_fleet_servers{region=~\"$region\",state=\"ready\"}) or vector(0)"
         }
       ],
       "id": 3
@@ -171,22 +171,35 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(mmoexile_fleet_servers{state=~\"draining|dead\"}) or vector(0)"
+          "expr": "sum(mmoexile_fleet_servers{region=~\"$region\",state=~\"draining|dead\"}) or vector(0)"
         }
       ],
       "id": 4
     },
     {
+      "type": "row",
+      "title": "Regions",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 16
+    },
+    {
       "type": "timeseries",
-      "title": "Players per server",
-      "description": "",
+      "title": "Players per region",
+      "description": "Players on the servers of each region (players visiting a party dungeon abroad count where they play).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 4,
+        "y": 5,
         "w": 12,
         "h": 8
       },
@@ -220,7 +233,225 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (server) (mmoexile_players)",
+          "expr": "sum by (region) (mmoexile_players{region=~\"$region\"})",
+          "legendFormat": "{{region}}"
+        }
+      ],
+      "id": 17
+    },
+    {
+      "type": "timeseries",
+      "title": "Ready servers per region",
+      "description": "Instance servers that accept players, per region. A region at 0 answers region_unavailable.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (region) (mmoexile_fleet_servers{state=\"ready\",region=~\"$region\"})",
+          "legendFormat": "{{region}}"
+        }
+      ],
+      "id": 18
+    },
+    {
+      "type": "timeseries",
+      "title": "Handoff duration p95: within vs. across regions",
+      "description": "Ticket issue \u2192 admission for server-to-server handoffs, by the region left and the region entered. eu \u2192 us pays the distance to the central services on the US side.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (from_region, to_region, le) (rate(mmoexile_handoff_duration_seconds_bucket{kind=\"zone_change\",to_region=~\"$region\"}[5m])))",
+          "legendFormat": "{{from_region}} \u2192 {{to_region}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (to_region, le) (rate(mmoexile_handoff_duration_seconds_bucket{kind=\"login\",to_region=~\"$region\"}[5m])))",
+          "legendFormat": "login \u2192 {{to_region}}"
+        }
+      ],
+      "id": 19
+    },
+    {
+      "type": "timeseries",
+      "title": "Allocation failures by reason",
+      "description": "Refused allocations per reason and the player's home region (region_unavailable: no capacity in that region, no spill-over).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (reason, region) (rate(mmoexile_allocation_failures_total{region=~\"$region\"}[1m]))",
+          "legendFormat": "{{reason}} ({{region}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (result, region) (rate(mmoexile_play_requests_total{result!=\"ok\",region=~\"$region\"}[1m]))",
+          "legendFormat": "login {{result}} ({{region}})"
+        }
+      ],
+      "id": 20
+    },
+    {
+      "type": "timeseries",
+      "title": "Players per server",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (server) (mmoexile_players{region=~\"$region\"})",
           "legendFormat": "{{server}}"
         }
       ],
@@ -236,7 +467,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 4,
+        "y": 21,
         "w": 12,
         "h": 8
       },
@@ -270,7 +501,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (server) (mmoexile_instances)",
+          "expr": "sum by (server) (mmoexile_instances{region=~\"$region\"})",
           "legendFormat": "{{server}}"
         }
       ],
@@ -286,7 +517,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 29,
         "w": 12,
         "h": 8
       },
@@ -336,7 +567,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (server, le) (rate(mmoexile_tick_duration_seconds_bucket[1m])))",
+          "expr": "histogram_quantile(0.95, sum by (server, le) (rate(mmoexile_tick_duration_seconds_bucket{region=~\"$region\"}[1m])))",
           "legendFormat": "{{server}}"
         }
       ],
@@ -352,7 +583,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 12,
+        "y": 29,
         "w": 12,
         "h": 8
       },
@@ -386,7 +617,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (zone) (mmoexile_instances)",
+          "expr": "sum by (zone) (mmoexile_instances{region=~\"$region\"})",
           "legendFormat": "{{zone}}"
         }
       ],
@@ -402,7 +633,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 45,
         "w": 8,
         "h": 8
       },
@@ -436,7 +667,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (kind, le) (rate(mmoexile_handoff_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (kind, le) (rate(mmoexile_handoff_duration_seconds_bucket{region=~\"$region\"}[5m])))",
           "legendFormat": "{{kind}}"
         }
       ],
@@ -452,7 +683,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 28,
+        "y": 45,
         "w": 8,
         "h": 8
       },
@@ -502,7 +733,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 28,
+        "y": 45,
         "w": 8,
         "h": 8
       },
@@ -561,7 +792,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 53,
         "w": 12,
         "h": 8
       },
@@ -629,7 +860,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 36,
+        "y": 53,
         "w": 12,
         "h": 8
       },
@@ -679,7 +910,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 37,
         "w": 12,
         "h": 8
       },
@@ -729,7 +960,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (server) (mmoexile_event_loop_utilization)",
+          "expr": "max by (server) (mmoexile_event_loop_utilization{region=~\"$region\"})",
           "legendFormat": "{{server}}"
         }
       ],
@@ -745,7 +976,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 20,
+        "y": 37,
         "w": 12,
         "h": 8
       },
@@ -795,7 +1026,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (server, le) (rate(mmoexile_tick_interval_seconds_bucket[1m])))",
+          "expr": "histogram_quantile(0.99, sum by (server, le) (rate(mmoexile_tick_interval_seconds_bucket{region=~\"$region\"}[1m])))",
           "legendFormat": "{{server}}"
         }
       ],
@@ -806,6 +1037,35 @@
     "list": []
   },
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "region",
+        "label": "Region",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(mmoexile_fleet_servers, region)",
+          "refId": "region"
+        },
+        "definition": "label_values(mmoexile_fleet_servers, region)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
   }
 }

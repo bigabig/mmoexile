@@ -128,10 +128,11 @@ export async function createInstanceServer({
     },
   });
 
-  metrics = new InstanceServerMetrics(config.SERVER_ID, host);
+  metrics = new InstanceServerMetrics(config.SERVER_ID, config.REGION, host);
 
   lifecycle = new PlayerLifecycle({
     serverId: config.SERVER_ID,
+    region: config.REGION,
     host,
     db,
     redis,
@@ -148,7 +149,13 @@ export async function createInstanceServer({
     },
     onAdmitted: (player, ticket) => {
       metrics.handoffDuration.observe(
-        { kind: player.arrivedViaPortal ? "zone_change" : "login" },
+        {
+          // Every handoff ticket names the region the player came from
+          // (portals and drain moves alike); a login has none.
+          kind: ticket.fromRegion !== undefined ? "zone_change" : "login",
+          from_region: ticket.fromRegion ?? "none",
+          to_region: config.REGION,
+        },
         Math.max(0, Date.now() - ticket.issuedAt) / 1000,
       );
       void presence.set(player);

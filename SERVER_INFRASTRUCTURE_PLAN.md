@@ -606,9 +606,13 @@ What a region means:
   - *Verified: EU bots only used s1/s2 and US bots only s3. The US dungeon route ran with 0 kicks and 0 failed hops after a bot fix: bots now skip characters they saw die, because the death save can lag behind the next character list, especially at +40 ms.*
   - *Verified in a headless Chrome against the Docker realm: Europe was preselected (2 ms vs 43 ms); picking North America connected to `ws://localhost:7003/ws`; after `docker compose kill instance-server-3`, Play in North America showed "North America is unavailable right now…" with Europe preselected again. After restarting s3, netem was still active.*
 
-### S4.7 Observability per Region
+### S4.7 Observability per Region ✅
 - Instance-server metrics get a `region` label; handoff duration gets `from_region`/`to_region` labels (from the ticket).
 - The dashboard gets a region variable and a "Regions" row: players per region, handoff duration within vs. across regions, allocation failures by reason.
+- *Implementation notes:*
+  - *Every instance-server metric carries `region` (a default label next to `server`). The source region travels as an optional `fromRegion` in the allocation request and the ticket. `kind` is now derived from it: `zone_change` for any server-to-server handoff (portals and drain moves; before, drain moves counted as `login`), `login` otherwise.*
+  - *Dashboard: a multi-select `region` variable filters the per-server panels. A new "Regions" row has: players per region, ready servers per region, handoff p95 by `from_region → to_region` (plus logins per region), and allocation and login failures by reason and region.*
+  - *First measurement with 10 bots per region on nexus ↔ overworld: zone-change handoff p50 was 15 ms for eu → eu and ≈ 750 ms for us → us. Sequential central round trips at +40 ms each add up, which is the target of S4.8.*
 
 ### S4.8 Measure and Reduce the Cross-Region Cost
 - Measure admission on a US server at 40 ms: every sequential round trip to Redis or Postgres costs 40 ms (claim ticket, take lease, bump epoch, load character, …).

@@ -160,6 +160,8 @@ export interface TicketClaims {
    * and returns to its hubs afterwards.
    */
   region: string;
+  /** Region of the server the player left (handoffs only), to label metrics. */
+  fromRegion?: string;
   partyId?: string;
   /** Portal used, for portal_bound zones. */
   via?: { sourceInstanceId: string; portalId: string };
@@ -186,6 +188,7 @@ export async function signTicket(
     iatMs: Date.now(),
     srv: claims.targetServerId,
     region: claims.region,
+    fromRegion: claims.fromRegion,
     party: claims.partyId,
     via: claims.via,
   })
@@ -231,6 +234,7 @@ export async function verifyTicket(
     instanceId: typeof p.inst === "string" ? p.inst : undefined,
     targetServerId: p.srv,
     region: p.region,
+    fromRegion: typeof p.fromRegion === "string" ? p.fromRegion : undefined,
     partyId: typeof p.party === "string" ? p.party : undefined,
     via:
       via &&

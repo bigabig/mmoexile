@@ -15,14 +15,14 @@ export class InstanceServerMetrics {
   readonly registry: Registry;
   readonly tickDuration: Histogram;
   readonly tickInterval: Histogram;
-  readonly handoffDuration: Histogram<"kind">;
+  readonly handoffDuration: Histogram<"kind" | "from_region" | "to_region">;
   readonly ticketRejections: Counter<"reason">;
   readonly leaseConflicts: Counter;
   readonly fencedWrites: Counter;
 
-  constructor(serverId: string, host: InstanceHost) {
+  constructor(serverId: string, region: string, host: InstanceHost) {
     this.registry = createMetrics("instance-server");
-    this.registry.setDefaultLabels({ service: "instance-server", server: serverId });
+    this.registry.setDefaultLabels({ service: "instance-server", server: serverId, region });
     const registers = [this.registry];
 
     new Gauge({
@@ -70,8 +70,10 @@ export class InstanceServerMetrics {
     });
     this.handoffDuration = new Histogram({
       name: "mmoexile_handoff_duration_seconds",
-      help: "From ticket issue to admission here (login or zone change incl. reconnect)",
-      labelNames: ["kind"],
+      help:
+        "From ticket issue to admission here (login, or zone_change: any handoff from another server, incl. reconnect). " +
+        "from_region is the region of the server the player left (none on login), to_region this server's",
+      labelNames: ["kind", "from_region", "to_region"],
       buckets: SLOW_DURATION_BUCKETS,
       registers,
     });

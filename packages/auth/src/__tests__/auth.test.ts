@@ -62,6 +62,7 @@ describe("transfer tickets", () => {
     instanceId: "golem_dungeon:7f3a9c",
     targetServerId: "b",
     region: "eu",
+    fromRegion: "us",
     partyId: "party_1",
     via: { sourceInstanceId: "overworld:abc123", portalId: "portal_to_dungeon_1" },
   };
