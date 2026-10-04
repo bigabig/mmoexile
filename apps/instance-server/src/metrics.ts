@@ -5,7 +5,6 @@ import {
   FAST_DURATION_BUCKETS,
   Gauge,
   Histogram,
-  SLOW_DURATION_BUCKETS,
   type Registry,
 } from "@mmoexile/service-kit";
 import type { InstanceHost } from "./cluster/index.js";
@@ -74,7 +73,9 @@ export class InstanceServerMetrics {
         "From ticket issue to admission here (login, or zone_change: any handoff from another server, incl. reconnect). " +
         "from_region is the region of the server the player left (none on login), to_region this server's",
       labelNames: ["kind", "from_region", "to_region"],
-      buckets: SLOW_DURATION_BUCKETS,
+      // Finer than SLOW_DURATION_BUCKETS between 50 ms and 1 s, where
+      // cross-region handoffs land.
+      buckets: [0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.75, 1, 2.5, 5, 10, 30],
       registers,
     });
     this.ticketRejections = new Counter({

@@ -35,10 +35,12 @@ describe("CharacterOwnership", () => {
     const ownership = ownershipFor();
 
     const first = await ownership.acquire(id, A);
-    expect(first).toMatchObject({ ok: true, ownership: { epoch: 1 } });
+    // Taking ownership also loads the latest save, with the account's nickname
+    expect(first).toMatchObject({ ok: true, ownership: { epoch: 1 }, character: { id, hp: 100, ownerEpoch: 1 } });
+    expect(first.ok && first.character.nickname).toMatch(/\S/);
 
     const second = await ownership.acquire(id, B);
-    expect(second).toEqual({ ok: false, heldBy: { serverId: "a", epoch: 1 } });
+    expect(second).toEqual({ ok: false, reason: "held", heldBy: { serverId: "a" } });
 
     expect(first.ok && (await ownership.release(first.ownership))).toBe(true);
     const third = await ownership.acquire(id, B);
@@ -53,7 +55,7 @@ describe("CharacterOwnership", () => {
 
     expect(await ownership.writeFenced(a.ownership, { hp: 50 })).toBe(true);
 
-    const b = await ownership.forceAcquire(id, B);
+    const b = (await ownership.forceAcquire(id, B))!.ownership;
     expect(b.epoch).toBe(a.ownership.epoch + 1);
 
     // A can no longer write, renew, or release B's lease
@@ -80,11 +82,41 @@ describe("CharacterOwnership", () => {
     expect(await ownership.writeFenced(a.ownership, { hp: 1 })).toBe(false);
   });
 
-  it("rolls the lease back if the epoch can't be bumped", async () => {
+  it("rolls the lease back for a character that doesn't exist", async () => {
     const ownership = ownershipFor();
-    await expect(ownership.acquire("no-such-character", A)).rejects.toThrow();
+    expect(await ownership.acquire("no-such-character", A)).toEqual({ ok: false, reason: "missing" });
     // The reservation was removed, so a later claim isn't blocked
     expect(await redis.exists("lease:char:no-such-character")).toBe(0);
+    expect(await ownership.forceAcquire("no-such-character", A)).toBeUndefined();
+  });
+
+  it("claims a one-time key (a ticket) together with the lease, and only once", async () => {
+    const id = await newCharacter();
+    const ownership = ownershipFor();
+    const claimOnce = { key: `ticket:used:t-${id}`, value: "a", ttlMs: 60_000 };
+
+    const first = await ownership.acquire(id, A, { claimOnce });
+    expect(first.ok).toBe(true);
+    expect(await redis.get(claimOnce.key)).toBe("a");
+    if (first.ok) await ownership.release(first.ownership);
+
+    // A replay is refused before the lease is touched
+    expect(await ownership.acquire(id, B, { claimOnce })).toEqual({ ok: false, reason: "claimed" });
+    expect(await redis.exists(`lease:char:${id}`)).toBe(0);
+  });
+
+  it("writes only the given columns, JSON included, in one fenced statement", async () => {
+    const id = await newCharacter();
+    const ownership = ownershipFor();
+    const a = await ownership.acquire(id, A);
+    if (!a.ok) throw new Error("expected lease");
+    const inventory = ["sword_iron", null, null, null, null, null, null, "potion"];
+    expect(
+      await ownership.writeFenced(a.ownership, { hp: 42, x: 12.5, isAlive: true, equippedArmor: null, inventory }),
+    ).toBe(true);
+    const row = await prisma.character.findUnique({ where: { id } });
+    expect(row).toMatchObject({ hp: 42, x: 12.5, isAlive: true, equippedArmor: null, inventory, level: 1 });
+    await expect(ownership.writeFenced(a.ownership, { ownerEpoch: 99 })).rejects.toThrow(/unsupported/);
   });
 });
 

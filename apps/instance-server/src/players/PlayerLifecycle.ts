@@ -15,7 +15,11 @@ import {
 } from "@mmoexile/protocol";
 import type { InstanceHost, InstanceId } from "../cluster/index.js";
 import { CharacterMapper } from "../persistence/index.js";
-import type { CharacterOwnership, Ownership } from "../ownership/CharacterOwnership.js";
+import type {
+  CharacterOwnership,
+  OwnedCharacter,
+  Ownership,
+} from "../ownership/CharacterOwnership.js";
 import type { LeaseKeeper } from "../ownership/LeaseKeeper.js";
 import type { PlayerPersistenceSnapshot } from "@mmoexile/simulation";
 import type { CharacterData } from "@mmoexile/game-core";
@@ -145,28 +149,23 @@ export class PlayerLifecycle {
     if (!isZoneId(ticket.zoneId) || !RegionId.safeParse(ticket.region).success) {
       return { ok: false, reason: "invalid_ticket" };
     }
-    if (!(await this.claimTicket(ticket))) {
-      return { ok: false, reason: "invalid_ticket" };
-    }
-
-    const ownership = await this.takeOwnership(ticket.characterId);
-
-    // Load the character only after owning it, so we read the latest save.
-    const record = await this.deps.db.character.findUnique({
-      where: { id: ticket.characterId },
-      include: { account: true },
-    });
-    if (!record || !record.isAlive || record.accountId !== ticket.accountId) {
+    // Claim the ticket (once only), take ownership and load the latest save:
+    // two central round trips in all (one Redis, one Postgres).
+    const owned = await this.takeOwnership(ticket);
+    if (owned === "replayed") return { ok: false, reason: "invalid_ticket" };
+    if (owned === "missing") return { ok: false, reason: "character_unavailable" };
+    const { ownership, character: record } = owned;
+    if (!record.isAlive || record.accountId !== ticket.accountId) {
       await this.deps.ownership.release(ownership);
       return { ok: false, reason: "character_unavailable" };
     }
 
-    const character = CharacterMapper.toDomain(record, record.account.nickname);
+    const character = CharacterMapper.toDomain(record, record.nickname);
     let registered;
     try {
       registered = this.deps.host.registerPlayer({
         playerId: record.id,
-        name: record.account.nickname,
+        name: record.nickname,
         charId: record.id,
         zoneId: ticket.zoneId,
         character,
@@ -184,7 +183,7 @@ export class PlayerLifecycle {
     const player: AdmittedPlayer = {
       characterId: record.id,
       accountId: record.accountId,
-      name: record.account.nickname,
+      name: record.nickname,
       instanceId: registered.instanceId,
       zoneId: registered.zoneId,
       map: registered.map,
@@ -199,27 +198,26 @@ export class PlayerLifecycle {
     return { ok: true, player };
   }
 
-  /** Marks a ticket as used; false if it was used before (replay). */
-  private async claimTicket(ticket: VerifiedTicket): Promise<boolean> {
-    const ttlMs = Math.max(ticket.expiresAt - Date.now(), 0) + 60_000;
-    const result = await this.deps.redis.set(
-      redisKeys.usedTicket(ticket.ticketId),
-      this.deps.serverId,
-      "PX",
-      ttlMs,
-      "NX",
-    );
-    return result === "OK";
-  }
-
   /**
-   * Newest login wins: if another session holds the character, ask it to
-   * leave (it saves and releases), wait briefly, then take over by force.
+   * Claims the ticket and takes ownership. Newest login wins: if another
+   * session holds the character, ask it to leave (it saves and releases),
+   * wait briefly, then take over by force.
    */
-  private async takeOwnership(characterId: string): Promise<Ownership> {
+  private async takeOwnership(
+    ticket: VerifiedTicket,
+  ): Promise<{ ownership: Ownership; character: OwnedCharacter } | "replayed" | "missing"> {
+    const { characterId } = ticket;
     const holder = { serverId: this.deps.serverId };
-    const first = await this.deps.ownership.acquire(characterId, holder);
-    if (first.ok) return first.ownership;
+    // The ticket marker outlives the ticket, so a replay is always caught.
+    const claimOnce = {
+      key: redisKeys.usedTicket(ticket.ticketId),
+      value: this.deps.serverId,
+      ttlMs: Math.max(ticket.expiresAt - Date.now(), 0) + 60_000,
+    };
+    const first = await this.deps.ownership.acquire(characterId, holder, { claimOnce });
+    if (first.ok) return first;
+    if (first.reason === "claimed") return "replayed";
+    if (first.reason === "missing") return "missing";
 
     if (this.players.has(characterId)) {
       await this.kick(characterId, "logged_in_elsewhere");
@@ -234,10 +232,11 @@ export class PlayerLifecycle {
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 100));
       const retry = await this.deps.ownership.acquire(characterId, holder);
-      if (retry.ok) return retry.ownership;
+      if (retry.ok) return retry;
+      if (retry.reason === "missing") return "missing";
     }
     this.log("Forcing takeover", { characterId });
-    return this.deps.ownership.forceAcquire(characterId, holder);
+    return (await this.deps.ownership.forceAcquire(characterId, holder)) ?? "missing";
   }
 
   // --- Handoff ---
@@ -302,14 +301,25 @@ export class PlayerLifecycle {
       const ownership = this.deps.leases.untrack(characterId);
       if (!detached || !ownership) return false;
 
-      // 3. Final save, only if we still own the character
-      if (!(await this.saveAndRelease(ownership, detached.state))) {
+      // 3. Final save, only if we still own the character. It must land
+      // before the target loads the character, so it comes first.
+      const saved = await this.deps.ownership.writeFenced(
+        ownership,
+        CharacterMapper.toPersistenceUpdate(detached.state),
+      );
+      if (!saved) {
+        await this.deps.ownership.release(ownership);
         this.deps.kickSession(characterId, "logged_in_elsewhere");
         return false;
       }
 
-      // 4. Send the client to the target with the orchestrator's ticket
+      // 4. Send the client to the target with the orchestrator's ticket, and
+      // release the lease meanwhile: the client needs at least three round
+      // trips (this message, TCP, WebSocket upgrade) before the target asks
+      // for the lease, the release one. If it were ever late, the target
+      // just retries (see takeOwnership).
       this.deps.sendReconnect(characterId, allocation.url, allocation.ticket, targetZoneId);
+      await this.deps.ownership.release(ownership);
       this.log("Handed off", {
         characterId,
         targetZoneId,

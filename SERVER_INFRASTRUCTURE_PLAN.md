@@ -614,10 +614,20 @@ What a region means:
   - *Dashboard: a multi-select `region` variable filters the per-server panels. A new "Regions" row has: players per region, ready servers per region, handoff p95 by `from_region → to_region` (plus logins per region), and allocation and login failures by reason and region.*
   - *First measurement with 10 bots per region on nexus ↔ overworld: zone-change handoff p50 was 15 ms for eu → eu and ≈ 750 ms for us → us. Sequential central round trips at +40 ms each add up, which is the target of S4.8.*
 
-### S4.8 Measure and Reduce the Cross-Region Cost
+### S4.8 Measure and Reduce the Cross-Region Cost ✅
 - Measure admission on a US server at 40 ms: every sequential round trip to Redis or Postgres costs 40 ms (claim ticket, take lease, bump epoch, load character, …).
 - Reduce the cheap parts: pipeline or batch independent Redis commands; load the character in the same round trip as the epoch bump where possible. The target is at most **4 central round trips per admission**. The protocol stays unchanged.
 - Periodic saves are already asynchronous and need no change.
+- *Measured* (Postgres `log_statement=all` and Redis `MONITOR` during one US login at +40 ms): admission made **6 sequential central round trips** (claim ticket; reserve lease; epoch bump; write the real lease value; load character; load account), about 240 ms of the 336 ms from hello to welcome. The source side was no better: Prisma wraps `updateMany` in `BEGIN/UPDATE/COMMIT`, so a fenced save cost 3 round trips (an `update` with `include` even sends 5 statements).
+- *Reduced* (`CharacterOwnership`):
+  - *Claiming the ticket and taking the lease is one Redis script (`claimOnce`).*
+  - *The lease value is final from the start (holder plus a random token; the epoch lived only in the fencing column anyway), so the second `SET XX` is gone.*
+  - *Bumping the epoch returns the character and the account's nickname in one `UPDATE … FROM "Account" … RETURNING` statement.*
+  - *A fenced write is one raw `UPDATE`, with a column whitelist and a `jsonb` cast for the inventory.*
+  - *On a handoff, the source releases the lease while the client reconnects; the save stays first, so the target always loads the latest state.*
+  - ***Admission now makes 2 central round trips** (target: ≤ 4).*
+- *Result* (10 bots per region, nexus ↔ overworld, finer handoff buckets): warm US admission hello → welcome dropped from 336 ms to 133–173 ms; US zone-change handoff p50/p95 dropped from ≈ 750 ms (coarse buckets) to **232 / 292 ms**; EU stayed at 7 / 22 ms; 0 kicks and 0 failed hops. What remains at +40 ms: 3 central round trips (save, claim+lease, take over) plus 3 to the player (reconnect message, TCP, WebSocket upgrade) and the welcome.
+- *Found on the way:* the client's nginx resolved `account-api` only at startup and answered 502 after account-api was recreated. It now re-resolves through Docker's DNS (`resolver 127.0.0.11`, `proxy_pass` with a variable).
 
 ### Tests
 - Unit (orchestrator): region filter per access policy; party instance in the leader's region; an existing party instance is joined across regions; `region_unavailable`.

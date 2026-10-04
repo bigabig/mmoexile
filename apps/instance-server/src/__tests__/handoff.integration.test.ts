@@ -284,7 +284,7 @@ describe("Fencing", () => {
 
     // Another server takes over behind A's back and writes newer data
     const other = new CharacterOwnership({ redis, db: prisma });
-    const taken = await other.forceAcquire(c.characterId, { serverId: "elsewhere" });
+    const taken = (await other.forceAcquire(c.characterId, { serverId: "elsewhere" }))!.ownership;
     await other.writeFenced(taken, { hp: 99 });
 
     client.close();
