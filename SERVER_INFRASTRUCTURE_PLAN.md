@@ -9,9 +9,11 @@ This is the task-level plan for moving from today's single-process server to the
 | **2** | Split process roles, handoff | docker-compose, 1 machine | `account-api`, `social`, 2× `instance-server` |
 | **3** | Orchestrator & fleet | docker-compose, 1 machine | `orchestrator`, 3× generic `instance-server`, Prometheus, Grafana |
 | **4** | Regions | docker-compose, 2 simulated locations | `directory`, `gateway-eu`/`gateway-us`, `region-us` (netem) |
-| 5 | Kubernetes & Agones | cluster | none (packaging) |
+| 5 | Kubernetes & Agones | local kind cluster (additional target) | none (manifests, Fleets per region, kube-prometheus-stack) |
+| 6 | Databases outside the cluster | kind + external Postgres/Redis | none |
+| 7 | One cluster per region | several kind clusters | none |
 
-Stages 0–4 are done (each with implementation notes and verified acceptance criteria below). Stage 5 is outlined.
+Stages 0–4 are done (each with implementation notes and verified acceptance criteria below). Stage 5 is planned in detail; Stages 6 and 7 are outlined.
 
 **Working agreements**
 
@@ -644,13 +646,127 @@ What a region means:
 - [x] With 40 ms added to the US region, the selector shows the difference, and the cross-region handoff cost is measured and visible in Grafana (admission ≤ 4 central round trips). *2 round trips per admission; US zone change p50 232 ms (was ≈ 750 ms), EU 7 ms; Regions row in Grafana (screenshot `docs/images/realm-regions.png`).*
 - [x] Killing every US server: US logins get "region unavailable" with the choice of another region; EU players are unaffected; `pnpm chaos` passes. *13/13 checks: US dead after 4.6 s, `503 region_unavailable`, EU logins work, 0 kicks and 0 disconnects in EU; the browser shows "North America is unavailable right now…" with Europe preselected.*
 
-## Stage 5: Kubernetes & Agones (outline)
+## Stage 5: Kubernetes & Agones
 
-- Stateless apps (account-api, social, orchestrator, directory, client) → Kubernetes `Deployment` + `Service` + `Ingress`.
-- `instance-server` → Agones `Fleet` with Counters (`players`, `instances`) for high-density allocation; `FleetAutoscaler` on buffer capacity.
-- The instance-server `lifecycle/` adapter calls the Agones SDK (`Ready`, `Health`, `Shutdown`, counter updates) instead of the orchestrator heartbeat for liveness; the orchestrator allocates via the Agones allocator.
-- Local cluster with `kind` or `k3d`, manifests under `infra/k8s` (kustomize) and `infra/agones`.
-- Managed Postgres/Redis in production; secrets via Kubernetes Secrets.
+**Goal:** The same realm (central services, two regions, simulated distance) runs on a local Kubernetes cluster, with Agones managing the instance servers: it starts them, keeps them healthy, scales each region's fleet on free player capacity, and never removes a server that has players. Kubernetes is an **additional deployment target**: `pnpm dev`, `pnpm realm:up`, all tests and CI keep working exactly as before, without Kubernetes.
+
+Decisions taken on 2026-10-04 (D12–D20 below): Kubernetes is an additional target; the orchestrator stays the brain and Agones only handles lifecycle and scaling; one kind cluster with a node per region; Agones host ports with a port range per region; autoscaling on free capacity; Postgres and Redis inside the cluster; kube-prometheus-stack for monitoring; plain scripts for the dev loop; the cluster is checked by hand and by an on-demand CI job. Tools: [`docs/DEVELOPMENT_SETUP.md`](docs/DEVELOPMENT_SETUP.md) (kind, kubectl, Helm; Agones 1.61 supports Kubernetes 1.34–1.36, the cluster is pinned to 1.36).
+
+### Deployment Targets
+
+| Target | Command | Used for |
+| :--- | :--- | :--- |
+| Local processes | `pnpm db:up` + `pnpm dev` | Daily development (unchanged) |
+| Docker Compose | `pnpm realm:up` | The whole realm on one machine: load, chaos, region tests (unchanged) |
+| Local Kubernetes + Agones | `pnpm cluster:up` | What only exists there: autoscaling, rolling updates, Agones' protection of busy servers, Kubernetes operations |
+
+Both realm targets use the same images and the same environment variables. Compose and the cluster can run at the same time (different host ports).
+
+### Target Topology (kind cluster `mmoexile`)
+
+| Node | Label | Runs |
+| :--- | :--- | :--- |
+| control-plane | | Kubernetes itself, Agones' controller |
+| `central` | `mmoexile.dev/role=central` | account-api, social, orchestrator, directory, client, Postgres, Redis, Prometheus, Grafana |
+| `eu` | `mmoexile.dev/region=eu` | Fleet `instance-server-eu`, gateway-eu |
+| `us` | `mmoexile.dev/region=us` | Fleet `instance-server-us`, gateway-us; `tc netem` delays everything this node sends by `US_LATENCY_MS` (default 40) |
+
+Host ports (all on `localhost`, chosen not to clash with compose):
+
+| What | Port |
+| :--- | :--- |
+| Game (client, proxies `/api` and `/directory`) | 8090 |
+| Game servers eu / us (Agones port ranges) | 7300–7329 / 7400–7429 |
+| Gateway pings eu / us | 7350 / 7450 |
+| Grafana / Prometheus | 3040 / 9091 |
+| Orchestrator (fleet view, drain) | 3013 |
+
+### S5.1 Cluster Bootstrap
+- `infra/k8s/kind.yaml`: control-plane plus three workers with the labels above, the node image pinned to Kubernetes 1.36, and `extraPortMappings` that forward each host port to the node that serves it.
+- `pnpm cluster:up` (`infra/k8s/scripts/cluster-up.sh`), idempotent: check the tools and their versions → create the cluster if missing → install Agones with Helm (chart pinned to 1.61.x; port ranges `eu` 7300–7329 and `us` 7400–7429) → apply netem on the `us` node → build the images and `kind load` them → apply the manifests (S5.2–S5.5) → wait until everything is ready → print the URLs.
+- `pnpm cluster:down` deletes the cluster; nothing else is left behind (images loaded into kind live inside it).
+- Verify early: `tc` is available in the kind node image, and netem on the node delays pod traffic to other nodes and to the host.
+
+### S5.2 Central Services and Data as Manifests
+- Layout: `infra/k8s/base` (everything, environment-neutral) and `infra/k8s/overlays/kind` (node placement, host ports, replica counts, local secrets), built with kustomize (`kubectl apply -k`).
+- Postgres and Redis as small StatefulSets with a PersistentVolumeClaim (kind's default storage class), no third-party charts. Migrations run as a Kubernetes `Job` (the existing `migrate` image); `cluster:up` waits for it before starting the apps.
+- account-api, social, orchestrator, directory: `Deployment` + `Service`, liveness on `/health`, readiness on `/ready`, resource requests and limits, configuration from a `ConfigMap`, keys from a `Secret` (kustomize `secretGenerator` with the compose-local dev keys, which are refused in production as today).
+- client: the nginx image as a `Deployment`, exposed as a `NodePort` on the central node (host port 8090). Its upstream resolver becomes configurable (Docker's DNS in compose, the cluster DNS here).
+- gateway-eu/us: the nginx ping container as a `Deployment` pinned to its region's node, with a host port, so a ping measures the distance to that node.
+- `REGIONS` for directory and account-api points at the cluster's gateway ports.
+
+### S5.3 Agones Lifecycle in the Instance Server
+- A lifecycle setting: `LIFECYCLE=orchestrator` (default: `pnpm dev`, compose, tests; unchanged) or `agones`. In both modes the instance server keeps registering with and sending heartbeats to the orchestrator, because the orchestrator stays the brain (D13).
+- `fleet/AgonesSdk.ts`: a small client for the Agones SDK's local REST API (the SDK sidecar in the same pod, `localhost:9358`), with no extra dependency. It covers `Ready`, `Health`, `Allocate`, `Shutdown`, `GetGameServer`, and the `players` Counter (count and capacity).
+- In `agones` mode:
+  - the server reads its public port from `GetGameServer` and builds `PUBLIC_URL` from `PUBLIC_HOST` (`localhost` in kind);
+  - it calls `Ready` once listening and `Health` every few seconds;
+  - the `players` Counter mirrors the player count, with capacity `CAPACITY`;
+  - it calls `Allocate` while it has players **or** the orchestrator has reservations for it (the heartbeat response gains a `hold` flag), and goes back to `Ready` when it is empty and nothing is pending, so only empty servers can be scaled down;
+  - it calls `Shutdown` after a drain.
+- SIGTERM (scale-down, rolling update, pod deletion) keeps triggering the existing drain.
+- `SERVER_ID` is the pod name, `INTERNAL_URL` the pod IP, and `REGION` comes from the Fleet (Kubernetes downward API).
+- Tests: the Agones client against a fake SDK server (unit), and the lifecycle against Agones' local SDK server (`sdk-server --local`) without a cluster.
+
+### S5.4 Fleets per Region and Autoscaling
+- `infra/k8s/base/agones`: Fleets `instance-server-eu` and `instance-server-us`. Each has a node selector for its region, its port range, `REGION`, `LIFECYCLE=agones`, the `players` Counter, a `terminationGracePeriodSeconds` that covers the drain timeout, and resource requests.
+- A `FleetAutoscaler` per region with a Counter policy: keep a buffer of free player slots (e.g. 60), within min/max replicas (eu 2–4, us 1–3). In kind `CAPACITY` is lowered (e.g. 60), so a bot run can trigger scaling.
+- Scale-down removes only `Ready` (empty) servers. An empty dungeon that is still sleeping on such a server is lost, like an instance that timed out (documented, not prevented).
+- Rolling update (`pnpm cluster:reload instance-server`): Agones replaces `Ready` servers right away; `Allocated` ones keep running until they are empty. Optionally, the orchestrator can drain servers of the old version.
+- Verify: the race "the orchestrator places a player on an empty server while the autoscaler removes it" is covered by the `hold` flag (S5.3). A test (or smoke check) proves it.
+
+### S5.5 Monitoring
+- kube-prometheus-stack via Helm (chart pinned): Prometheus, Grafana, node and Kubernetes metrics and their dashboards, installed by `cluster:up`.
+- `PodMonitor`s for our services (the same `/metrics` endpoints; instance servers on their internal port), and Agones' controller metrics.
+- The **same** "Realm Overview" dashboard as in compose: a `ConfigMap` generated from `infra/observability/grafana/dashboards/realm-overview.json` with the label the Grafana sidecar loads. The Prometheus data source gets the UID the dashboard expects (`prometheus`). Optionally, Agones' own fleet dashboards as well.
+- Grafana on `localhost:3040` (anonymous viewer, like compose).
+
+### S5.6 Dev Loop, Smoke Test and CI
+- `pnpm cluster:reload <app>`: rebuild one image, `kind load` it, restart its Deployment (or roll its Fleets).
+- `pnpm cluster:status`: nodes, pods, fleets with their replicas and allocated counts, the orchestrator's fleet view.
+- `pnpm cluster:smoke` (`tools/bots`, against `localhost:8090`), one ✔/✘ line per check, exit code 1 on failure:
+  1. the realm is reachable and both regions answer pings;
+  2. bots play in each region;
+  3. under load, the EU fleet scales up;
+  4. a killed instance-server pod is replaced by Agones and its players log in again;
+  5. after the load, the fleet scales back down with 0 kicks.
+- `.github/workflows/cluster-smoke.yml`: on-demand (`workflow_dispatch`); installs the tools, runs `cluster:up`, `cluster:smoke` and `cluster:down`. CI on every push stays unchanged.
+- `pnpm chaos` stays a compose tool; the cluster's failure checks live in `cluster:smoke`.
+
+### S5.7 Documentation
+- `infra/k8s/README.md`: what runs where, the commands, how to look around with `kubectl`, and a short Kubernetes and Agones primer tied to our manifests (pod, Deployment, Service, StatefulSet, Job, GameServer, Fleet, FleetAutoscaler).
+- Update ARCHITECTURE (deployment targets, the lifecycle modes), TESTS (cluster smoke), README (the third target) and SERVER_INFRASTRUCTURE.md.
+
+### Tests
+- Unit: the Agones SDK client (fake server), the lifecycle state rules (players/hold → Allocated/Ready), `PUBLIC_URL` from the GameServer status, the heartbeat `hold` flag in the orchestrator.
+- Integration: the lifecycle against Agones' local SDK server.
+- Unchanged: all existing unit, integration and multi-service tests run without Kubernetes.
+- Cluster: `pnpm cluster:smoke` by hand and as the on-demand CI workflow; a browser check against `localhost:8090`.
+
+### Acceptance Criteria
+- [ ] From nothing, `pnpm cluster:up` brings up a playable realm with both regions; `pnpm cluster:down` leaves nothing behind.
+- [ ] In the browser, the region selector shows eu and us with the simulated distance, and gameplay matches compose: hubs per region, a party's dungeon in the leader's region, handoffs across servers.
+- [ ] Under bot load the EU fleet scales up; afterwards it scales back down, and no player is kicked in either direction.
+- [ ] Deleting an instance-server pod: Agones replaces it, the orchestrator marks the old one dead, and its players log in again.
+- [ ] A rolling update of the instance-server image kicks nobody.
+- [ ] Grafana in the cluster shows the Realm Overview dashboard plus the cluster dashboards.
+- [ ] `pnpm dev`, `pnpm realm:up` and the regular CI are unchanged; the on-demand `cluster-smoke` workflow passes on GitHub.
+
+## Stage 6: Databases Outside the Cluster (outline)
+
+- Postgres and Redis move out of the cluster, the way managed databases (Cloud SQL, RDS, ElastiCache, …) are used in production: they run as separate containers next to the kind cluster, standing in for a managed service.
+- The cluster reaches them through Services without pods (`ExternalName`, or a Service with manual `EndpointSlice`s), so the apps keep using stable in-cluster names.
+- Connection management becomes a topic: pool sizes per pod (many instance servers × Prisma pools), maybe PgBouncer; timeouts and retries when the database is briefly unreachable.
+- Secrets for real credentials (no dev defaults), TLS to the databases, and backups/restore as an exercise.
+- The databases get their own "location", with latency to each region, so the round-trip budget from S4.8 is tested again.
+
+## Stage 7: One Cluster per Region (outline)
+
+- A `central` cluster (account-api, social, orchestrator, directory, monitoring) and one cluster per region (`eu`, `us`), each with its own Agones, as in a real multi-region deployment. The US cluster sits behind the simulated distance as a whole.
+- Instance servers reach the orchestrator, social and the databases across clusters. Internal APIs leave the cluster, so **service-to-service authentication** (an open item since Stage 3) becomes a must, e.g. signed service tokens or mTLS.
+- The orchestrator stays the brain for all regions; each region's Agones scales its own fleet.
+- Monitoring across clusters: Prometheus per cluster with federation or remote write into the central one.
+- Failure scenarios: a whole regional cluster lost; the central cluster unreachable from one region.
 
 ---
 
@@ -666,6 +782,8 @@ What a region means:
 | orchestrator | 3003 | `ORCHESTRATOR_` |
 | directory | 3004 | `DIRECTORY_` |
 | gateway-eu / gateway-us (compose) | 7100 / 7200 | |
+| kind cluster: game / Grafana / Prometheus / orchestrator | 8090 / 3040 / 9091 / 3013 | |
+| kind cluster: game servers eu / us, pings eu / us | 7300–7329 / 7400–7429, 7350 / 7450 | |
 | instance-server | 7001+ | `INSTANCE_SERVER_` |
 | postgres / redis | 5432 / 6379 | `DATABASE_URL` / `REDIS_URL` |
 
@@ -683,7 +801,7 @@ What a region means:
 
 ## Decisions
 
-D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10-02 before Stage 2; D8–D11 on 2026-10-03 before Stage 4. D5 stays open.
+D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10-02 before Stage 2; D8–D11 on 2026-10-03 before Stage 4; D12–D20 on 2026-10-04 before Stage 5. D5 stays open.
 
 | # | Decision | Outcome | Why |
 | :--- | :--- | :--- | :--- |
@@ -698,3 +816,12 @@ D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10
 | D9 | Region of a party's private instance | ✅ **The party leader's region** | Predictable ("we play on EU"); the leader decides |
 | D10 | Who publishes regions | ✅ **New `apps/directory`** (stateless, global) | Clean separation; the global layer above realms in the target architecture |
 | D11 | Simulating distance locally | ✅ **`tc netem`** via sidecar containers | Network-level, affects player and central traffic alike, no app changes |
+| D12 | Role of Kubernetes | ✅ **An additional deployment target**; `pnpm dev`, compose, tests and CI stay without Kubernetes | Daily development stays fast and simple; Kubernetes is used where it adds something |
+| D13 | Orchestrator vs. Agones | ✅ **The orchestrator stays the brain** (placement, tickets); Agones handles lifecycle and scaling | Our placement rules (regions, parties, fill-first) don't fit Agones' allocator; identical behaviour in every target |
+| D14 | Regions in the cluster | ✅ **One kind cluster, a node per region** (netem on the US node); one cluster per region becomes Stage 7 | Carries regions and distance over at low cost; the realistic multi-cluster setup is learned separately |
+| D15 | How players reach game servers | ✅ **Agones host ports**, one port range per region | Agones' standard way; port ranges map cleanly to the region nodes |
+| D16 | Number of instance servers | ✅ **Autoscaling on free player capacity** (Counters, self-allocation while busy) | The main thing Agones adds; busy servers are never removed |
+| D17 | Postgres and Redis | ✅ **Inside the cluster** for now; outside (managed-style) becomes Stage 6 | `cluster:up` stays self-contained |
+| D18 | Monitoring in the cluster | ✅ **kube-prometheus-stack**, with the same Realm Overview dashboard as compose | The standard stack with cluster insight; one dashboard file for both targets |
+| D19 | Testing the cluster | ✅ **`pnpm cluster:smoke` by hand + an on-demand CI workflow** | Proves it works on a clean machine without slowing every push |
+| D20 | Dev loop into the cluster | ✅ **Plain scripts** (`cluster:up`, `cluster:reload <app>`) | No extra tool; daily development doesn't happen in the cluster |

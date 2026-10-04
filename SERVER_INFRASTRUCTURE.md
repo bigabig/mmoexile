@@ -332,7 +332,14 @@ This is the point where it becomes a real distributed system.
 - The cost of distance to the central services is measured and reduced (fewer round trips per handoff).
 
 ### Stage 5: Kubernetes & Agones
-- Plain `Deployment`s for stateless apps; an Agones `Fleet` for instance servers.
-- The orchestrator allocates servers through the Agones allocator.
+- A local kind cluster as an additional deployment target; development and compose stay as they are.
+- Plain `Deployment`s for stateless apps; an Agones `Fleet` per region for instance servers, scaled on free player capacity.
+- The orchestrator stays the brain (placement, tickets); Agones manages the server processes and never removes a busy one.
+
+### Stage 6: Databases Outside the Cluster
+- Postgres and Redis outside the cluster, like managed databases; connection pooling, credentials, backups.
+
+### Stage 7: One Cluster per Region
+- A central cluster plus one cluster per region, each with its own Agones; service-to-service authentication across clusters.
 
 Build the pieces by hand first; Kubernetes and Agones make much more sense afterwards.
