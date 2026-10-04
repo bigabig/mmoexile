@@ -217,7 +217,7 @@ export const App: React.FC = () => {
   const handlePlay = (characterId: string) =>
     withAccount(async () => {
       setNotice(null);
-      const { url, ticket } = await accountRef.current.play(characterId);
+      const { url, ticket } = await accountRef.current.play(characterId, "local");
       setPhase("playing");
       gameAppRef.current?.connect(url, ticket);
     });

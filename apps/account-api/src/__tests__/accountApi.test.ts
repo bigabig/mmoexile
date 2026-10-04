@@ -13,11 +13,11 @@ let fleetFull = false;
 
 beforeAll(async () => {
   app = buildApp({
-    config: readConfig({}),
+    config: readConfig({ REGIONS: "eu=Europe=http://eu/ping,us=North America=http://us/ping" }),
     logger: createLogger("test", "silent"),
     db: prisma,
     allocate: async (request) => {
-      if (fleetFull) throw new HttpError(503, "full");
+      if (fleetFull) throw new HttpError(503, "full", "region_unavailable");
       allocations.push(request);
       return { serverId: "s1", instanceId: "nexus:abcdef", url: "ws://nexus.test/ws", ticket: "t", ticketId: "id" };
     },
@@ -121,35 +121,39 @@ describe("characters", () => {
 });
 
 describe("play", () => {
-  it("asks the orchestrator for a nexus slot and passes on its ticket", async () => {
+  it("asks the orchestrator for a nexus slot in the chosen region and passes on its ticket", async () => {
     const ann = await guest();
     const { character } = (await createCharacter(ann.sessionToken)).json();
+    const play = (region: string) =>
+      app.inject({
+        method: "POST",
+        url: "/play",
+        headers: auth(ann.sessionToken),
+        payload: { characterId: character.id, region },
+      });
 
-    const res = await app.inject({
-      method: "POST",
-      url: "/play",
-      headers: auth(ann.sessionToken),
-      payload: { characterId: character.id },
-    });
-
+    const res = await play("us");
     expect(res.json()).toEqual({ url: "ws://nexus.test/ws", ticket: "t" });
     expect(allocations.at(-1)).toEqual({
       zoneId: "nexus",
       characterId: character.id,
       accountId: ann.accountId,
-      region: "local",
+      region: "us",
     });
 
+    // Only the realm's regions are accepted
+    const unknown = await play("ap");
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json().error).toMatch(/Unknown region/);
+
     fleetFull = true;
-    const full = await app.inject({
-      method: "POST",
-      url: "/play",
-      headers: auth(ann.sessionToken),
-      payload: { characterId: character.id },
-    });
+    const full = await play("us");
     fleetFull = false;
     expect(full.statusCode).toBe(503);
-    expect(full.json().error).toMatch(/full/);
+    expect(full.json()).toEqual({
+      error: "North America is unavailable right now",
+      reason: "region_unavailable",
+    });
   });
 
   it("refuses foreign and dead characters", async () => {
@@ -157,7 +161,7 @@ describe("play", () => {
     const bob = await guest("Bob");
     const { character } = (await createCharacter(ann.sessionToken)).json();
     const play = (token: string) =>
-      app.inject({ method: "POST", url: "/play", headers: auth(token), payload: { characterId: character.id } });
+      app.inject({ method: "POST", url: "/play", headers: auth(token), payload: { characterId: character.id, region: "eu" } });
 
     expect((await play(bob.sessionToken)).statusCode).toBe(404);
     await prisma.character.update({ where: { id: character.id }, data: { isAlive: false } });

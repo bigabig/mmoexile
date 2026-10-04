@@ -31,7 +31,7 @@ describe("A player's journey through the orchestrator", () => {
     const { character } = await api(accountApi.createCharacter, { classId: "knight" });
 
     // First ticket: account-api asks the orchestrator for a nexus slot
-    const play = await api(accountApi.play, { characterId: character.id });
+    const play = await api(accountApi.play, { characterId: character.id, region: "local" });
     const client = new TestClient(play.url, play.ticket);
     const nexus = await client.welcome();
     expect(nexus.zoneId).toBe("nexus");

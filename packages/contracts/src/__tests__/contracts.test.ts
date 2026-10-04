@@ -20,26 +20,33 @@ describe("createHttpClient", () => {
     const { fn, calls } = fakeFetch(200, { url: "ws://x", ticket: "t" });
     const call = createHttpClient({ baseUrl: "http://api", token: () => "tok", fetch: fn });
 
-    const result = await call(accountApi.play, { characterId: "c1" });
+    const result = await call(accountApi.play, { characterId: "c1", region: "eu" });
 
     expect(result).toEqual({ url: "ws://x", ticket: "t" });
     expect(calls[0].url).toBe("http://api/play");
     expect((calls[0].init.headers as any).authorization).toBe("Bearer tok");
-    expect(JSON.parse(calls[0].init.body as string)).toEqual({ characterId: "c1" });
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ characterId: "c1", region: "eu" });
   });
 
   it("rejects responses that break the contract", async () => {
     const { fn } = fakeFetch(200, { url: 42 });
     const call = createHttpClient({ baseUrl: "http://api", fetch: fn });
-    await expect(call(accountApi.play, { characterId: "c1" })).rejects.toThrow();
+    await expect(call(accountApi.play, { characterId: "c1", region: "eu" })).rejects.toThrow();
   });
 
   it("turns error bodies into HttpError", async () => {
     const { fn } = fakeFetch(409, { error: "character is dead" });
     const call = createHttpClient({ baseUrl: "http://api", fetch: fn });
-    const err = await call(accountApi.play, { characterId: "c1" }).catch((e) => e);
+    const err = await call(accountApi.play, { characterId: "c1", region: "eu" }).catch((e) => e);
     expect(err).toBeInstanceOf(HttpError);
     expect(err).toMatchObject({ status: 409, message: "character is dead" });
+
+    const { fn: unavailable } = fakeFetch(503, { error: "Europe is unavailable", reason: "region_unavailable" });
+    const err2 = await createHttpClient({ baseUrl: "http://api", fetch: unavailable })(accountApi.play, {
+      characterId: "c1",
+      region: "eu",
+    }).catch((e) => e);
+    expect(err2).toMatchObject({ status: 503, reason: "region_unavailable" });
   });
 });
 

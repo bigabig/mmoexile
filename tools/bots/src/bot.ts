@@ -18,6 +18,8 @@ export interface BotOptions {
   /** account-api base URL, e.g. http://localhost:8080/api */
   apiUrl: string;
   name: string;
+  /** Region to play in (default "local", as in `pnpm dev`). */
+  region?: string;
   classId?: "wizard" | "knight";
   log?: (message: string) => void;
 }
@@ -87,6 +89,7 @@ export class Bot {
   async play(): Promise<void> {
     const { url, ticket } = await this.call(accountApi.play, {
       characterId: this.characterId,
+      region: this.options.region ?? "local",
     });
     this.kicked = null;
     this.disconnected = false;

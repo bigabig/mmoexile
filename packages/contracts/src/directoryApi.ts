@@ -38,6 +38,27 @@ export const directoryApi = {
 } as const;
 
 /**
+ * The `REGIONS` setting as a config schema (see parseRegions), shared by
+ * apps/directory and account-api.
+ */
+export function regionsSetting(defaultValue: string) {
+  return z
+    .string()
+    .default(defaultValue)
+    .transform((value, ctx) => {
+      try {
+        return parseRegions(value);
+      } catch (err) {
+        ctx.addIssue({ code: "custom", message: (err as Error).message });
+        return z.NEVER;
+      }
+    });
+}
+
+/** Single-machine default: one region pinging the directory (`pnpm dev`). */
+export const LOCAL_REGIONS_SETTING = "local=Local=http://localhost:3004/ping";
+
+/**
  * Parses the `REGIONS` setting shared by apps/directory and account-api:
  * comma-separated `id=Name=pingUrl` entries, e.g.
  * `eu=Europe=http://localhost:7100/ping,us=North America=http://localhost:7200/ping`.

@@ -12,7 +12,6 @@ import {
   accountApi,
   createHttpClient,
   HttpError,
-  LOCAL_REGION,
   MAX_CHARACTERS_PER_ACCOUNT,
   orchestratorApi,
   type AllocateRequest,
@@ -53,8 +52,8 @@ export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInst
   });
   const plays = new Counter({
     name: "mmoexile_play_requests_total",
-    help: "/play requests by outcome",
-    labelNames: ["result"],
+    help: "/play requests by outcome and chosen region",
+    labelNames: ["result", "region"],
     registers: [metrics],
   });
 
@@ -187,7 +186,9 @@ export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInst
     { preHandler: requireSession, schema: { body: accountApi.play.body } },
     async (request, reply) => {
       const { accountId } = request.session!;
-      const { characterId } = request.body as { characterId: string };
+      const { characterId, region } = request.body as { characterId: string; region: string };
+      const regionInfo = config.REGIONS.find((r) => r.id === region);
+      if (!regionInfo) return reply.code(400).send({ error: `Unknown region ${region}` });
       const character = await db.character.findFirst({
         where: { id: characterId, accountId },
       });
@@ -196,19 +197,24 @@ export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInst
         return reply.code(409).send({ error: "This character is dead" });
       }
 
-      // The orchestrator is the single ticket issuer.
+      // The orchestrator is the single ticket issuer. The region becomes the
+      // player's home region for this session (in the ticket, not stored).
       try {
-        const allocation = await allocate({ zoneId: LOGIN_ZONE, characterId, accountId, region: LOCAL_REGION });
-        logger.info({ characterId, ticketId: allocation.ticketId, serverId: allocation.serverId }, "Play");
-        plays.inc({ result: "ok" });
+        const allocation = await allocate({ zoneId: LOGIN_ZONE, characterId, accountId, region });
+        logger.info({ characterId, region, ticketId: allocation.ticketId, serverId: allocation.serverId }, "Play");
+        plays.inc({ result: "ok", region });
         return { url: allocation.url, ticket: allocation.ticket };
       } catch (err) {
-        logger.warn({ err, characterId }, "Allocation for login failed");
-        const busy = err instanceof HttpError && err.status === 503;
-        plays.inc({ result: busy ? "fleet_full" : "unavailable" });
-        return reply.code(503).send({
-          error: busy ? "All servers are full, try again soon" : "Game servers are unavailable",
-        });
+        logger.warn({ err, characterId, region }, "Allocation for login failed");
+        if (err instanceof HttpError && err.reason === "region_unavailable") {
+          plays.inc({ result: "region_unavailable", region });
+          return reply.code(503).send({
+            error: `${regionInfo.name} is unavailable right now`,
+            reason: "region_unavailable",
+          });
+        }
+        plays.inc({ result: "unavailable", region });
+        return reply.code(503).send({ error: "Game servers are unavailable" });
       }
     },
   );

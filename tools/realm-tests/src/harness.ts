@@ -35,6 +35,8 @@ export interface Realm {
   /** account-api base URL (login, characters, /play). */
   accountApiUrl: string;
   servers: Map<string, InstanceServer>;
+  /** Party service stand-in shared by all servers (invite, accept, …). */
+  parties: InMemoryPartyDirectory;
   redis: Redis;
   heartbeatMs: number;
   /** Starts one more instance server. */
@@ -45,7 +47,10 @@ export interface Realm {
 }
 
 export interface RealmOptions {
+  /** Server IDs; "eu1@eu" puts a server into region "eu" (default: "local"). */
   servers?: string[];
+  /** Regions account-api accepts (default: ["local"]). */
+  regions?: string[];
   heartbeatMs?: number;
   /** Extra instance-server environment. */
   env?: Record<string, string>;
@@ -82,7 +87,10 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
   const orchestratorUrl = `http://127.0.0.1:${orchestratorPort}`;
 
   const accountApi = buildAccountApi({
-    config: readAccountConfig({ ORCHESTRATOR_URL: orchestratorUrl }),
+    config: readAccountConfig({
+      ORCHESTRATOR_URL: orchestratorUrl,
+      REGIONS: (options.regions ?? ["local"]).map((id) => `${id}=${id}=http://ping.test/${id}`).join(","),
+    }),
     logger: createLogger("account-api", logLevel),
     db: prisma,
   });
@@ -121,8 +129,9 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
     return server;
   };
 
-  for (const serverId of options.servers ?? ["s1", "s2", "s3"]) {
-    await addServer(serverId);
+  for (const spec of options.servers ?? ["s1", "s2", "s3"]) {
+    const [serverId, region] = spec.split("@");
+    await addServer(serverId, region ? { REGION: region } : {});
   }
 
   return {
@@ -132,6 +141,7 @@ export async function startRealm(options: RealmOptions = {}): Promise<Realm> {
     orchestratorUrl,
     accountApiUrl,
     servers,
+    parties,
     redis,
     heartbeatMs,
     addServer,

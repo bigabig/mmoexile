@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RegionId } from "./regions.js";
 
 /**
  * HTTP API of apps/account-api. Called by the game client (login, character
@@ -64,11 +65,15 @@ export const accountApi = {
     body: z.undefined(),
     response: z.object({ deleted: z.literal(true) }),
   },
-  /** Starts playing a character: returns where to connect and a transfer ticket. */
+  /**
+   * Starts playing a character in a region (chosen by the player, see the
+   * directory): returns where to connect and a transfer ticket. A region
+   * without capacity answers 503 with reason "region_unavailable".
+   */
   play: {
     method: "POST",
     path: "/play",
-    body: z.object({ characterId: z.string() }),
+    body: z.object({ characterId: z.string(), region: RegionId }),
     response: z.object({ url: z.string(), ticket: z.string() }),
   },
 } as const;

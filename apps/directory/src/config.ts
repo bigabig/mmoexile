@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { parseRegions } from "@mmoexile/contracts";
+import { LOCAL_REGIONS_SETTING, regionsSetting } from "@mmoexile/contracts";
 import { baseConfigSchema, loadConfig } from "@mmoexile/service-kit";
 
 export const configSchema = baseConfigSchema.extend({
@@ -12,17 +12,7 @@ export const configSchema = baseConfigSchema.extend({
    * `id=Name=pingUrl,…` (see parseRegions). The default is one local region
    * that pings this service itself, so `pnpm dev` needs no gateways.
    */
-  REGIONS: z
-    .string()
-    .default("local=Local=http://localhost:3004/ping")
-    .transform((value, ctx) => {
-      try {
-        return parseRegions(value);
-      } catch (err) {
-        ctx.addIssue({ code: "custom", message: (err as Error).message });
-        return z.NEVER;
-      }
-    }),
+  REGIONS: regionsSetting(LOCAL_REGIONS_SETTING),
   /** How long browsers and proxies may cache the realm list. */
   CACHE_MAX_AGE_SEC: z.coerce.number().int().nonnegative().default(60),
 });

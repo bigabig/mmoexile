@@ -80,9 +80,9 @@ export class AccountClient {
     });
   }
 
-  /** Where to connect, with a ticket for that server. */
-  play(characterId: string) {
-    return this.call(accountApi.play, { characterId });
+  /** Where to connect in `region`, with a ticket for that server. */
+  play(characterId: string, region: string) {
+    return this.call(accountApi.play, { characterId, region });
   }
 
   forget(): void {

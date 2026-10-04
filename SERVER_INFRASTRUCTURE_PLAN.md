@@ -577,8 +577,13 @@ What a region means:
   - *The instance server looks up the leader's region only for `party_private` targets: locally if the leader is on the same server, otherwise through presence. A failed lookup means "use the player's own region".*
   - *Metrics: `mmoexile_fleet_servers{state,region}`, the per-server gauges gained `region`, `mmoexile_allocation_failures_total{status,reason,region}`. The "Allocated" log line includes `homeRegion` and `serverRegion`.*
 
-### S4.4 Login with a Region (account-api)
+### S4.4 Login with a Region (account-api) ✅
 - `POST /play { characterId, region }` validates `region` against the directory's list (account-api reads the same `REGIONS` config) and asks the orchestrator to allocate there. The region goes into the ticket as the player's home region; nothing is persisted.
+- *Implementation notes:*
+  - *`region` is required on `/play`. An unknown region answers 400. When the orchestrator answers `region_unavailable`, account-api answers 503 with `{ error: "<Region name> is unavailable right now", reason: "region_unavailable" }`; other failures stay "Game servers are unavailable".*
+  - *Both services read `REGIONS` through `regionsSetting()` from contracts. `mmoexile_play_requests_total` gained a `region` label (results: `ok`, `region_unavailable`, `unavailable`).*
+  - *Until S4.5 the client and bots send `local`.*
+  - *Multi-service test `tools/realm-tests/src/regions.test.ts` (servers `eu1@eu`, `eu2@eu`, `us1@us`): EU and US players get separate hubs; Ben (US) enters the party dungeon first and it is still created on an EU server because Anna (EU) leads; Anna joins the same instance; Ben returns to his original US nexus; a drained US region answers `region_unavailable` while EU logins keep working.*
 
 ### S4.5 Client Region Selector
 - The login/character screen fetches `/directory/realms`, pings every region's `pingUrl` five times (`fetch` with `cache: "no-store"`, HTTP keep-alive, median of the last four to skip connection setup), and shows each region with its ping.
