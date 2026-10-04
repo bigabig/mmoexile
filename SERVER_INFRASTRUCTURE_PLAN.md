@@ -596,10 +596,15 @@ What a region means:
   - *On `region_unavailable` the region is marked "unavailable", the next fastest is preselected, and the notice says "<Region> is unavailable right now. Pick another region or try again in a moment."*
   - *Bots: `--region <id>`, otherwise the fastest via the directory next to `--api` (`…/api` → `…/directory`, override with `--directory`). `hop` and `chaos` both use it.*
 
-### S4.6 Two Regions in Docker Compose
+### S4.6 Two Regions in Docker Compose ✅
 - `gateway-eu`, `gateway-us`; `instance-server-1/2` with `REGION=eu`, `instance-server-3` with `REGION=us`.
 - **Latency:** a sidecar container per US service shares its network namespace (`network_mode: service:<name>`, `cap_add: NET_ADMIN`) and runs `tc qdisc add dev eth0 root netem delay 40ms`. The app images stay unchanged. Everything the US containers send is delayed 40 ms: to players and to the central services alike.
 - The delay is configurable (`US_LATENCY_MS`), so the effect can be compared at 0, 40 and 120 ms.
+- *Implementation notes:*
+  - *Inverted sidecar: a `region-us` container (alpine + `iproute2-tc`, `infra/docker/netem.Dockerfile`) **owns** the US network namespace and applies netem; `gateway-us` and `instance-server-3` join it with `network_mode: service:region-us`. Joining the app's namespace instead would lose the delay whenever the instance server is killed and restarted (the chaos test does exactly that). `region-us` publishes the US ports (7200, 7003) and is the US services' hostname (`INTERNAL_URL: http://region-us:9001`, Prometheus target `region-us:9001`).*
+  - *Measured with the shared ping code: eu ≈ 2 ms, us ≈ 43 ms (a fresh TCP connection pays the delay twice, 80 ms, which is why the first sample is dropped).*
+  - *Verified: EU bots only used s1/s2 and US bots only s3. The US dungeon route ran with 0 kicks and 0 failed hops after a bot fix: bots now skip characters they saw die, because the death save can lag behind the next character list, especially at +40 ms.*
+  - *Verified in a headless Chrome against the Docker realm: Europe was preselected (2 ms vs 43 ms); picking North America connected to `ws://localhost:7003/ws`; after `docker compose kill instance-server-3`, Play in North America showed "North America is unavailable right now…" with Europe preselected again. After restarting s3, netem was still active.*
 
 ### S4.7 Observability per Region
 - Instance-server metrics get a `region` label; handoff duration gets `from_region`/`to_region` labels (from the ticket).

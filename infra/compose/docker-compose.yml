@@ -2,10 +2,16 @@
 #   pnpm db:up      → Postgres + Redis only (for `pnpm dev`)
 #   pnpm realm:up   → everything below, built from this repository
 #
-# Topology (Stage 3): account-api, social, the orchestrator, instance servers
-# that register with it, and the client. Instance servers are reached
-# directly by the browser, so their WebSocket ports are published; their
-# internal ports (orchestrator calls, metrics) are not.
+# Topology (Stage 4): central services (account-api, social, orchestrator,
+# directory, Postgres, Redis, client) and two regions:
+#   eu: gateway-eu, instance-server-1, instance-server-2 (no extra latency)
+#   us: gateway-us, instance-server-3, behind region-us, which delays
+#       everything they send by US_LATENCY_MS (default 40) with tc netem
+# Instance servers are reached directly by the browser, so their WebSocket
+# ports are published; their internal ports (orchestrator calls, metrics)
+# are not.
+#
+#   US_LATENCY_MS=120 pnpm realm:up   → compare 0, 40 and 120 ms
 #
 # The ticket keys below are for this local setup only (committed on
 # purpose); override them via the environment for anything shared.
@@ -149,13 +155,33 @@ services:
     image: nginx:1.29-alpine
     profiles: [realm]
     restart: unless-stopped
+    network_mode: service:region-us
+    depends_on: [region-us]
     volumes:
       - ../docker/gateway.nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    ports: ["7200:80"]
+
+  # The US "location": owns the network namespace that gateway-us and
+  # instance-server-3 join, and delays everything sent from it. Owning the
+  # namespace here (rather than joining the app's) keeps the delay when an
+  # instance server is killed and restarted. Ports of the US services are
+  # published here; other containers reach them as region-us.
+  region-us:
+    profiles: [realm]
+    build:
+      context: ../docker
+      dockerfile: netem.Dockerfile
+    restart: unless-stopped
+    init: true
+    cap_add: [NET_ADMIN]
+    environment:
+      LATENCY_MS: ${US_LATENCY_MS:-40}
+    ports:
+      - "7200:80"     # gateway-us
+      - "7003:7003"   # instance-server-3
 
   # Three interchangeable instance servers (any zone, placed by the
-  # orchestrator). Each needs its own published port, because clients
-  # connect to instance servers directly. `docker compose stop` sends
+  # orchestrator): two in region eu, one in region us. Each needs its own
+  # published port, because clients connect to instance servers directly. `docker compose stop` sends
   # SIGTERM: the server drains (dungeons get DRAIN_TIMEOUT_SEC to finish)
   # before Docker would kill it.
   instance-server-1:
@@ -169,6 +195,7 @@ services:
     environment:
       <<: *realm-env
       DRAIN_TIMEOUT_SEC: "60"
+      REGION: eu
       SERVER_ID: s1
       PORT: "7001"
       PUBLIC_URL: ws://localhost:7001/ws
@@ -186,6 +213,7 @@ services:
     environment:
       <<: *realm-env
       DRAIN_TIMEOUT_SEC: "60"
+      REGION: eu
       SERVER_ID: s2
       PORT: "7002"
       PUBLIC_URL: ws://localhost:7002/ws
@@ -201,11 +229,20 @@ services:
     environment:
       <<: *realm-env
       DRAIN_TIMEOUT_SEC: "60"
+      REGION: us
       SERVER_ID: s3
       PORT: "7003"
       PUBLIC_URL: ws://localhost:7003/ws
-      INTERNAL_URL: http://instance-server-3:9001
-    ports: ["7003:7003"]
+      INTERNAL_URL: http://region-us:9001
+    # In the US network position (see region-us), which publishes its port.
+    network_mode: service:region-us
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      region-us:
+        condition: service_started
     healthcheck: *instance-health
 
   client:

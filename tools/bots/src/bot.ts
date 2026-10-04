@@ -37,6 +37,11 @@ interface Point {
 export class Bot {
   readonly name: string;
   characterId = "";
+  /**
+   * Characters this bot saw die. The death is saved asynchronously, so
+   * account-api may still list one as alive for a moment.
+   */
+  private readonly fallen = new Set<string>();
   zoneId = "";
   instanceId = "";
   serverUrl = "";
@@ -75,7 +80,7 @@ export class Bot {
 
   async ensureCharacter(): Promise<CharacterSummary> {
     const { characters } = await this.call(accountApi.listCharacters, undefined);
-    const alive = characters.find((c) => c.isAlive);
+    const alive = characters.find((c) => c.isAlive && !this.fallen.has(c.id));
     const character =
       alive ??
       (await this.call(accountApi.createCharacter, {
@@ -215,6 +220,7 @@ export class Bot {
           if (e.id === this.characterId) {
             this.position = { x: e.x, y: e.y };
             this.hp = e.hp;
+            if (e.hp <= 0) this.fallen.add(this.characterId);
           }
         }
         break;
@@ -228,6 +234,7 @@ export class Bot {
         // Deaths are only announced in chat (permadeath), not as a packet.
         if (packet.sender === "Graveyard" && packet.text.startsWith(`${this.name} was slain`)) {
           this.hp = 0;
+          this.fallen.add(this.characterId);
         }
         break;
       case "s2c_kicked":
