@@ -56,6 +56,14 @@ describe("Regions", () => {
     expect((await realm.parties.accept(ben.id)).ok).toBe(true);
     await new Promise((r) => setTimeout(r, 100)); // party.updated reaches the servers
 
+    // Chat is global: global and party chat cross the region boundary
+    const heard = (client: TestClient, text: string) =>
+      until(() => client.packets.some((p) => p.type === "s2c_chat" && p.text === text), 5000, `"${text}"`);
+    anna.client.send({ type: "c2s_chat", text: "/g hello from Europe" });
+    await heard(ben.client, "hello from Europe");
+    ben.client.send({ type: "c2s_chat", text: "/p ready when you are" });
+    await heard(anna.client, "ready when you are");
+
     // Ben enters first: the dungeon is created in Anna's region (EU)
     expect(await serverOf(ben.id)![1].lifecycle.handOff(ben.id, "golem_dungeon")).toBe(true);
     const benDungeon = await ben.client.welcome(2);

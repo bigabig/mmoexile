@@ -11,9 +11,14 @@
  *      be rebuilt from heartbeats alone, and nobody may be disconnected.
  *   2. Kill the busiest instance server (docker kill): it must be marked dead
  *      within 10 s, get no new instances, and its players must log in again.
- *   3. Drain the next busiest server: its players move away without a kick,
- *      and the process exits with code 0.
- * Afterwards the realm is restored (stopped servers are started again).
+ *      The killed server is started again afterwards.
+ *   3. Drain the busiest server: its players move away without a kick, and
+ *      the process exits with code 0.
+ *   4. Region outage: kill every server of another region (us). Logins
+ *      there get "region_unavailable", players in the bots' region are not
+ *      affected.
+ * The bots play in the fastest region (or --region). Afterwards the realm
+ * is restored (stopped servers are started again).
  * Exits with 1 if any check fails.
  */
 import { execFile } from "node:child_process";
@@ -21,7 +26,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  accountApi,
   createHttpClient,
+  HttpError,
   orchestratorApi,
   redisKeys,
   type ServerView,
@@ -74,7 +81,7 @@ const describeFleet = (servers: ServerView[]) =>
   servers
     .slice()
     .sort((a, b) => a.serverId.localeCompare(b.serverId))
-    .map((s) => `${s.serverId}=${s.state}:${s.players}`)
+    .map((s) => `${s.serverId}(${s.region})=${s.state}:${s.players}`)
     .join(" ");
 
 /** Polls until `check` holds; returns the elapsed milliseconds. */
@@ -231,10 +238,15 @@ try {
       `  (info) ${joined.length} players were still sent to existing instances on it` +
         (lastJoin ? `, the last ${((lastJoin.time - killedAt) / 1000).toFixed(1)} s after the kill` : ""),
     );
+    console.log(`  Restarting ${service}…`);
+    await compose("start", service);
+    stopped.splice(stopped.indexOf(service), 1);
+    await waitFor(`${target.serverId} ready again`, async () =>
+      (await fleet()).find((s) => s.serverId === target.serverId)?.state === "ready", 90_000, 500);
     console.log(`  Fleet: ${describeFleet(await fleet())}\n`);
   }
 
-  // 3. Drain the next busiest server
+  // 3. Drain the busiest server
   {
     const name = "Drain";
     const target = busiest(await fleet());
@@ -259,6 +271,52 @@ try {
     record(name, "players moved without kick or disconnect", after.kicks === counters.kicks && after.disconnects === counters.disconnects,
       `${after.kicks - counters.kicks} kicks, ${after.disconnects - counters.disconnects} disconnects`);
     console.log(`  Fleet: ${describeFleet(await fleet())}\n`);
+  }
+
+  // 4. Region outage: every server of another region
+  {
+    const name = "Region outage";
+    const servers = await fleet();
+    const other = servers.find((s) => s.region !== region && s.state === "ready")?.region;
+    if (!other) {
+      console.log(`4. ${name}: skipped (no ready server outside region ${region})\n`);
+    } else {
+      const targets = servers.filter((s) => s.region === other && s.state === "ready");
+      const targetServices = targets.map((s) => services.get(s.serverId)!);
+      console.log(`4. ${name}: docker kill ${targetServices.join(" ")} (all of region ${other})`);
+      const counters = swarm.totals();
+      await compose("kill", ...targetServices);
+      stopped.push(...targetServices);
+      const deadMs = await waitFor(
+        `region ${other} dead`,
+        async () => {
+          const now = await fleet();
+          return targets.every((t) => now.find((s) => s.serverId === t.serverId)?.state === "dead");
+        },
+        30_000,
+      );
+      record(name, `all servers of ${other} marked dead within 10 s`, deadMs <= 10_000, `${(deadMs / 1000).toFixed(1)} s`);
+
+      // A new player choosing that region is told so, instead of being sent elsewhere
+      let token: string | undefined;
+      const api = createHttpClient({ baseUrl: apiUrl, token: () => token });
+      token = (await api(accountApi.guestLogin, { nickname: "Outage" })).sessionToken;
+      const { character } = await api(accountApi.createCharacter, { classId: "knight" });
+      const refused = await api(accountApi.play, { characterId: character.id, region: other }).then(
+        () => undefined,
+        (err: unknown) => err,
+      );
+      const reason = refused instanceof HttpError ? `${refused.status} ${refused.reason}: ${refused.message}` : "login succeeded";
+      record(name, `logins in ${other} answer region_unavailable`, refused instanceof HttpError && refused.reason === "region_unavailable", reason);
+      const elsewhere = await api(accountApi.play, { characterId: character.id, region }).then(() => true, () => false);
+      record(name, `logins in ${region} still work`, elsewhere, elsewhere ? "ticket issued" : "failed");
+
+      await sleep(5000);
+      const after = swarm.totals();
+      record(name, `players in ${region} unaffected`, after.kicks === counters.kicks && after.disconnects === counters.disconnects,
+        `${after.kicks - counters.kicks} kicks, ${after.disconnects - counters.disconnects} disconnects`);
+      console.log(`  Fleet: ${describeFleet(await fleet())}\n`);
+    }
   }
 } catch (err) {
   record("Run", "experiments completed", false, (err as Error).message);
