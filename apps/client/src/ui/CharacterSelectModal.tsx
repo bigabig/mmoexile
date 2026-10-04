@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Play, Plus, Skull, Trash2 } from "lucide-react";
 import type { CharacterSummary } from "@mmoexile/contracts";
 import { MAX_CHARACTERS_PER_ACCOUNT } from "@mmoexile/contracts";
+import { RegionSelector } from "./RegionSelector.js";
 
 interface CharacterSelectModalProps {
   accountName: string;
@@ -12,6 +13,8 @@ interface CharacterSelectModalProps {
   onCreate: (classId: "wizard" | "knight") => void;
   onDelete: (characterId: string) => void;
   onSignOut: () => void;
+  /** The region picker shown above the characters. */
+  region: React.ComponentProps<typeof RegionSelector>;
 }
 
 const CLASS_LABELS: Record<CharacterSummary["classId"], string> = {
@@ -42,6 +45,7 @@ export const CharacterSelectModal: React.FC<CharacterSelectModalProps> = ({
   onCreate,
   onDelete,
   onSignOut,
+  region,
 }) => {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const alive = characters.filter((c) => c.isAlive);
@@ -121,6 +125,8 @@ export const CharacterSelectModal: React.FC<CharacterSelectModalProps> = ({
           </div>
         )}
 
+        <RegionSelector {...region} disabled={busy} />
+
         {alive.length === 0 && (
           <p style={{ fontSize: 14, color: "#94a3b8", marginBottom: 16 }}>
             No living characters. Create one to enter the Nexus.
@@ -173,8 +179,9 @@ export const CharacterSelectModal: React.FC<CharacterSelectModalProps> = ({
                   </button>
                 )}
                 <button
-                  style={buttonStyle("#2563eb")}
-                  disabled={busy}
+                  style={buttonStyle(region.selected ? "#2563eb" : "#334155")}
+                  disabled={busy || !region.selected}
+                  title={region.selected ? undefined : "Pick a region first"}
                   onClick={() => onPlay(c.id)}
                 >
                   <Play size={14} /> Play

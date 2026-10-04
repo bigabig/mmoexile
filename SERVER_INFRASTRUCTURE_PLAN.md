@@ -585,11 +585,16 @@ What a region means:
   - *Until S4.5 the client and bots send `local`.*
   - *Multi-service test `tools/realm-tests/src/regions.test.ts` (servers `eu1@eu`, `eu2@eu`, `us1@us`): EU and US players get separate hubs; Ben (US) enters the party dungeon first and it is still created on an EU server because Anna (EU) leads; Anna joins the same instance; Ben returns to his original US nexus; a drained US region answers `region_unavailable` while EU logins keep working.*
 
-### S4.5 Client Region Selector
+### S4.5 Client Region Selector ✅
 - The login/character screen fetches `/directory/realms`, pings every region's `pingUrl` five times (`fetch` with `cache: "no-store"`, HTTP keep-alive, median of the last four to skip connection setup), and shows each region with its ping.
 - Preselects and highlights the fastest region; the player can change it at any time before pressing Play. The choice is not remembered.
 - On `region_unavailable` it shows "<Region> is unavailable right now" and lets the player pick another region.
 - Bots get `--region <id>` (default: the fastest, measured the same way).
+- *Implementation notes:*
+  - *The measuring logic is shared by the browser and the bots and lives in `packages/contracts/src/regionPing.ts`: `measurePing` (5 sequential `no-store` fetches, 2 s timeout each, median of the last 4), `measureRegions` (all regions in parallel) and `fastestRegion` (lowest reachable ping, optionally skipping regions). It is unit-tested there.*
+  - *The selector (`RegionSelector.tsx`) sits at the top of the character select screen. Pings are measured each time the screen opens; the fastest region is preselected until the player clicks one. Play stays disabled until a region is selected. Nothing is stored.*
+  - *On `region_unavailable` the region is marked "unavailable", the next fastest is preselected, and the notice says "<Region> is unavailable right now. Pick another region or try again in a moment."*
+  - *Bots: `--region <id>`, otherwise the fastest via the directory next to `--api` (`…/api` → `…/directory`, override with `--directory`). `hop` and `chaos` both use it.*
 
 ### S4.6 Two Regions in Docker Compose
 - `gateway-eu`, `gateway-us`; `instance-server-1/2` with `REGION=eu`, `instance-server-3` with `REGION=us`.

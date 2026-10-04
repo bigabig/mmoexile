@@ -6,3 +6,4 @@ export * from "./httpClient.js";
 export * from "./orchestratorApi.js";
 export * from "./regions.js";
 export * from "./directoryApi.js";
+export * from "./regionPing.js";

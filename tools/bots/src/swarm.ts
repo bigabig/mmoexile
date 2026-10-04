@@ -3,6 +3,8 @@ import { Bot, sleep } from "./bot.js";
 export interface SwarmOptions {
   /** account-api base URL, e.g. http://localhost:8080/api */
   apiUrl: string;
+  /** Region every bot plays in (see resolveRegion). */
+  region?: string;
   bots: number;
   /** Zones to travel through in a loop, e.g. ["nexus", "overworld"]. */
   route: string[];
@@ -107,7 +109,11 @@ export class Swarm {
   }
 
   private async hopper(index: number): Promise<void> {
-    const bot = new Bot({ apiUrl: this.options.apiUrl, name: `Hop${this.runId}x${index}` });
+    const bot = new Bot({
+      apiUrl: this.options.apiUrl,
+      region: this.options.region,
+      name: `Hop${this.runId}x${index}`,
+    });
     this.bots.push(bot);
     try {
       await bot.signIn();

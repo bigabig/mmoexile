@@ -27,6 +27,7 @@ import {
   type ServerView,
 } from "@mmoexile/contracts";
 import { sleep } from "./bot.js";
+import { directoryNextTo, resolveRegion } from "./regions.js";
 import { Swarm } from "./swarm.js";
 
 function arg(name: string, fallback: string): string {
@@ -157,7 +158,12 @@ if (ready.length < 3) {
 
 console.log(`Fleet: ${describeFleet(before)}`);
 console.log(`Starting ${botCount} bots…`);
-const swarm = new Swarm({ apiUrl, bots: botCount, route: ["nexus", "overworld"] });
+const region = await resolveRegion({
+  requested: arg("region", "") || undefined,
+  directoryUrl: arg("directory", directoryNextTo(apiUrl)),
+  log: console.log,
+});
+const swarm = new Swarm({ apiUrl, region, bots: botCount, route: ["nexus", "overworld"] });
 swarm.start();
 const stopped: string[] = [];
 

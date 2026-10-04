@@ -6,7 +6,14 @@ import { ChatBox, ChatMessage } from "./ChatBox.js";
 import { QuickJoinModal } from "./QuickJoinModal.js";
 import { AccountClient } from "../net/accountClient.js";
 import { CharacterSelectModal } from "./CharacterSelectModal.js";
-import type { CharacterSummary } from "@mmoexile/contracts";
+import {
+  fastestRegion,
+  HttpError,
+  measureRegions,
+  type CharacterSummary,
+  type RegionPing,
+} from "@mmoexile/contracts";
+import { loadRegions } from "../net/regions.js";
 import type { KickReason } from "@mmoexile/protocol";
 
 const KICK_MESSAGES: Record<KickReason, string> = {
@@ -36,6 +43,13 @@ export const App: React.FC = () => {
   const [joining, setJoining] = useState(false);
   const [loadingZone, setLoadingZone] = useState<string | null>(null);
   const accountRef = useRef(new AccountClient());
+  // Region picker: the fastest region is preselected until the player picks
+  // one. Nothing is stored; the next visit measures again.
+  const [regions, setRegions] = useState<RegionPing[] | null>(null);
+  const [measuring, setMeasuring] = useState(false);
+  const [region, setRegion] = useState<string | null>(null);
+  const [unavailableRegions, setUnavailableRegions] = useState<string[]>([]);
+  const regionPickedRef = useRef(false);
   const [hp, setHp] = useState(100);
   const [maxHp, setMaxHp] = useState(100);
   const [mp, setMp] = useState(50);
@@ -189,6 +203,39 @@ export const App: React.FC = () => {
     }
   };
 
+  // Measure every region's ping whenever the character select opens.
+  useEffect(() => {
+    if (phase !== "select") return;
+    let cancelled = false;
+    void (async () => {
+      setMeasuring(true);
+      try {
+        const list = await loadRegions();
+        if (cancelled) return;
+        setRegions((previous) => previous ?? list);
+        const measured = await measureRegions(list);
+        if (cancelled) return;
+        setRegions(measured);
+        if (!regionPickedRef.current) {
+          setRegion(fastestRegion(measured, unavailableRegions) ?? list[0]?.id ?? null);
+        }
+      } catch {
+        if (!cancelled) setNotice("Could not load the list of regions. Reload to try again.");
+      } finally {
+        if (!cancelled) setMeasuring(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase]);
+
+  const handleSelectRegion = (regionId: string) => {
+    regionPickedRef.current = true;
+    setRegion(regionId);
+    setUnavailableRegions((list) => list.filter((id) => id !== regionId));
+  };
+
   const showCharacterSelect = async () => {
     const { characters } = await accountRef.current.listCharacters();
     setCharacters(characters);
@@ -217,9 +264,21 @@ export const App: React.FC = () => {
   const handlePlay = (characterId: string) =>
     withAccount(async () => {
       setNotice(null);
-      const { url, ticket } = await accountRef.current.play(characterId, "local");
-      setPhase("playing");
-      gameAppRef.current?.connect(url, ticket);
+      if (!region) return;
+      try {
+        const { url, ticket } = await accountRef.current.play(characterId, region);
+        setPhase("playing");
+        gameAppRef.current?.connect(url, ticket);
+      } catch (err) {
+        if (!(err instanceof HttpError && err.reason === "region_unavailable")) throw err;
+        // No silent spill-over: preselect the next fastest region and let
+        // the player decide.
+        const unavailable = [...unavailableRegions.filter((id) => id !== region), region];
+        setUnavailableRegions(unavailable);
+        regionPickedRef.current = false;
+        setRegion(fastestRegion(regions ?? [], unavailable) ?? region);
+        setNotice(`${err.message}. Pick another region or try again in a moment.`);
+      }
     });
 
   const handleCreateCharacter = (classId: "wizard" | "knight") =>
@@ -323,6 +382,13 @@ export const App: React.FC = () => {
           onCreate={handleCreateCharacter}
           onDelete={handleDeleteCharacter}
           onSignOut={handleSignOut}
+          region={{
+            regions,
+            measuring,
+            selected: region,
+            unavailable: unavailableRegions,
+            onSelect: handleSelectRegion,
+          }}
         />
       )}
 
