@@ -14,6 +14,9 @@ scrape_configs:
   - job_name: social
     static_configs:
       - targets: ["social:3002"]
+  - job_name: directory
+    static_configs:
+      - targets: ["directory:3004"]
   - job_name: instance-servers
     static_configs:
       - targets:

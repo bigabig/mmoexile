@@ -11,6 +11,11 @@ export default defineConfig({
         target: "http://localhost:3000",
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
+      // directory: realms and their regions (region selector)
+      "/directory": {
+        target: "http://localhost:3004",
+        rewrite: (path) => path.replace(/^\/directory/, ""),
+      },
     },
   },
 });

@@ -5,3 +5,4 @@ export * from "./redisKeys.js";
 export * from "./httpClient.js";
 export * from "./orchestratorApi.js";
 export * from "./regions.js";
+export * from "./directoryApi.js";

@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-# Static game client served by nginx, which also proxies /api to account-api.
+# Static game client served by nginx, which also proxies /api to account-api
+# and /directory to the directory.
 
 FROM node:24-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends openssl \

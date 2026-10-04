@@ -552,10 +552,14 @@ What a region means:
   - *`AdmittedPlayer.homeRegion` comes from the ticket and goes into every allocation the player triggers, so it survives any number of handoffs. Until S4.4, account-api logs everyone in with `local`.*
   - *`Presence.set` takes `{ characterId, name, homeRegion }`, and `homeRegionOf(characterId)` answers the leader lookup.*
 
-### S4.2 `apps/directory`
+### S4.2 `apps/directory` ✅
 - A tiny, stateless, global service: `GET /realms` → `[{ id, name, accountApiUrl, regions: [{ id, name, pingUrl }] }]`. Configured by environment (`REALM_NAME`, `REGIONS="eu=Europe=http://localhost:7100/ping,us=North America=http://localhost:7200/ping"`), cacheable (`Cache-Control`). One realm for now; the shape allows more later.
 - **Gateway ping endpoints:** each region gets a minimal `gateway-<region>` container (nginx answering `GET /ping` with 204 and CORS headers). It sits in the region's network position, so its round trip is the player's latency to that region. It stands for the region's edge/gateway, which later may also become a TLS or WebSocket entry point.
 - Served to the browser through the client's nginx (`/directory`), like `/api`.
+- *Implementation notes:*
+  - *The response is `{ realms: [...] }` rather than a bare array, so fields can be added later. The contract (`directoryApi`, `RealmInfo`, `RegionInfo`) and the `REGIONS` parser (`parseRegions`) live in `packages/contracts`, so account-api can validate regions against the same setting.*
+  - *The directory also answers `GET /ping` itself; its default `REGIONS` is a single `local` region pinging it, so `pnpm dev` works without gateway containers. `pnpm dev` starts the directory on port 3004; Vite proxies `/directory` to it.*
+  - *Gateways are plain `nginx:1.29-alpine` containers with `infra/docker/gateway.nginx.conf` mounted (ports 7100 for `eu`, 7200 for `us`). The `REGIONS` value is shared in compose through a YAML anchor.*
 
 ### S4.3 Region-Aware Allocation (orchestrator)
 - `AllocateRequest` gains `region` (the player's home region) and `leaderRegion?`.
@@ -624,6 +628,8 @@ What a region means:
 | account-api | 3000 | `ACCOUNT_API_` |
 | social | 3002 | `SOCIAL_` |
 | orchestrator | 3003 | `ORCHESTRATOR_` |
+| directory | 3004 | `DIRECTORY_` |
+| gateway-eu / gateway-us (compose) | 7100 / 7200 | |
 | instance-server | 7001+ | `INSTANCE_SERVER_` |
 | postgres / redis | 5432 / 6379 | `DATABASE_URL` / `REDIS_URL` |
 

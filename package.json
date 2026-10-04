@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@12.5.1",
   "scripts": {
-    "dev": "pnpm --parallel --filter @mmoexile/account-api --filter @mmoexile/social --filter @mmoexile/orchestrator --filter @mmoexile/instance-server --filter @mmoexile/client dev",
+    "dev": "pnpm --parallel --filter @mmoexile/account-api --filter @mmoexile/social --filter @mmoexile/orchestrator --filter @mmoexile/directory --filter @mmoexile/instance-server --filter @mmoexile/client dev",
     "dev:server": "pnpm --filter @mmoexile/instance-server dev",
     "dev:client": "pnpm --filter @mmoexile/client dev",
     "build": "pnpm -r build",
@@ -20,6 +20,7 @@
     "realm:down": "docker compose -f infra/compose/docker-compose.yml --profile realm down",
     "bench": "pnpm --filter @mmoexile/simulation bench",
     "dev:orchestrator": "pnpm --filter @mmoexile/orchestrator dev",
+    "dev:directory": "pnpm --filter @mmoexile/directory dev",
     "chaos": "pnpm --filter @mmoexile/bots chaos"
   },
   "devDependencies": {
