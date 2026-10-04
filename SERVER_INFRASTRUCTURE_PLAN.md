@@ -8,10 +8,10 @@ This is the task-level plan for moving from today's single-process server to the
 | **1** | Real instancing | 1 process + Postgres | none |
 | **2** | Split process roles, handoff | docker-compose, 1 machine | `account-api`, `social`, 2× `instance-server` |
 | **3** | Orchestrator & fleet | docker-compose, 1 machine | `orchestrator`, 3× generic `instance-server`, Prometheus, Grafana |
-| 4 | Regions | ≥2 locations | `directory` |
+| **4** | Regions | docker-compose, 2 simulated locations | `directory`, `gateway-eu`/`gateway-us`, `region-us` (netem) |
 | 5 | Kubernetes & Agones | cluster | none (packaging) |
 
-Stages 0–3 are done (each with implementation notes and verified acceptance criteria below). Stage 4 is planned in detail; Stage 5 is outlined.
+Stages 0–4 are done (each with implementation notes and verified acceptance criteria below). Stage 5 is outlined.
 
 **Working agreements**
 
@@ -629,19 +629,20 @@ What a region means:
 - *Result* (10 bots per region, nexus ↔ overworld, finer handoff buckets): warm US admission hello → welcome dropped from 336 ms to 133–173 ms; US zone-change handoff p50/p95 dropped from ≈ 750 ms (coarse buckets) to **232 / 292 ms**; EU stayed at 7 / 22 ms; 0 kicks and 0 failed hops. What remains at +40 ms: 3 central round trips (save, claim+lease, take over) plus 3 to the player (reconnect message, TCP, WebSocket upgrade) and the welcome.
 - *Found on the way:* the client's nginx resolved `account-api` only at startup and answered 502 after account-api was recreated. It now re-resolves through Docker's DNS (`resolver 127.0.0.11`, `proxy_pass` with a variable).
 
-### Tests
-- Unit (orchestrator): region filter per access policy; party instance in the leader's region; an existing party instance is joined across regions; `region_unavailable`.
-- Unit (directory): config parsing, response shape, cache header.
-- Multi-service (`tools/realm-tests`): two regions in one process. EU and US players get hubs in their own region; an EU-led party with a US member shares one dungeon on an EU server, and the US member returns to a US hub; a region without servers → `region_unavailable`.
-- Client: region selector logic (median, preselection) as unit tests; the full flow checked in a browser against the Docker realm.
-- E2E against the Docker realm with latency: bots per region; `pnpm chaos` extended with a **region outage** (all US servers killed: US players get `region_unavailable`, EU unaffected).
+### Tests ✅
+- Unit (orchestrator, `allocation.test.ts` "regions"): public zones only in the home region (separate hub shards per region); a party's dungeon created in the leader's region and joined from any region; solo instances in the player's region; `region_unavailable` without spill-over; `portal_bound` follows its portal's region.
+- Unit (directory): response shape, cache and CORS headers, the `/ping` fallback, refusal of a malformed `REGIONS`. Unit (contracts): region IDs, `parseRegions`, warm median, ping measurement, fastest-region choice.
+- Unit (auth, instance-server): the `region`/`fromRegion` claims round-trip; a ticket with a malformed region is rejected; the home region survives a handoff; single-round-trip ownership (claim once, missing character, fenced write with JSON).
+- Multi-service (`tools/realm-tests/src/regions.test.ts`, servers `eu1@eu`, `eu2@eu`, `us1@us`): separate hubs per region; global and party chat across regions; Ben (US) enters the EU leader's dungeon first and it still runs on an EU server; Anna joins it; Ben returns to his US nexus; the cross-region handoff is labelled `from_region="eu", to_region="us"`; a drained US region answers `region_unavailable` while EU logins work.
+- Browser (headless Chrome against the Docker realm): preselection, manual choice, the unavailable notice.
+- E2E against the Docker realm with latency: bots per region (`--region`); `pnpm chaos` with a **region outage** experiment.
 
-### Acceptance Criteria
-- [ ] The login screen lists both regions with their measured ping, and preselects the faster one.
-- [ ] EU players only ever see EU hubs, US players only US hubs; chat and parties work across regions.
-- [ ] A party led by an EU player with a US member runs its dungeon on an EU server; the US member pays the higher ping there and is back in a US hub afterwards.
-- [ ] With 40 ms added to the US region, the selector shows the difference, and the cross-region handoff cost is measured and visible in Grafana (admission ≤ 4 central round trips).
-- [ ] Killing every US server: US logins get "region unavailable" with the choice of another region; EU players are unaffected; `pnpm chaos` passes.
+### Acceptance Criteria ✅
+- [x] The login screen lists both regions with their measured ping, and preselects the faster one. *Europe 2 ms (preselected), North America 43 ms; nothing is stored.*
+- [x] EU players only ever see EU hubs, US players only US hubs; chat and parties work across regions. *Bots: EU only on s1/s2, US only on s3; chat and parties covered by the realm test.*
+- [x] A party led by an EU player with a US member runs its dungeon on an EU server; the US member pays the higher ping there and is back in a US hub afterwards. *Realm test, including the cross-region handoff metric.*
+- [x] With 40 ms added to the US region, the selector shows the difference, and the cross-region handoff cost is measured and visible in Grafana (admission ≤ 4 central round trips). *2 round trips per admission; US zone change p50 232 ms (was ≈ 750 ms), EU 7 ms; Regions row in Grafana (screenshot `docs/images/realm-regions.png`).*
+- [x] Killing every US server: US logins get "region unavailable" with the choice of another region; EU players are unaffected; `pnpm chaos` passes. *13/13 checks: US dead after 4.6 s, `503 region_unavailable`, EU logins work, 0 kicks and 0 disconnects in EU; the browser shows "North America is unavailable right now…" with Europe preselected.*
 
 ## Stage 5: Kubernetes & Agones (outline)
 

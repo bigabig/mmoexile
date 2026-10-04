@@ -27,7 +27,8 @@ mmoexile/
 │   ├── client/           # Vite + Three.js isometric renderer, React HUD, login & character select
 │   ├── account-api/      # Login, characters, /play (Fastify, :3000)
 │   ├── social/           # Parties for the whole realm (Fastify, :3002)
-│   ├── orchestrator/     # Fleet registry, instance allocation, the only ticket issuer (Fastify, :3003)
+│   ├── orchestrator/     # Fleet registry, region-aware instance allocation, the only ticket issuer (Fastify, :3003)
+│   ├── directory/        # The realm and its regions with their ping URLs (Fastify, :3004)
 │   └── instance-server/  # Hosts instances: WebSocket gateway, simulation, handoffs, draining (:3001 / :7001+)
 ├── packages/
 │   ├── game-core/        # Math, maps, zones, items, prefabs, progression, combat formulas, ECS components
@@ -72,8 +73,9 @@ pnpm db:deploy
 ### 3. Run Development Servers
 
 ```bash
-# account-api (:3000), social (:3002), the orchestrator (:3003), one instance
-# server (:3001, internal API :9001) and the Vite client (:5173), all with hot reload
+# account-api (:3000), social (:3002), the orchestrator (:3003), the directory
+# (:3004), one instance server (:3001, internal API :9001) and the Vite client
+# (:5173), all with hot reload. There is one region, "local".
 pnpm dev
 ```
 
@@ -85,19 +87,28 @@ _(To test multiplayer, open a second browser profile or incognito window: each o
 ### 4. Run the Full Realm in Docker
 
 ```bash
-# Builds and starts account-api, social, the orchestrator, three generic
-# instance servers (:7001-:7003), Postgres, Redis, the client, Prometheus and Grafana
+# Builds and starts account-api, social, the orchestrator, the directory, three
+# generic instance servers (:7001-:7003), Postgres, Redis, the client, Prometheus
+# and Grafana. Two regions: eu (s1, s2) and us (s3, 40 ms farther away)
 pnpm realm:up
+
+# Compare other distances to the US region
+US_LATENCY_MS=120 pnpm realm:up
 ```
 
 | URL | What |
 | :--- | :--- |
 | **`http://localhost:8080`** | The game |
 | `http://localhost:3030` | Grafana, "Realm Overview" dashboard (players, instances and tick times per server) |
-| `http://localhost:3003/servers` | The orchestrator's view of the fleet (localhost only) |
+| `http://localhost:3003/servers` | The orchestrator's view of the fleet, with each server's region (localhost only) |
+| `http://localhost:8080/directory/realms` | The realm's regions, as the region selector sees them |
 | `http://localhost:9090` | Prometheus |
 
 Every zone change goes through the orchestrator, which decides which server hosts the next instance. Stop everything with `pnpm realm:down`.
+
+**Regions** work like Path of Exile's gateways. The character screen pings each region's gateway and preselects the fastest; you can pick another one (nothing is stored). Hubs (nexus, overworld) are per region. Chat and parties are global, and a party's dungeon runs in the leader's region, so friends on different continents can play together; afterwards everyone returns to the hubs of their own region. The US region sits behind `region-us`, a container that delays everything its services send with `tc netem`, so you can feel and measure the distance.
+
+![The Regions row: players and servers per region, handoffs within EU vs. within the US (40 ms away)](docs/images/realm-regions.png)
 
 ![Realm Overview dashboard during a 300-bot run](docs/images/realm-overview.png)
 
@@ -111,6 +122,9 @@ pnpm --filter @mmoexile/bots hop -- --bots 20 --minutes 2 --api http://localhost
 
 # Also visit the golem dungeon: every bot opens its own private instance
 pnpm --filter @mmoexile/bots hop -- --bots 60 --minutes 5 --route nexus,overworld,golem_dungeon
+
+# Bots play in the fastest region, measured like the browser does; or choose one
+pnpm --filter @mmoexile/bots hop -- --bots 20 --minutes 2 --region us
 ```
 
 ### 6. Experiment: Scale, Kill and Drain Servers

@@ -116,6 +116,7 @@ pnpm --filter @mmoexile/instance-server test
 | `allocation.test.ts` | Tickets lead into the right instance; hubs fill up first; 60 dungeons spread evenly |
 | `drain.test.ts` | Draining moves players away with their state intact |
 | `journey.test.ts` | Login → play → portal → other server, and the metrics record it |
+| `regions.test.ts` | Two regions (`startRealm({ servers: ["eu1@eu", "eu2@eu", "us1@us"] })`): hubs per region, chat and parties across regions, a party dungeon in the leader's region, `region_unavailable` |
 
 **Run:**
 
@@ -245,13 +246,14 @@ pnpm realm:up
 pnpm chaos                    # 60 bots by default; more with: pnpm chaos -- --bots 100
 ```
 
-`tools/bots/src/chaos.ts` starts its own bots, waits until they all play, then runs three experiments one after another, measuring each:
+`tools/bots/src/chaos.ts` starts its own bots, waits until they all play, then runs four experiments one after another, measuring each. The bots play in the fastest region (`--region` to choose):
 
 | # | Experiment | What it does | Checks |
 | :--- | :--- | :--- | :--- |
 | 1 | Orchestrator restart | Stops the orchestrator, deletes its Redis mirror, starts it again | Fleet rebuilt from heartbeats within one interval (~2 s); nobody kicked or disconnected |
-| 2 | Server crash | `docker compose kill` on the busiest instance server | Marked `dead` within 10 s; no new instance created on it; all bots playing again elsewhere |
-| 3 | Drain | `POST /servers/<id>/drain` on the next busiest server | Exits with code 0; reported `stopped`; its players moved without kick or disconnect |
+| 2 | Server crash | `docker compose kill` on the busiest instance server (started again afterwards) | Marked `dead` within 10 s; no new instance created on it; all bots playing again elsewhere |
+| 3 | Drain | `POST /servers/<id>/drain` on the busiest server | Exits with code 0; reported `stopped`; its players moved without kick or disconnect |
+| 4 | Region outage | `docker compose kill` on every server of another region (us) | All marked `dead` within 10 s; a login there gets `region_unavailable`; logins in the bots' region still work; its players are not kicked or disconnected |
 
 At the end it starts the stopped servers again, prints a ✔/✘ line per check, and exits with code 1 if any check failed (so it could run in a pipeline later). A run takes about 2–3 minutes. Example output:
 
@@ -261,7 +263,7 @@ At the end it starts the stopped servers again, prints a ✔/✘ line per check,
   ✔ its players logged in again elsewhere: all 60 bots online 6.0 s after the kill
   ✔ no new instance created on it: 0 created
 ...
-PASSED: 9/9 checks
+PASSED: 13/13 checks
 ```
 
 Expected side effects: bots on the killed server lose their connection (`disconnects` and `failedHops` in the bot summary) and log in again. Kicks must stay at 0.
@@ -309,6 +311,8 @@ docker inspect -f '{{.State.ExitCode}}' mmoexile-instance-server-1-1
 | Players were still sent to a crashed server | `allocation.test.ts`: "stops sending players to a server that went quiet" |
 | A restarted orchestrator answered "fleet full" | `registry.test.ts`: "waits for the first heartbeats" |
 | Snapshot optimization must not change the wire format | `snapshotEncoder.test.ts`: byte-for-byte equality |
+| (Stage 4) Bots re-used a character that had just died, because the death save lagged behind | `bot.ts` remembers fallen characters (a tool fix; the server was right to refuse) |
+| (Stage 4) Admission needed 6 central round trips | `ownership.test.ts`: "claims a one-time key (a ticket) together with the lease", "writes only the given columns … in one fenced statement" |
 
 ---
 

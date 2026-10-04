@@ -146,7 +146,7 @@ This is what a PoE loading screen is. The original RotMG does the same via its `
 
 ## 6. Current State vs. Target
 
-Stages 0–3 are complete. A realm runs as several cooperating processes (`pnpm realm:up` starts them in Docker): `account-api` (login, characters), `social` (parties), the `orchestrator` (fleet registry, allocation, the only ticket issuer), three generic `instance-server`s that host any zone, Postgres, Redis, Prometheus and Grafana. Characters move between servers with the ticket and lease handoff; the orchestrator decides where every new instance runs, notices dead servers, and drains servers before they stop. Stage 4 adds regions.
+Stages 0–4 are complete. A realm runs as several cooperating processes (`pnpm realm:up` starts them in Docker): `account-api` (login, characters), `social` (parties), the `orchestrator` (fleet registry, allocation, the only ticket issuer), the `directory` (realms and their regions), three generic `instance-server`s that host any zone, Postgres, Redis, Prometheus and Grafana. The instance servers are split into two regions, `eu` and `us`; the US region sits behind a simulated 40 ms of distance. Players pick a region by ping. Characters move between servers with the ticket and lease handoff; the orchestrator decides where every new instance runs (within the right region), notices dead servers, and drains servers before they stop. Stage 5 moves this onto Kubernetes and Agones.
 
 | Concern | Today | Target |
 | :--- | :--- | :--- |
@@ -164,8 +164,8 @@ Stages 0–3 are complete. A realm runs as several cooperating processes (`pnpm 
 | Ownership | **Done (S2.7):** Redis lease plus Postgres fencing epoch per character; newest login wins | One owner per character |
 | Placement across servers | **Done (S3.1–S3.5):** the orchestrator applies each zone's access policy across the fleet and creates new instances on the least loaded server (players, instances, tick p95, event loop utilization); registry rebuilt from heartbeats | Load-based, dynamic |
 | Server lifecycle | **Done (S3.2/S3.6):** `starting → ready → draining → stopped`, plus `dead` after 6 s without heartbeats; SIGTERM drains (hubs move at once, dungeons get a timeout) | Matches Agones |
-| Observability | **Done (S3.7):** Prometheus metrics in every service, Grafana "Realm Overview"; ticket IDs correlate a handoff across logs | Metrics, dashboards, traces |
-| Regions | None | Gateways |
+| Observability | **Done (S3.7/S4.7):** Prometheus metrics in every service, labelled by region; Grafana "Realm Overview" with a region filter and a Regions row; ticket IDs correlate a handoff across logs | Metrics, dashboards, traces |
+| Regions | **Done (Stage 4):** `eu` and `us` in compose (US delayed 40 ms with `tc netem`); the client pings each region's gateway and preselects the fastest; public zones are placed in the player's home region, a party's private instances in the leader's region; no capacity → `region_unavailable`; admission needs 2 central round trips | Gateways |
 
 ### Foundations Already in Place
 
@@ -329,6 +329,7 @@ This is the point where it becomes a real distributed system.
 - Region tag on instance servers.
 - Client-side latency probe to suggest a gateway.
 - Region-aware placement. Central services stay central.
+- The cost of distance to the central services is measured and reduced (fewer round trips per handoff).
 
 ### Stage 5: Kubernetes & Agones
 - Plain `Deployment`s for stateless apps; an Agones `Fleet` for instance servers.

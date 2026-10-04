@@ -18,6 +18,8 @@ This document describes how the game works **today**: the services of a realm, h
 ```mermaid
 flowchart LR
     C["client<br/>(browser)"] -- "HTTPS /api" --> API["account-api<br/>login, characters"]
+    C -- "HTTPS /directory" --> DIR["directory<br/>realms, regions"]
+    C -. "GET /ping (each region)" .-> GW["gateway-eu / gateway-us"]
     C == "WebSocket + ticket" ==> S1["instance-server s1"]
     C == "WebSocket + ticket" ==> S2["instance-server s2"]
     C == "WebSocket + ticket" ==> S3["instance-server s3"]
@@ -38,9 +40,11 @@ flowchart LR
 | :--- | :--- | :--- |
 | `account-api` (`:3000`) | `Account`, `Character` rows (create/delete) | Postgres; signs session tokens; asks the orchestrator for the first ticket |
 | `orchestrator` (`:3003`, internal) | The fleet registry (servers, instances, load) and the ticket signing key | Instance servers' internal APIs; Redis (registry mirror) |
+| `directory` (`:3004`) | Nothing (stateless): the realm and its regions from the `REGIONS` setting | Nobody; the client calls `GET /realms` |
+| `gateway-<region>` (Docker: `:7100` eu, `:7200` us) | Nothing: answers `GET /ping` from the region's network position | — |
 | `instance-server` (`SERVER_ID`; `:3001` + internal `:9001` in dev, `:7001`–`:7003` in Docker) | The instances placed on it; gameplay columns of characters it holds the lease for | Postgres (fenced writes), Redis, social, orchestrator |
 | `social` (`:3002`) | Parties (in Redis) | Redis; publishes `party.updated` |
-| `client` | — | account-api over HTTP, one instance server at a time over WebSocket |
+| `client` | — | directory and account-api over HTTP, each region's gateway (ping), one instance server at a time over WebSocket |
 
 Instance servers are **generic**: any server hosts any zone. Each keeps one warm nexus; every other instance is created where the orchestrator decides. Each server has two ports: the public WebSocket port that clients connect to directly, and an internal HTTP port (instance creation, `/metrics`) that only the orchestrator and Prometheus reach.
 
@@ -49,7 +53,15 @@ Instance servers are **generic**: any server hosts any zone. Each keeps one warm
 - **Registry** (`Registry.ts`): every server with its state, capacity, tick p95, CPU and instances (zone, owner party or portal, players). It lives in memory, is mirrored to Redis, and is rebuilt from heartbeats: a heartbeat from an unknown server registers it, so a restarted orchestrator knows the whole fleet again within one interval (2 s). Restarting it never disconnects a player, since clients talk to instance servers directly.
 - **Liveness**: servers report every 2 s and immediately when instances are created or closed. Three missed heartbeats (6 s) mark a server `dead`: it gets no players, and its instances are dropped from the registry.
 - **Allocation** (`Allocator.ts`, `placement.ts`): `POST /allocate { zoneId, characterId, accountId, partyId?, via?, preferInstanceId?, excludeServerId? }` applies the zone's access policy across the whole fleet: fill the fullest public shard below its soft cap, or find the party's or portal's existing instance. Otherwise it creates one on the best `ready` server: lowest `players + 5 × instances`, plus a penalty when tick p95 exceeds 20 ms; never draining, dead, full or excluded servers. Decisions for the same zone and owner are serialized, so a party arriving together gets one instance. Players on their way count as "reservations" until the next heartbeat covers them.
-- **Tickets**: the orchestrator is the only issuer. Tickets are Ed25519 JWTs naming character, zone, **instance** and target server; instance servers only have the public key, so a compromised instance server cannot mint tickets.
+- **Tickets**: the orchestrator is the only issuer. Tickets are Ed25519 JWTs naming character, zone, **instance**, target server and the player's **home region**; instance servers only have the public key, so a compromised instance server cannot mint tickets.
+
+### Regions
+
+Every instance server runs in one region (`REGION`, e.g. `eu`, `us`); its instances are in that region. Central services (account-api, orchestrator, social, directory, Postgres, Redis) exist once.
+
+- **Choosing**: the client loads the regions from the directory, pings each region's gateway five times (median of the last four) and preselects the fastest. `/play { characterId, region }` makes that region the player's **home region** for the session. It is not stored anywhere: it travels in every ticket, and instance servers pass it on with every allocation.
+- **Placement** (`targetRegion()` in `placement.ts`): public zones (hubs) are placed in the home region only, so there are separate hub shards per region. A party's private instance is created in the **leader's** home region (looked up via presence) and joined from any region. A `portal_bound` instance follows the region of its portal. Without capacity in the target region the orchestrator answers `503 { reason: "region_unavailable" }`; there is no silent spill-over, the client asks the player to pick another region.
+- **Distance**: in Docker, `region-us` owns the US services' network namespace and delays everything they send with `tc netem` (`US_LATENCY_MS`, default 40). Every sequential trip from a US server to Redis or Postgres costs that much, so admission is kept to two (see "Ownership and players").
 
 ### Server lifecycle and draining
 
@@ -69,9 +81,9 @@ SIGINT (Ctrl-C in development), or a second signal during a drain, skips drainin
 
 **Login.** The client signs in at `account-api`, picks a character, and `POST /play` asks the orchestrator to allocate a nexus slot. It returns the server's URL plus a 30-second transfer ticket for exactly that server and instance. The client connects and sends `c2s_hello { ticket, protocolVersion }`. `PlayerLifecycle.admit()` on the instance server:
 
-1. verifies the ticket's signature (Ed25519 public key), expiry and target server, and claims its id once in Redis (no replays);
-2. takes the character's **ownership lease** (`lease:char:<id>` in Redis, `SET NX`, 30 s, renewed every 10 s) and increments `Character.ownerEpoch` in Postgres;
-3. loads the character (after owning it, so it reads the latest save), puts it into the instance named on the ticket (if that instance closed in the meantime, the local placement rules create an equivalent one), and sends `s2c_welcome`.
+1. verifies the ticket's signature (Ed25519 public key), expiry and target server;
+2. in **one Redis round trip** (a script), claims the ticket id once (no replays) and takes the character's **ownership lease** (`lease:char:<id>`, `SET NX`, 30 s, renewed every 10 s);
+3. in **one Postgres round trip**, increments `Character.ownerEpoch` and loads the character with its account's nickname (`UPDATE … RETURNING`, so it reads the latest save), puts it into the instance named on the ticket (if that instance closed in the meantime, the local placement rules create an equivalent one), and sends `s2c_welcome`.
 
 If someone else holds the lease, the newest login wins: the holder is asked to leave via `session.kick` (it saves and releases), and after 5 s the new server takes over by force.
 
@@ -86,18 +98,20 @@ sequenceDiagram
     participant B as Server B
 
     C->>A: c2s_interact (at a portal)
-    A->>O: POST /allocate { zone, character, party, via }
+    A->>O: POST /allocate { zone, character, region, leaderRegion?, party, via }
     O->>B: POST /internal/instances (if a new instance is needed)
     O->>A: { url of B, instanceId, ticket }
     A->>A: detach character from its instance
-    A->>R: save WHERE ownerEpoch = e, release lease
+    A->>R: save WHERE ownerEpoch = e
     A->>C: s2c_reconnect { url of B, ticket }
+    A->>R: release lease (while the client reconnects)
     C->>B: connect, c2s_hello { ticket }
-    B->>R: claim ticket, take lease (epoch e+1), load character
+    B->>R: Redis: claim ticket + take lease (one script)
+    B->>R: Postgres: epoch e+1 + load character (one statement)
     B->>C: s2c_welcome (loading screen ends)
 ```
 
-Allocation happens before the character is frozen: if the orchestrator is unreachable or the fleet is full, the player stays where they are and gets a chat notice. The ticket ID appears in the logs of account-api or the source server, the orchestrator, and the target server, which ties one handoff together across services.
+Allocation happens before the character is frozen: if the orchestrator is unreachable or the region is full (`region_unavailable`), the player stays where they are and gets a chat notice. The ticket ID appears in the logs of account-api or the source server, the orchestrator, and the target server, which ties one handoff together across services.
 
 **Fencing.** Every save is `UPDATE … WHERE ownerEpoch = <my epoch>`. A server that lost its lease without noticing (paused process, network split) writes 0 rows, drops the character, and kicks the session. A crashed server's characters become claimable once its leases expire (or immediately via forced takeover on the next login).
 
@@ -187,7 +201,7 @@ Hosts the instances of this process and routes players between them.
 
 ### Ownership and players (`src/ownership/`, `src/players/`)
 
-- **`CharacterOwnership`**: lease acquire / force / renew / release, and `writeFenced()`.
+- **`CharacterOwnership`**: lease acquire / force / renew / release, and `writeFenced()`. Every step is one round trip, because instance servers may be far from Redis and Postgres: `acquire` claims the ticket and the lease in one Redis script and bumps the epoch and loads the character in one SQL statement; `writeFenced` is a single `UPDATE` (Prisma's `updateMany` would add `BEGIN`/`COMMIT`).
 - **`LeaseKeeper`**: renews all held leases and reports lost ones.
 - **`FencedCharacterWriter`**: the database writer behind `PersistenceService`; skips characters we don't own and drops fenced ones.
 - **`PlayerLifecycle`**: admit, hand off, leave, kick, drop when fenced, shutdown (see §3).
@@ -250,7 +264,7 @@ Internal port (`src/internalApi.ts`, `INTERNAL_PORT`, never published): see Flee
 
 ### Metrics
 
-Every service serves Prometheus metrics on `/metrics` (`service-kit`'s `createMetrics`: process metrics plus service metrics). Instance servers: `mmoexile_players`, `mmoexile_instances{zone}`, `mmoexile_tick_duration_seconds`, `mmoexile_tick_interval_seconds` (time between two ticks of one instance: 33 ms while the server keeps up), `mmoexile_event_loop_utilization`, `mmoexile_handoff_duration_seconds{kind}` (ticket issue to admission, including the client's reconnect), `mmoexile_lease_conflicts_total`, `mmoexile_fenced_writes_total`, `mmoexile_ticket_rejections_total{reason}`. Orchestrator: `mmoexile_allocation_duration_seconds{created}`, `mmoexile_allocation_failures_total{status}`, and per-server gauges from the heartbeats (`mmoexile_fleet_server_players`, `…_instances`, `…_tick_p95_seconds`, `mmoexile_fleet_servers{state}`). The Docker realm provisions Prometheus and a Grafana "Realm Overview" dashboard (`infra/observability/`).
+Every service serves Prometheus metrics on `/metrics` (`service-kit`'s `createMetrics`: process metrics plus service metrics). Instance servers: `mmoexile_players`, `mmoexile_instances{zone}`, `mmoexile_tick_duration_seconds`, `mmoexile_tick_interval_seconds` (time between two ticks of one instance: 33 ms while the server keeps up), `mmoexile_event_loop_utilization`, `mmoexile_handoff_duration_seconds{kind,from_region,to_region}` (ticket issue to admission, including the client's reconnect), `mmoexile_lease_conflicts_total`, `mmoexile_fenced_writes_total`, `mmoexile_ticket_rejections_total{reason}`. Every instance-server metric also carries `server` and `region`. Orchestrator: `mmoexile_allocation_duration_seconds{created}`, `mmoexile_allocation_failures_total{status,reason,region}`, and per-server gauges from the heartbeats (`mmoexile_fleet_server_players`, `…_instances`, `…_tick_p95_seconds`, `mmoexile_fleet_servers{state,region}`). account-api: `mmoexile_play_requests_total{result,region}`. The dashboard has a region filter and a "Regions" row. The Docker realm provisions Prometheus and a Grafana "Realm Overview" dashboard (`infra/observability/`).
 
 ---
 
@@ -359,6 +373,11 @@ apps/orchestrator/src/
 ├── Allocator.ts              # /allocate: find or create an instance, sign the ticket
 ├── metrics.ts                # allocation and fleet metrics
 ├── app.ts                    # HTTP API (register, heartbeat, drain, servers, allocate)
+└── main.ts
+
+apps/directory/src/
+├── config.ts                 # REALM_NAME, ACCOUNT_API_URL, REGIONS (id=Name=pingUrl,…)
+├── app.ts                    # GET /realms, GET /ping (fallback for single-region dev)
 └── main.ts
 
 packages/simulation/src/
