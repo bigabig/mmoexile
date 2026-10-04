@@ -131,11 +131,16 @@ describe("Orchestrator restart", () => {
   });
 
   it("waits for the first heartbeats instead of answering 'fleet full'", async () => {
+    // A realistic interval: the warmup window (2 intervals) must not run out
+    // while a slow CI machine is still starting Fastify. The allocation
+    // still answers as soon as the first heartbeat arrives.
     const orchestrator = createOrchestrator({
-      config: { HEARTBEAT_INTERVAL_MS: 200, TICKET_PRIVATE_KEY: DEV_TICKET_PRIVATE_KEY },
+      config: { HEARTBEAT_INTERVAL_MS: 2000, TICKET_PRIVATE_KEY: DEV_TICKET_PRIVATE_KEY },
       logger: createLogger("test", "silent"),
       redis,
     });
+    await orchestrator.app.ready();
+    const started = Date.now();
     const pending = orchestrator.app.inject({
       method: "POST",
       url: "/allocate",
@@ -148,6 +153,7 @@ describe("Orchestrator restart", () => {
     const response = await pending;
     expect(response.statusCode).toBe(200);
     expect(response.json().instanceId).toBe("nexus:eeeeee");
+    expect(Date.now() - started).toBeLessThan(2000); // answered on the heartbeat, not at the end of the window
     await orchestrator.stop();
   });
 });
