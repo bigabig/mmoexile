@@ -8,7 +8,7 @@ import {
   type VerifiedTicket,
 } from "@mmoexile/auth";
 import type { ZoneAllocator } from "../fleet/ZoneAllocator.js";
-import { isZoneId, type MapData, type ZoneId } from "@mmoexile/game-core";
+import { getZone, isZoneId, type MapData, type ZoneId } from "@mmoexile/game-core";
 import {
   PROTOCOL_VERSION,
   type KickReason,
@@ -58,6 +58,11 @@ export interface PlayerLifecycleDeps {
   allocator: ZoneAllocator;
   /** Party lookup for tickets (the party travels with the player). */
   getPartyId: (characterId: string) => string | undefined;
+  /**
+   * Home region of the character's party leader, if any and online. A new
+   * party instance is created there (D9); undefined means the player's own.
+   */
+  getLeaderRegion?: (characterId: string) => Promise<string | undefined>;
   /** Tell the client to reconnect elsewhere. */
   sendReconnect: (characterId: string, url: string, ticket: string, zoneId: string) => void;
   /** End a client session with a reason. */
@@ -261,11 +266,16 @@ export class PlayerLifecycle {
       // 1. Where to? (the target instance is created if needed)
       let allocation;
       try {
+        const leaderRegion =
+          getZone(targetZoneId)?.access.kind === "party_private"
+            ? await this.deps.getLeaderRegion?.(characterId).catch(() => undefined)
+            : undefined;
         allocation = await this.deps.allocator.allocate({
           zoneId: targetZoneId,
           characterId,
           accountId: player.accountId,
           region: player.homeRegion,
+          leaderRegion,
           partyId: this.deps.getPartyId(characterId),
           via,
           excludeServerId: options.excludeThisServer ? this.deps.serverId : undefined,

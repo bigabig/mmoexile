@@ -94,9 +94,12 @@ export function createOrchestrator({
       const status = error.statusCode ?? (error.validation ? 400 : 500);
       if (error instanceof PlacementError) {
         // Expected (fleet full, unknown zone): no stack trace
-        logger.warn({ status, reason: error.message }, "Allocation refused");
+        logger.warn({ status, reason: error.reason, message: error.message }, "Allocation refused");
       } else if (status >= 500) {
         logger.error({ err: error }, "Request failed");
+      }
+      if (error instanceof PlacementError) {
+        return reply.code(status).send({ error: error.message, reason: error.reason });
       }
       return reply
         .code(status)
@@ -167,7 +170,11 @@ export function createOrchestrator({
         return await allocator.allocate(request.body as AllocateRequest);
       } catch (err) {
         const status = (err as { statusCode?: number }).statusCode ?? 500;
-        metrics.allocationFailures.inc({ status: String(status) });
+        metrics.allocationFailures.inc({
+          status: String(status),
+          reason: (err as { reason?: string }).reason ?? "other",
+          region: (request.body as AllocateRequest).region,
+        });
         throw err;
       }
     },

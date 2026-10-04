@@ -70,6 +70,11 @@ export const AllocateRequest = z.object({
    * dungeon in another region.
    */
   region: RegionId,
+  /**
+   * Home region of the party's leader, if the player is in a party: a new
+   * party_private instance is created there (decision D9).
+   */
+  leaderRegion: RegionId.optional(),
   partyId: z.string().optional(),
   via: PortalVia.optional(),
   /** Join this public instance if it still has room. */

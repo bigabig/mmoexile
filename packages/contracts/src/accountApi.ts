@@ -74,5 +74,9 @@ export const accountApi = {
 } as const;
 
 /** Error body returned by every service for 4xx/5xx responses. */
-export const ErrorResponse = z.object({ error: z.string() });
+export const ErrorResponse = z.object({
+  error: z.string(),
+  /** Machine-readable cause, where the client reacts to it (e.g. "region_unavailable"). */
+  reason: z.string().optional(),
+});
 export type ErrorResponse = z.infer<typeof ErrorResponse>;

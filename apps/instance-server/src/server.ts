@@ -141,6 +141,11 @@ export async function createInstanceServer({
     ticketKey,
     allocator,
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
+    getLeaderRegion: async (characterId) => {
+      const party = partyCache.getParty(characterId);
+      if (!party) return undefined;
+      return lifecycle.get(party.leaderId)?.homeRegion ?? presence.homeRegionOf(party.leaderId);
+    },
     onAdmitted: (player, ticket) => {
       metrics.handoffDuration.observe(
         { kind: player.arrivedViaPortal ? "zone_change" : "login" },

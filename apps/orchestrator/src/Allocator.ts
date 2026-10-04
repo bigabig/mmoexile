@@ -11,8 +11,10 @@ import type { InstanceEntry, Registry, ServerEntry } from "./Registry.js";
 import {
   chooseServer,
   findInstance,
+  joinsAcrossRegions,
   ownerKeyFor,
   PlacementError,
+  targetRegion,
   type PlacementWeights,
   type ServerCandidate,
 } from "./placement.js";
@@ -92,6 +94,8 @@ export class Allocator {
         zoneId: zone.id,
         instanceId: instance.id,
         serverId: server.serverId,
+        homeRegion: request.region,
+        serverRegion: server.region,
         created,
       },
       "Allocated",
@@ -110,13 +114,20 @@ export class Allocator {
     request: AllocateRequest,
   ): Promise<{ instance: InstanceEntry; created: boolean }> {
     const registry = this.deps.registry;
+    const region = targetRegion(zone, request, (instanceId) => {
+      const instance = registry.instances().find((i) => i.id === instanceId);
+      return instance && registry.get(instance.serverId)?.region;
+    });
     const open = registry
       .all()
       .filter((s) => registry.acceptsPlayers(s) && s.serverId !== request.excludeServerId);
+    // Public shards only in the target region; a party's dungeon or a
+    // portal's instance wherever it already runs.
+    const joinable = joinsAcrossRegions(zone) ? open : open.filter((s) => s.region === region);
     const existing = findInstance(
       zone,
       request,
-      open.flatMap((s) =>
+      joinable.flatMap((s) =>
         [...s.instances.values()]
           .filter((i) => i.state !== "closed" && i.state !== "crashed")
           .map((i) => ({ ...i, players: registry.load(i) })),
@@ -130,7 +141,7 @@ export class Allocator {
     const skipped = new Set<string>();
     for (let attempt = 0; attempt < 3; attempt++) {
       const server = chooseServer(
-        this.candidates().filter((c) => !skipped.has(c.serverId)),
+        this.candidates(region).filter((c) => !skipped.has(c.serverId)),
         { excludeServerId: request.excludeServerId, weights: this.deps.weights },
       );
       if (!server) break;
@@ -142,7 +153,12 @@ export class Allocator {
         this.deps.logger.warn({ err, serverId: server.serverId }, "Instance creation failed, trying another server");
       }
     }
-    throw new PlacementError(503, "No instance server can take more players right now");
+    // No spill-over into another region: the player decides (S4.5).
+    throw new PlacementError(
+      503,
+      `No instance server in region ${region} can take more players right now`,
+      "region_unavailable",
+    );
   }
 
   private async createOn(
@@ -166,9 +182,10 @@ export class Allocator {
     });
   }
 
-  private candidates(): ServerCandidate[] {
+  /** Servers of one region, as placement candidates. */
+  private candidates(region: string): ServerCandidate[] {
     const registry = this.deps.registry;
-    return registry.all().map((s) => ({
+    return registry.all().filter((s) => s.region === region).map((s) => ({
       serverId: s.serverId,
       // A server that went quiet is treated like one that isn't ready.
       state: registry.acceptsPlayers(s) ? s.state : "starting",

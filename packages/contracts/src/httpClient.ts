@@ -13,6 +13,8 @@ export class HttpError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** The server's machine-readable cause, if it sent one. */
+    public readonly reason?: string,
   ) {
     super(message);
   }
@@ -57,6 +59,7 @@ export function createHttpClient(options: HttpClientOptions) {
       throw new HttpError(
         response.status,
         parsed.success ? parsed.data.error : `HTTP ${response.status}`,
+        parsed.success ? parsed.data.reason : undefined,
       );
     }
     return route.response.parse(json) as z.output<R["response"]>;

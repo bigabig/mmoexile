@@ -8,6 +8,7 @@ import {
   chooseServer,
   findInstance,
   serverScore,
+  targetRegion,
   type InstanceCandidate,
   type ServerCandidate,
 } from "../placement.js";
@@ -92,11 +93,11 @@ describe("instance selection across the fleet", () => {
 });
 
 describe("Allocator", () => {
-  const heartbeat = (serverId: string): HeartbeatBody => ({
+  const heartbeat = (serverId: string, region = "local"): HeartbeatBody => ({
     serverId,
     url: `ws://${serverId}/ws`,
     internalUrl: `http://${serverId}`,
-    region: "local",
+    region,
     capacity: 100,
     state: "ready",
     instances: [],
@@ -105,10 +106,16 @@ describe("Allocator", () => {
     eventLoopUtilization: 0.1,
   });
 
-  /** Instance servers that accept creation requests, except `failing`. */
+  /**
+   * Instance servers that accept creation requests, except `failing`.
+   * A server ID like "eu1@eu" puts the server into region "eu".
+   */
   function setup(serverIds: string[], failing: string[] = []) {
     const registry = new Registry();
-    for (const id of serverIds) registry.heartbeat(heartbeat(id));
+    for (const spec of serverIds) {
+      const [id, region] = spec.split("@");
+      registry.heartbeat(heartbeat(id, region));
+    }
     const created: string[] = [];
     const fetch = (async (url: string) => {
       const serverId = new URL(url).hostname;
@@ -190,5 +197,68 @@ describe("Allocator", () => {
     registry.drain("s1");
     await expect(allocator.allocate(request("x"))).rejects.toMatchObject({ statusCode: 503 });
     await expect(allocator.allocate({ ...request("x"), zoneId: "moon" })).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  describe("regions", () => {
+    const fleet = () => setup(["eu1@eu", "eu2@eu", "us1@us"]);
+    const regionOf = (registry: Registry, serverId: string) => registry.get(serverId)?.region;
+
+    it("places public zones only in the player's home region, one shard set per region", async () => {
+      const { allocator, registry } = fleet();
+      const eu = await allocator.allocate(request("anna", { zoneId: "nexus", region: "eu" }));
+      const us = await allocator.allocate(request("ben", { zoneId: "nexus", region: "us" }));
+      expect(regionOf(registry, eu.serverId)).toBe("eu");
+      expect(us.serverId).toBe("us1");
+      // Ben does not join Anna's emptier EU hub, nor the other way round
+      expect(us.instanceId).not.toBe(eu.instanceId);
+      const eu2 = await allocator.allocate(request("carl", { zoneId: "nexus", region: "eu" }));
+      expect(eu2.instanceId).toBe(eu.instanceId);
+    });
+
+    it("creates a party's dungeon in the leader's region and lets members join it from anywhere", async () => {
+      const { allocator } = fleet();
+      // Ben (US) is in Anna's party; Anna (EU) leads
+      const ben = await allocator.allocate(
+        request("ben", { region: "us", leaderRegion: "eu", partyId: "party_ab" }),
+      );
+      expect(ben.serverId).toMatch(/^eu/);
+      // Anna arrives later and joins the same instance
+      const anna = await allocator.allocate(request("anna", { region: "eu", leaderRegion: "eu", partyId: "party_ab" }));
+      expect(anna.instanceId).toBe(ben.instanceId);
+      // The ticket keeps Ben's home region, so he returns to US hubs afterwards
+      expect(JSON.parse(ben.ticket)).toMatchObject({ region: "us" });
+      // An existing party instance is joined across regions, whatever the leader's region says now
+      const late = await allocator.allocate(request("cleo", { region: "us", leaderRegion: "us", partyId: "party_ab" }));
+      expect(late.instanceId).toBe(ben.instanceId);
+    });
+
+    it("solo players get private instances in their own region", async () => {
+      const { allocator } = fleet();
+      expect((await allocator.allocate(request("ben", { region: "us" }))).serverId).toBe("us1");
+    });
+
+    it("refuses with region_unavailable instead of spilling into another region", async () => {
+      const { allocator, registry } = fleet();
+      registry.drain("us1");
+      await expect(allocator.allocate(request("ben", { zoneId: "nexus", region: "us" }))).rejects.toMatchObject({
+        statusCode: 503,
+        reason: "region_unavailable",
+      });
+      await expect(allocator.allocate(request("ben", { zoneId: "nexus", region: "ap" }))).rejects.toMatchObject({
+        reason: "region_unavailable",
+      });
+      expect(regionOf(registry, (await allocator.allocate(request("anna", { zoneId: "nexus", region: "eu" }))).serverId)).toBe("eu");
+    });
+  });
+
+  it("puts portal_bound instances into the region of the portal's instance", () => {
+    const zone = { ...ZONES.golem_dungeon, access: { kind: "portal_bound" as const } };
+    const regions: Record<string, string> = { "overworld:us": "us" };
+    const via = { sourceInstanceId: "overworld:us", portalId: "p1" };
+    expect(targetRegion(zone, { characterId: "c", region: "eu", via }, (id) => regions[id])).toBe("us");
+    // Unknown source instance (its server is gone): fall back to the home region
+    expect(
+      targetRegion(zone, { characterId: "c", region: "eu", via: { ...via, sourceInstanceId: "x" } }, (id) => regions[id]),
+    ).toBe("eu");
   });
 });

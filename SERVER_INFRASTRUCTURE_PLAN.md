@@ -561,7 +561,7 @@ What a region means:
   - *The directory also answers `GET /ping` itself; its default `REGIONS` is a single `local` region pinging it, so `pnpm dev` works without gateway containers. `pnpm dev` starts the directory on port 3004; Vite proxies `/directory` to it.*
   - *Gateways are plain `nginx:1.29-alpine` containers with `infra/docker/gateway.nginx.conf` mounted (ports 7100 for `eu`, 7200 for `us`). The `REGIONS` value is shared in compose through a YAML anchor.*
 
-### S4.3 Region-Aware Allocation (orchestrator)
+### S4.3 Region-Aware Allocation (orchestrator) ✅
 - `AllocateRequest` gains `region` (the player's home region) and `leaderRegion?`.
 - Rule per access policy:
   - `public_sharded`: only instances and servers in `region`.
@@ -570,6 +570,12 @@ What a region means:
 - The instance server fills `leaderRegion` from the party cache (leader ID) and presence (`homeRegion`); if the leader is offline, the requester's region is used.
 - No server with capacity in the target region → 503 with `{ reason: "region_unavailable" }`. There is no silent spill-over to another region: the client asks the player instead (S4.5). During a handoff the player stays where they are with a chat notice (as in Stage 3).
 - The registry and the metrics group servers by region; the placement score is unchanged within a region.
+- *Implementation notes:*
+  - *`targetRegion()` and `joinsAcrossRegions()` in `placement.ts` hold the rule; the Allocator filters joinable instances (public zones: target region only) and creation candidates (always the target region). The score is unchanged.*
+  - *A `portal_bound` instance whose source instance is unknown (its server is gone) falls back to the home region.*
+  - *`PlacementError` carries a `reason`; the orchestrator returns `{ error, reason }`, and `HttpError.reason` exposes it to callers. `ErrorResponse` gained the optional `reason`.*
+  - *The instance server looks up the leader's region only for `party_private` targets: locally if the leader is on the same server, otherwise through presence. A failed lookup means "use the player's own region".*
+  - *Metrics: `mmoexile_fleet_servers{state,region}`, the per-server gauges gained `region`, `mmoexile_allocation_failures_total{status,reason,region}`. The "Allocated" log line includes `homeRegion` and `serverRegion`.*
 
 ### S4.4 Login with a Region (account-api)
 - `POST /play { characterId, region }` validates `region` against the directory's list (account-api reads the same `REGIONS` config) and asks the orchestrator to allocate there. The region goes into the ticket as the player's home region; nothing is persisted.

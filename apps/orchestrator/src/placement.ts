@@ -107,6 +107,39 @@ export function chooseServer(
   return best;
 }
 
+/**
+ * The region a new instance of this zone is created in:
+ * - public zones (hubs, overworld): the player's home region;
+ * - party_private: the party leader's region (D9), else the player's;
+ * - portal_bound: the region of the instance holding the portal.
+ * Existing keyed instances (a party's dungeon, a portal's instance) are
+ * joined wherever they run; see `joinsAcrossRegions`.
+ */
+export function targetRegion(
+  zone: ZoneDefinition,
+  request: PlacementRequest & {
+    /** The player's home region. */
+    region: string;
+    /** The party leader's home region, if in a party. */
+    leaderRegion?: string;
+  },
+  regionOfInstance: (instanceId: string) => string | undefined,
+): string {
+  switch (zone.access.kind) {
+    case "public_sharded":
+      return request.region;
+    case "party_private":
+      return request.leaderRegion ?? request.region;
+    case "portal_bound":
+      return (request.via && regionOfInstance(request.via.sourceInstanceId)) ?? request.region;
+  }
+}
+
+/** Whether an existing instance may be joined outside the target region. */
+export function joinsAcrossRegions(zone: ZoneDefinition): boolean {
+  return zone.access.kind !== "public_sharded";
+}
+
 /** The key an instance must have to be joined, for keyed access policies. */
 export function ownerKeyFor(
   zone: ZoneDefinition,
@@ -161,6 +194,8 @@ export class PlacementError extends Error {
   constructor(
     public readonly statusCode: number,
     message: string,
+    /** Machine-readable cause, sent to the caller (e.g. "region_unavailable"). */
+    public readonly reason?: string,
   ) {
     super(message);
   }
