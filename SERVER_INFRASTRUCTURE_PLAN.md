@@ -11,7 +11,7 @@ This is the task-level plan for moving from today's single-process server to the
 | 4 | Regions | ≥2 locations | `directory` |
 | 5 | Kubernetes & Agones | cluster | none (packaging) |
 
-Stages 0–3 are done (each with implementation notes and verified acceptance criteria below). Stages 4–5 are outlined; they will be detailed next, now that we know what we actually built.
+Stages 0–3 are done (each with implementation notes and verified acceptance criteria below). Stage 4 is planned in detail; Stage 5 is outlined.
 
 **Working agreements**
 
@@ -519,14 +519,85 @@ Not done / caveats:
 
 ---
 
-## Stage 4: Regions (outline)
+## Stage 4: Regions
 
-- `apps/directory`: realm list + gateway list `{ region, pingUrl }`; tiny, stateless, global.
-- Instance servers get a `REGION` label; the orchestrator filters placement by region.
-- Client: on the login screen, ping each gateway's `pingUrl` (WebSocket or HTTP round-trips, median of 5), preselect the fastest; the choice is sent with `/play` and stored per account.
-- Party rule: a party's private instances are placed in the **party leader's** region.
-- Central services (account-api, orchestrator, social, Postgres, Redis) stay in one location. Handoffs cost one cross-region round trip for the lease; periodic saves are async, so this is acceptable.
-- Local simulation: two compose "regions" with injected latency (`tc netem`) to feel the effect.
+**Goal:** One realm, several regions (e.g. `eu`, `us`). Players play on game servers near them for low ping, while account-api, the orchestrator, social, Postgres and Redis stay central in one location. This is Path of Exile's **gateway** model: one account and one realm, and you pick the gateway you play on.
+
+Decisions taken on 2026-10-03 (D8–D11 below): the player chooses a region with the fastest one preselected; a party's private instances run in the party leader's region; a new `apps/directory` publishes the regions; distance is simulated with `tc netem`.
+
+### Target Topology (docker-compose)
+
+| Location | Services |
+| :--- | :--- |
+| Central (no extra latency) | `account-api`, `orchestrator`, `social`, `directory`, `postgres`, `redis`, `client`, Prometheus, Grafana |
+| Region `eu` (no extra latency: "next to" the central services) | `gateway-eu` (ping endpoint), `instance-server-1`, `instance-server-2` |
+| Region `us` (+40 ms on everything it sends, via `tc netem`) | `gateway-us` (ping endpoint), `instance-server-3` |
+
+What a region means:
+- **Every instance belongs to one region**, because it runs on one server and every server is in one region. There is no special hub concept: hubs are instances of `public_sharded` zones, and the existing rules apply (fill the fullest shard below the soft cap, otherwise open a new one), now **within the player's region**. A region can have any number of nexus or overworld shards.
+- **Home region:** the region the player chose at login. It is not stored anywhere: it lives in the ticket for the duration of the session and the selector picks the fastest region again next time. It is kept separately from the region they are currently in, because those differ when a player visits a party dungeon abroad (see below). Public zones are always allocated in the home region.
+- **Private instances follow the party leader** (D9). A party with members in different regions (friends from EU and US) runs its dungeon in the leader's home region. Members from elsewhere play there with higher ping, and when they leave they return to hubs in their own home region. Without the home region they would stay stuck in the leader's region.
+- **Chat, parties and friends stay global.** They go through central services that don't care about regions.
+- **Handoffs between regions cost round trips to the central services**: lease, fenced save, load. Stage 4 measures this cost and reduces it where cheap.
+
+### S4.1 Region Model
+- `packages/contracts`: a region ID type (`[a-z0-9-]+`), validated wherever regions appear.
+- The home region is **not stored** (no account column, no browser storage): the selector preselects the fastest region every time, and the ticket carries the choice for the session.
+- Tickets carry the player's home region (`region` claim). The instance server keeps it per admitted player and passes it on with every allocation, so a player visiting a leader's dungeon abroad comes back to their own region's hubs.
+- Presence entries gain `homeRegion`, so the leader rule can look up a leader's region by character ID.
+- Instance servers already report `REGION` in heartbeats; their configuration now requires an explicit value in compose (default stays `local` for `pnpm dev`).
+
+### S4.2 `apps/directory`
+- A tiny, stateless, global service: `GET /realms` → `[{ id, name, accountApiUrl, regions: [{ id, name, pingUrl }] }]`. Configured by environment (`REALM_NAME`, `REGIONS="eu=Europe=http://localhost:7100/ping,us=North America=http://localhost:7200/ping"`), cacheable (`Cache-Control`). One realm for now; the shape allows more later.
+- **Gateway ping endpoints:** each region gets a minimal `gateway-<region>` container (nginx answering `GET /ping` with 204 and CORS headers). It sits in the region's network position, so its round trip is the player's latency to that region. It stands for the region's edge/gateway, which later may also become a TLS or WebSocket entry point.
+- Served to the browser through the client's nginx (`/directory`), like `/api`.
+
+### S4.3 Region-Aware Allocation (orchestrator)
+- `AllocateRequest` gains `region` (the player's home region) and `leaderRegion?`.
+- Rule per access policy:
+  - `public_sharded`: only instances and servers in `region`.
+  - `party_private`: an existing instance of the party is joined wherever it runs. A new one is created in `leaderRegion ?? region`.
+  - `portal_bound`: the region of the source instance (the portal is in that world).
+- The instance server fills `leaderRegion` from the party cache (leader ID) and presence (`homeRegion`); if the leader is offline, the requester's region is used.
+- No server with capacity in the target region → 503 with `{ reason: "region_unavailable" }`. There is no silent spill-over to another region: the client asks the player instead (S4.5). During a handoff the player stays where they are with a chat notice (as in Stage 3).
+- The registry and the metrics group servers by region; the placement score is unchanged within a region.
+
+### S4.4 Login with a Region (account-api)
+- `POST /play { characterId, region }` validates `region` against the directory's list (account-api reads the same `REGIONS` config) and asks the orchestrator to allocate there. The region goes into the ticket as the player's home region; nothing is persisted.
+
+### S4.5 Client Region Selector
+- The login/character screen fetches `/directory/realms`, pings every region's `pingUrl` five times (`fetch` with `cache: "no-store"`, HTTP keep-alive, median of the last four to skip connection setup), and shows each region with its ping.
+- Preselects and highlights the fastest region; the player can change it at any time before pressing Play. The choice is not remembered.
+- On `region_unavailable` it shows "<Region> is unavailable right now" and lets the player pick another region.
+- Bots get `--region <id>` (default: the fastest, measured the same way).
+
+### S4.6 Two Regions in Docker Compose
+- `gateway-eu`, `gateway-us`; `instance-server-1/2` with `REGION=eu`, `instance-server-3` with `REGION=us`.
+- **Latency:** a sidecar container per US service shares its network namespace (`network_mode: service:<name>`, `cap_add: NET_ADMIN`) and runs `tc qdisc add dev eth0 root netem delay 40ms`. The app images stay unchanged. Everything the US containers send is delayed 40 ms: to players and to the central services alike.
+- The delay is configurable (`US_LATENCY_MS`), so the effect can be compared at 0, 40 and 120 ms.
+
+### S4.7 Observability per Region
+- Instance-server metrics get a `region` label; handoff duration gets `from_region`/`to_region` labels (from the ticket).
+- The dashboard gets a region variable and a "Regions" row: players per region, handoff duration within vs. across regions, allocation failures by reason.
+
+### S4.8 Measure and Reduce the Cross-Region Cost
+- Measure admission on a US server at 40 ms: every sequential round trip to Redis or Postgres costs 40 ms (claim ticket, take lease, bump epoch, load character, …).
+- Reduce the cheap parts: pipeline or batch independent Redis commands; load the character in the same round trip as the epoch bump where possible. The target is at most **4 central round trips per admission**. The protocol stays unchanged.
+- Periodic saves are already asynchronous and need no change.
+
+### Tests
+- Unit (orchestrator): region filter per access policy; party instance in the leader's region; an existing party instance is joined across regions; `region_unavailable`.
+- Unit (directory): config parsing, response shape, cache header.
+- Multi-service (`tools/realm-tests`): two regions in one process. EU and US players get hubs in their own region; an EU-led party with a US member shares one dungeon on an EU server, and the US member returns to a US hub; a region without servers → `region_unavailable`.
+- Client: region selector logic (median, preselection) as unit tests; the full flow checked in a browser against the Docker realm.
+- E2E against the Docker realm with latency: bots per region; `pnpm chaos` extended with a **region outage** (all US servers killed: US players get `region_unavailable`, EU unaffected).
+
+### Acceptance Criteria
+- [ ] The login screen lists both regions with their measured ping, and preselects the faster one.
+- [ ] EU players only ever see EU hubs, US players only US hubs; chat and parties work across regions.
+- [ ] A party led by an EU player with a US member runs its dungeon on an EU server; the US member pays the higher ping there and is back in a US hub afterwards.
+- [ ] With 40 ms added to the US region, the selector shows the difference, and the cross-region handoff cost is measured and visible in Grafana (admission ≤ 4 central round trips).
+- [ ] Killing every US server: US logins get "region unavailable" with the choice of another region; EU players are unaffected; `pnpm chaos` passes.
 
 ## Stage 5: Kubernetes & Agones (outline)
 
@@ -565,7 +636,7 @@ Not done / caveats:
 
 ## Decisions
 
-D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10-02 before Stage 2. D5 stays open.
+D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10-02 before Stage 2; D8–D11 on 2026-10-03 before Stage 4. D5 stays open.
 
 | # | Decision | Outcome | Why |
 | :--- | :--- | :--- | :--- |
@@ -576,3 +647,7 @@ D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10
 | D5 | Build orchestration | Open: plain `pnpm -r`; adopt Turborepo when builds get slow | |
 | D6 | Characters per account | ✅ **Multiple**, with character select and create screens in the client | Matches RotMG and PoE; leases and tickets are per character from the start |
 | D7 | Postgres in tests | ✅ **Testcontainers** (or `TEST_DATABASE_URL`) | Self-contained `pnpm test`, works in CI |
+| D8 | How a player gets a region | ✅ **Player chooses, fastest preselected**; the choice is not stored (it travels in the ticket) | Like PoE's gateway selector: lowest ping by default, but players can join friends elsewhere |
+| D9 | Region of a party's private instance | ✅ **The party leader's region** | Predictable ("we play on EU"); the leader decides |
+| D10 | Who publishes regions | ✅ **New `apps/directory`** (stateless, global) | Clean separation; the global layer above realms in the target architecture |
+| D11 | Simulating distance locally | ✅ **`tc netem`** via sidecar containers | Network-level, affects player and central traffic alike, no app changes |
