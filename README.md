@@ -58,6 +58,9 @@ The target server infrastructure (realms, gateways, instances, orchestrator) is 
 - **Node.js**: v20+ (tested on v24)
 - **pnpm**: tested on v12 (or `corepack enable pnpm`)
 - **Docker** with Compose: runs Postgres and Redis locally (and the full realm), and the tests start their own throwaway Postgres and Redis via Testcontainers
+- *Optional, only for the Kubernetes target:* **kind**, **kubectl** and **Helm**
+
+What each tool is for, tested versions and how to install them without `sudo`: [`docs/DEVELOPMENT_SETUP.md`](docs/DEVELOPMENT_SETUP.md).
 
 ### 2. Install & Initialize
 
