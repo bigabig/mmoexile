@@ -11,6 +11,8 @@ NAMESPACE=mmoexile
 
 AGONES_CHART_REPO=https://agones.dev/chart/stable
 AGONES_VERSION=1.61.0
+MONITORING_CHART_REPO=https://prometheus-community.github.io/helm-charts
+MONITORING_VERSION=91.9.0  # kube-prometheus-stack
 
 # Apps built from node.Dockerfile (plus the "migrate" and "client" images)
 APPS=(account-api social orchestrator directory instance-server)
@@ -48,5 +50,5 @@ load_images() {
   local nodes
   nodes=$(k get nodes -l "$1" -o jsonpath='{.items[*].metadata.name}' | tr ' ' ',')
   shift
-  kind load docker-image --name "$CLUSTER" --nodes "$nodes" "$@" 2>&1 | grep -v "not yet present" || true
+  kind load docker-image --name "$CLUSTER" --nodes "$nodes" "$@" 2>&1 | grep -vE "not yet present|already present" || true
 }

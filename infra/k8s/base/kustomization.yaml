@@ -16,6 +16,7 @@ resources:
   - client.yaml
   - gateways.yaml
   - instance-servers.yaml
+  - monitoring.yaml
 configurations:
   - kustomizeconfig.yaml
 # Generated ConfigMaps/Secrets are applied with the data (scripts/apply.sh)
@@ -32,3 +33,10 @@ configMapGenerator:
   - name: gateway-nginx
     files:
       - default.conf=../../docker/gateway.nginx.conf  # the same file as compose
+  # The Realm Overview dashboard, the same file as in compose. Grafana's
+  # sidecar loads every ConfigMap labelled grafana_dashboard=1.
+  - name: realm-overview-dashboard
+    files:
+      - realm-overview.json=../../observability/grafana/dashboards/realm-overview.json
+    options:
+      labels: { grafana_dashboard: "1" }

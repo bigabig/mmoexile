@@ -27,6 +27,13 @@ else
 fi
 k create namespace "$NAMESPACE" --dry-run=client -o yaml | k apply -f - >/dev/null
 
+step "Monitoring: kube-prometheus-stack $MONITORING_VERSION"
+# First, so that Agones' ServiceMonitor (its controller metrics) has its CRD
+h upgrade --install monitoring kube-prometheus-stack --repo "$MONITORING_CHART_REPO" --version "$MONITORING_VERSION" \
+  --namespace monitoring --create-namespace \
+  --values "$K8S/monitoring/values.yaml" --wait --timeout 10m >/dev/null
+k -n monitoring get deploy,statefulset
+
 step "Agones $AGONES_VERSION"
 h upgrade --install agones agones --repo "$AGONES_CHART_REPO" --version "$AGONES_VERSION" \
   --namespace agones-system --create-namespace \
