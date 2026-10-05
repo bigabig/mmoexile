@@ -6,7 +6,8 @@
   "scripts": {
     "hop": "tsx src/hop.ts",
     "build": "tsc --noEmit",
-    "chaos": "tsx src/chaos.ts"
+    "chaos": "tsx src/chaos.ts",
+    "cluster-smoke": "tsx src/clusterSmoke.ts"
   },
   "dependencies": {
     "@mmoexile/contracts": "workspace:*",

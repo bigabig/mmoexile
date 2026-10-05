@@ -23,7 +23,10 @@
     "dev:directory": "pnpm --filter @mmoexile/directory dev",
     "chaos": "pnpm --filter @mmoexile/bots chaos",
     "cluster:up": "bash infra/k8s/scripts/cluster-up.sh",
-    "cluster:down": "bash infra/k8s/scripts/cluster-down.sh"
+    "cluster:down": "bash infra/k8s/scripts/cluster-down.sh",
+    "cluster:reload": "bash infra/k8s/scripts/reload.sh",
+    "cluster:status": "bash infra/k8s/scripts/status.sh",
+    "cluster:smoke": "pnpm --filter @mmoexile/bots cluster-smoke"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.4.0",

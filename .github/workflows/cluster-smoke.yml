@@ -1,0 +1,62 @@
+name: Cluster smoke test
+
+# The realm on a kind cluster with Agones (Stage 5): pnpm cluster:up, then
+# pnpm cluster:smoke (scaling, rolling update, crash). Takes ~15 min, so it
+# runs on demand only; the regular CI on every push doesn't need Kubernetes.
+#   - Actions → "Cluster smoke test" → Run workflow (GitHub offers this once
+#     the workflow is on the default branch), or
+#   - for any commit: git tag cluster-smoke-<name> && git push origin cluster-smoke-<name>
+on:
+  workflow_dispatch:
+  push:
+    tags: ["cluster-smoke-*"]
+
+jobs:
+  cluster-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      KIND_VERSION: v0.33.0
+      KUBECTL_VERSION: v1.37.1
+      HELM_VERSION: v4.3.0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # The same tools and versions as docs/DEVELOPMENT_SETUP.md
+      - name: Install kind, kubectl and Helm
+        run: |
+          mkdir -p "$HOME/.local/bin" && cd /tmp
+          curl -fsSLo kind "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-amd64"
+          curl -fsSLo kind.sha256sum "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-amd64.sha256sum"
+          echo "$(cut -d' ' -f1 kind.sha256sum)  kind" | sha256sum --check
+          curl -fsSLO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+          curl -fsSLO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+          curl -fsSLO "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz"
+          curl -fsSLO "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz.sha256sum"
+          sha256sum --check "helm-$HELM_VERSION-linux-amd64.tar.gz.sha256sum"
+          tar -xzf "helm-$HELM_VERSION-linux-amd64.tar.gz" linux-amd64/helm
+          install -m 0755 kind kubectl linux-amd64/helm "$HOME/.local/bin/"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # kind's nodes share root's inotify instances (DEVELOPMENT_SETUP.md)
+      - run: sudo sysctl fs.inotify.max_user_instances=512
+
+      - run: pnpm cluster:up
+      - run: pnpm cluster:smoke
+
+      - name: Cluster state (on failure)
+        if: failure()
+        run: |
+          pnpm cluster:status || true
+          kubectl --context kind-mmoexile -n mmoexile get events --sort-by=.lastTimestamp | tail -50 || true
+          kubectl --context kind-mmoexile -n mmoexile logs deploy/orchestrator --tail=200 || true
+
+      - if: always()
+        run: pnpm cluster:down
