@@ -22,6 +22,9 @@ spec:
             - { name: PORT, value: "3000" }
             - name: DATABASE_URL
               valueFrom: { secretKeyRef: { name: realm-secrets, key: DATABASE_URL } }
+            # Connections per pod (Prisma's pool), see "Connection budget"
+            # in infra/k8s/README.md
+            - { name: DATABASE_POOL_SIZE, value: "5" }
             - name: SESSION_SECRET
               valueFrom: { secretKeyRef: { name: realm-secrets, key: SESSION_SECRET } }
             - name: REGIONS

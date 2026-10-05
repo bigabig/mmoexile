@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "test": "vitest run",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:migrate": "DATABASE_URL=\"${DATABASE_URL:-postgresql://mmoexile:mmoexile@localhost:5432/mmoexile}\" prisma migrate dev",
@@ -29,6 +30,7 @@
   "devDependencies": {
     "@mmoexile/tsconfig": "workspace:*",
     "@types/node": "^22.13.0",
-    "prisma": "^6.4.1"
+    "prisma": "^6.4.1",
+    "vitest": "^3.0.0"
   }
 }

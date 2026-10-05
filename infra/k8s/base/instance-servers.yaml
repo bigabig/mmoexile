@@ -58,6 +58,10 @@ spec:
                 - { name: INTERNAL_URL, value: "http://$(POD_IP):9001" }
                 - name: DATABASE_URL
                   valueFrom: { secretKeyRef: { name: realm-secrets, key: DATABASE_URL } }
+                # Connections per server (Prisma's pool): periodic saves and
+                # logins, one statement each; see "Connection budget" in
+                # infra/k8s/README.md
+                - { name: DATABASE_POOL_SIZE, value: "3" }
                 - name: TICKET_PUBLIC_KEY
                   valueFrom: { secretKeyRef: { name: realm-secrets, key: TICKET_PUBLIC_KEY } }
               ports:
@@ -127,6 +131,10 @@ spec:
                 - { name: INTERNAL_URL, value: "http://$(POD_IP):9001" }
                 - name: DATABASE_URL
                   valueFrom: { secretKeyRef: { name: realm-secrets, key: DATABASE_URL } }
+                # Connections per server (Prisma's pool): periodic saves and
+                # logins, one statement each; see "Connection budget" in
+                # infra/k8s/README.md
+                - { name: DATABASE_POOL_SIZE, value: "3" }
                 - name: TICKET_PUBLIC_KEY
                   valueFrom: { secretKeyRef: { name: realm-secrets, key: TICKET_PUBLIC_KEY } }
               ports:
