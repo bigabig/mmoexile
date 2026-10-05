@@ -61,13 +61,27 @@ Every instance server runs in one region (`REGION`, e.g. `eu`, `us`); its instan
 
 - **Choosing**: the client loads the regions from the directory, pings each region's gateway five times (median of the last four) and preselects the fastest. `/play { characterId, region }` makes that region the player's **home region** for the session. It is not stored anywhere: it travels in every ticket, and instance servers pass it on with every allocation.
 - **Placement** (`targetRegion()` in `placement.ts`): public zones (hubs) are placed in the home region only, so there are separate hub shards per region. A party's private instance is created in the **leader's** home region (looked up via presence) and joined from any region. A `portal_bound` instance follows the region of its portal. Without capacity in the target region the orchestrator answers `503 { reason: "region_unavailable" }`; there is no silent spill-over, the client asks the player to pick another region.
-- **Distance**: in Docker, `region-us` owns the US services' network namespace and delays everything they send with `tc netem` (`US_LATENCY_MS`, default 40). Every sequential trip from a US server to Redis or Postgres costs that much, so admission is kept to two (see "Ownership and players").
+- **Distance**: in Docker, `region-us` owns the US services' network namespace and delays everything they send with `tc netem` (`US_LATENCY_MS`, default 40); in the Kubernetes cluster the whole `us` node is delayed the same way. Every sequential trip from a US server to Redis or Postgres costs that much, so admission is kept to two (see "Ownership and players").
 
 ### Server lifecycle and draining
 
-`starting → ready → draining → stopped` (plus `dead`, decided by the orchestrator). This maps 1:1 onto Agones later.
+`starting → ready → draining → stopped` (plus `dead`, decided by the orchestrator).
 
-**Draining** (`fleet/Drainer.ts`) starts on SIGTERM (`docker compose stop`, Kubernetes) or `POST /servers/:id/drain` at the orchestrator:
+**Who manages the process** (`LIFECYCLE`):
+- `orchestrator` (default: `pnpm dev`, compose, tests): the process is started and stopped from outside (by hand, Docker); it only reports to the orchestrator.
+- `agones` (Kubernetes, [`infra/k8s/README.md`](../infra/k8s/README.md)): the server is a GameServer in a per-region Agones Fleet. It still registers and sends heartbeats to the orchestrator, which still places every player. In addition it talks to the Agones SDK sidecar (`fleet/AgonesSdk.ts`, `fleet/AgonesLifecycle.ts`): it takes its public URL from the host port Agones assigned; it is **Allocated** while it has players or a hold, **Ready** when empty (Agones scales down and replaces only Ready servers); it mirrors its player count into the `players` Counter that the FleetAutoscaler keeps a buffer of; it pings Health; and it calls Shutdown after stopping. A **hold** covers players on their way: the server becomes Allocated before it answers a create-instance call, and the heartbeat answer carries `hold` for 15 s after the orchestrator sent a player there.
+
+### Deployment targets
+
+| Target | Command | What runs the processes |
+| :--- | :--- | :--- |
+| Local processes | `pnpm dev` | pnpm, one of each service, region `local` |
+| Docker Compose | `pnpm realm:up` | Docker: three instance servers in two regions, gateways, Prometheus/Grafana |
+| Kubernetes + Agones | `pnpm cluster:up` | a kind cluster: Deployments for the central services, an Agones Fleet per region with autoscaling, kube-prometheus-stack |
+
+Compose and Kubernetes use the same images and environment variables; only the plumbing differs (see `infra/compose` and `infra/k8s`).
+
+**Draining** (`fleet/Drainer.ts`) starts on SIGTERM (`docker compose stop`, Kubernetes deleting the pod: scale-down, rolling update) or `POST /servers/:id/drain` at the orchestrator:
 1. The server reports `draining`; the orchestrator places nobody there any more.
 2. Players in public hubs are handed off to shards on other servers right away.
 3. Private instances (dungeons) may finish until `DRAIN_TIMEOUT_SEC`; then their players are handed off to a nexus elsewhere.
@@ -212,6 +226,7 @@ Hosts the instances of this process and routes players between them.
 - **`FleetAgent`**: registers with the orchestrator, sends heartbeats (state, instances, tick p95, CPU) every 2 s and right after instances are created or closed, and passes on drain requests. If the orchestrator is down, players keep playing; only zone changes wait for it.
 - **`ZoneAllocator`**: `POST /allocate` at the orchestrator, used by every handoff.
 - **`Drainer`**: empties the server before it stops (see §2).
+- **`AgonesSdk`**, **`AgonesLifecycle`** (`LIFECYCLE=agones` only): the Agones SDK sidecar's REST API and the rules for Ready/Allocated, holds, the `players` Counter, health and Shutdown (see §2).
 - **`internalApi.ts`**: the internal port: `POST /internal/instances` (the orchestrator creates an instance with an ID it chose), `/metrics`, `/health`, `/ready`.
 
 ### Simulation (`packages/simulation/src/`)
@@ -348,7 +363,7 @@ apps/instance-server/src/
 │   ├── WebSocketGateway.ts
 │   └── index.ts
 ├── chat/                     # ChatCommands (slash commands)
-├── fleet/                    # FleetAgent, ZoneAllocator, Drainer
+├── fleet/                    # FleetAgent, ZoneAllocator, Drainer, AgonesSdk, AgonesLifecycle
 ├── ownership/                # CharacterOwnership, LeaseKeeper, FencedCharacterWriter
 ├── party/                    # PartyDirectory, PartyCache
 ├── players/                  # PlayerLifecycle (admit, handoff, leave, kick)
@@ -362,12 +377,12 @@ apps/instance-server/src/
 ├── internalApi.ts            # internal port: /internal/instances, /metrics
 ├── metrics.ts                # Prometheus metrics
 ├── shutdown.ts               # graceful shutdown sequence
-├── config.ts                 # environment (SERVER_ID, PUBLIC_URL, ORCHESTRATOR_URL, …)
+├── config.ts                 # environment (SERVER_ID, PUBLIC_URL, ORCHESTRATOR_URL, LIFECYCLE, …)
 ├── server.ts                 # createInstanceServer: composition root
 └── main.ts                   # entry point: config, Redis, Postgres, signals (SIGTERM drains)
 
 apps/orchestrator/src/
-├── Registry.ts               # servers and instances, heartbeats, dead detection
+├── Registry.ts               # servers and instances, heartbeats, dead detection, holds
 ├── RegistryMirror.ts         # copy in Redis for warm restarts
 ├── placement.ts              # pure placement rules and server scoring
 ├── Allocator.ts              # /allocate: find or create an instance, sign the ticket

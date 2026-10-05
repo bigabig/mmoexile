@@ -43,7 +43,7 @@ mmoexile/
 ├── tools/
 │   ├── bots/             # Headless bots for end-to-end, soak and load tests
 │   └── realm-tests/      # Multi-service tests: orchestrator + instance servers + account-api in one process
-├── infra/                # Dockerfiles, docker-compose, Prometheus and Grafana config
+├── infra/                # Dockerfiles, docker-compose, Kubernetes (kind, Agones), Prometheus and Grafana config
 └── docs/                 # Architecture documentation
 ```
 
@@ -154,6 +154,28 @@ docker kill mmoexile-instance-server-2-1
 
 # Restart the orchestrator: nobody is disconnected, the fleet is rebuilt from heartbeats
 docker compose -f infra/compose/docker-compose.yml --profile realm restart orchestrator
+```
+
+### 7. Run the Realm on Kubernetes with Agones (optional)
+
+The same realm on a local kind cluster: one node for the central services and one per region, with [Agones](https://agones.dev/) running the instance servers as Fleets that scale on free player slots. Needs kind, kubectl and Helm ([`docs/DEVELOPMENT_SETUP.md`](docs/DEVELOPMENT_SETUP.md)); everything else above works without them. Details and a short Kubernetes/Agones primer: [`infra/k8s/README.md`](infra/k8s/README.md).
+
+```bash
+# Create the cluster, install Agones and monitoring, build and deploy everything
+# (game: http://localhost:8090, Grafana: http://localhost:3040)
+pnpm cluster:up
+
+# What runs where: nodes, pods, fleets, GameServers and their players
+pnpm cluster:status
+
+# After changing code: rebuild one app and roll it out (instance servers: without kicking anyone)
+pnpm cluster:reload instance-server
+
+# Bots, scale up and down, a rolling update and a crash, with checks
+pnpm cluster:smoke
+
+# Delete the cluster and everything in it
+pnpm cluster:down
 ```
 
 ---

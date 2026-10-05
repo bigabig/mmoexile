@@ -9,11 +9,11 @@ This is the task-level plan for moving from today's single-process server to the
 | **2** | Split process roles, handoff | docker-compose, 1 machine | `account-api`, `social`, 2× `instance-server` |
 | **3** | Orchestrator & fleet | docker-compose, 1 machine | `orchestrator`, 3× generic `instance-server`, Prometheus, Grafana |
 | **4** | Regions | docker-compose, 2 simulated locations | `directory`, `gateway-eu`/`gateway-us`, `region-us` (netem) |
-| 5 | Kubernetes & Agones | local kind cluster (additional target) | none (manifests, Fleets per region, kube-prometheus-stack) |
+| **5** | Kubernetes & Agones | local kind cluster (additional target) | none (manifests, Fleets per region, kube-prometheus-stack) |
 | 6 | Databases outside the cluster | kind + external Postgres/Redis | none |
 | 7 | One cluster per region | several kind clusters | none |
 
-Stages 0–4 are done (each with implementation notes and verified acceptance criteria below). Stage 5 is planned in detail; Stages 6 and 7 are outlined.
+Stages 0–5 are done (each with implementation notes and verified acceptance criteria below). Stages 6 and 7 are outlined.
 
 **Working agreements**
 
@@ -646,7 +646,7 @@ What a region means:
 - [x] With 40 ms added to the US region, the selector shows the difference, and the cross-region handoff cost is measured and visible in Grafana (admission ≤ 4 central round trips). *2 round trips per admission; US zone change p50 232 ms (was ≈ 750 ms), EU 7 ms; Regions row in Grafana (screenshot `docs/images/realm-regions.png`).*
 - [x] Killing every US server: US logins get "region unavailable" with the choice of another region; EU players are unaffected; `pnpm chaos` passes. *13/13 checks: US dead after 4.6 s, `503 region_unavailable`, EU logins work, 0 kicks and 0 disconnects in EU; the browser shows "North America is unavailable right now…" with Europe preselected.*
 
-## Stage 5: Kubernetes & Agones
+## Stage 5: Kubernetes & Agones ✅
 
 **Goal:** The same realm (central services, two regions, simulated distance) runs on a local Kubernetes cluster, with Agones managing the instance servers: it starts them, keeps them healthy, scales each region's fleet on free player capacity, and never removes a server that has players. Kubernetes is an **additional deployment target**: `pnpm dev`, `pnpm realm:up`, all tests and CI keep working exactly as before, without Kubernetes.
 
@@ -681,21 +681,32 @@ Host ports (all on `localhost`, chosen not to clash with compose):
 | Grafana / Prometheus | 3040 / 9091 |
 | Orchestrator (fleet view, drain) | 3013 |
 
-### S5.1 Cluster Bootstrap
+### S5.1 Cluster Bootstrap ✅
 - `infra/k8s/kind.yaml`: control-plane plus three workers with the labels above, the node image pinned to Kubernetes 1.36, and `extraPortMappings` that forward each host port to the node that serves it.
 - `pnpm cluster:up` (`infra/k8s/scripts/cluster-up.sh`), idempotent: check the tools and their versions → create the cluster if missing → install Agones with Helm (chart pinned to 1.61.x; port ranges `eu` 7300–7319 and `us` 7400–7419) → apply netem on the `us` node → build the images and `kind load` them → apply the manifests (S5.2–S5.5) → wait until everything is ready → print the URLs.
 - `pnpm cluster:down` deletes the cluster; nothing else is left behind (images loaded into kind live inside it).
 - Verify early: `tc` is available in the kind node image, and netem on the node delays pod traffic to other nodes and to the host.
+- *Implementation notes:*
+  - *Verified first: the kind node image has `tc`; netem on the us node's `eth0` delays its pods' traffic to the host (+40 ms per round trip, 80 ms for a fresh connection, as in compose) and to pods on other nodes; eu stays at ~0. Also delayed: DNS lookups from us pods, because CoreDNS runs on another node (compose resolves locally).*
+  - *Two host settings came up on this machine. Docker stores its data on ZFS, where the kubelet can't read disk statistics and doesn't start: `kind.yaml` turns `localStorageCapacityIsolation` off, and Agones' deployments get explicit CPU/memory requests (the chart's default is an ephemeral-storage request that then can't be scheduled). And `fs.inotify.max_user_instances` must be ≥ 512 (kube-proxy fails with "too many open files" at 128); documented in `docs/DEVELOPMENT_SETUP.md` (needs sudo once) and checked by `cluster:up`.*
+  - *Port ranges are 20 ports per region (7300–7319, 7400–7419), plenty for 4 + 3 servers and a rolling update. Agones' own default range is moved out of the way (7500–7509); its allocator and ping services are not installed (the orchestrator places players).*
+  - *Agones' port allocator books ports per node in a ledger but doesn't pin a pod to that node, so with more servers in a range than ports on one node it could hand out a port twice; with 20 ports and ≤ 8 servers per range that can't happen here.*
+  - *Images are tagged `mmoexile/<app>:dev` and loaded only into the nodes that run them. `.dockerignore` now leaves out `infra`, `docs`, Markdown and tests, so editing manifests or docs doesn't rebuild every image. A repeated `cluster:up` without code changes takes ~2 min, the first one ~5 min.*
 
-### S5.2 Central Services and Data as Manifests
+### S5.2 Central Services and Data as Manifests ✅
 - Layout: `infra/k8s/base` (everything, environment-neutral) and `infra/k8s/overlays/kind` (node placement, host ports, replica counts, local secrets), built with kustomize (`kubectl apply -k`).
 - Postgres and Redis as small StatefulSets with a PersistentVolumeClaim (kind's default storage class), no third-party charts. Migrations run as a Kubernetes `Job` (the existing `migrate` image); `cluster:up` waits for it before starting the apps.
 - account-api, social, orchestrator, directory: `Deployment` + `Service`, liveness on `/health`, readiness on `/ready`, resource requests and limits, configuration from a `ConfigMap`, keys from a `Secret` (kustomize `secretGenerator` with the compose-local dev keys, which are refused in production as today).
 - client: the nginx image as a `Deployment`, exposed as a `NodePort` on the central node (host port 8090). Its upstream resolver becomes configurable (Docker's DNS in compose, the cluster DNS here).
 - gateway-eu/us: the nginx ping container as a `Deployment` pinned to its region's node, with a host port, so a ping measures the distance to that node.
 - `REGIONS` for directory and account-api points at the cluster's gateway ports.
+- *Implementation notes:*
+  - *Redis became a plain Deployment without a volume: it only holds short-lived state, as in compose. Postgres is a StatefulSet with a 2 Gi volume.*
+  - *`scripts/apply.sh` renders the overlay with `kubectl kustomize --load-restrictor LoadRestrictionsNone`, because the gateway's nginx config and the Grafana dashboard are the compose files outside `infra/k8s`. It applies config and data first (`-l app.kubernetes.io/component in (config,data)`), waits for the migrate Job (deleted and recreated each time, Jobs are immutable), then everything else, and waits for every rollout and Fleet.*
+  - *The client image renders its nginx config from a template at startup (nginx image `templates/`): `NGINX_RESOLVER`, `ACCOUNT_API_UPSTREAM`, `DIRECTORY_UPSTREAM`, with the compose values as defaults. In the cluster: the cluster DNS and full service names (nginx doesn't use the pod's search domains).*
+  - *account-api and directory run 2 replicas, the orchestrator 1 with `strategy: Recreate`. Startup probes give tsx time to compile on start.*
 
-### S5.3 Agones Lifecycle in the Instance Server
+### S5.3 Agones Lifecycle in the Instance Server ✅
 - A lifecycle setting: `LIFECYCLE=orchestrator` (default: `pnpm dev`, compose, tests; unchanged) or `agones`. In both modes the instance server keeps registering with and sending heartbeats to the orchestrator, because the orchestrator stays the brain (D13).
 - `fleet/AgonesSdk.ts`: a small client for the Agones SDK's local REST API (the SDK sidecar in the same pod, `localhost:9358`), with no extra dependency. It covers `Ready`, `Health`, `Allocate`, `Shutdown`, `GetGameServer`, and the `players` Counter (count and capacity).
 - In `agones` mode:
@@ -707,21 +718,36 @@ Host ports (all on `localhost`, chosen not to clash with compose):
 - SIGTERM (scale-down, rolling update, pod deletion) keeps triggering the existing drain.
 - `SERVER_ID` is the pod name, `INTERNAL_URL` the pod IP, and `REGION` comes from the Fleet (Kubernetes downward API).
 - Tests: the Agones client against a fake SDK server (unit), and the lifecycle against Agones' local SDK server (`sdk-server --local`) without a cluster.
+- *Implementation notes:*
+  - *`fleet/AgonesSdk.ts` (REST, plain fetch; int64 values as strings) and `fleet/AgonesLifecycle.ts` (`desiredAgonesState(players, held)`: Allocated if either, else Ready; one SDK update at a time; failures are logged and retried with the next sync). The lifecycle syncs on every admission and departure and on every heartbeat answer.*
+  - *Two holds against the scale-down race: the internal create-instance call awaits `hold()` (Allocated for 15 s) before it answers, so a server is Allocated before the orchestrator hands out the ticket for a new instance. For players joining an existing instance, the orchestrator's heartbeat answer carries `hold: true` for 15 s after it last sent a player there (`Registry.holds`, `lastReservedAt`). The remaining window, a player joining an existing empty instance on an empty server between two heartbeats while the autoscaler removes exactly that server, ends in a drain: the player is moved or logs in again.*
+  - *While draining the state is frozen: a server whose players leave during a drain must not turn Ready and be deleted mid-drain (that would cut the dungeons' grace time).*
+  - *`SERVER_ID` (pod name) and `INTERNAL_URL` (`http://$(POD_IP):9001`) come from the downward API; no code for that.*
+  - *Tested against the real SDK image (`us-docker.pkg.dev/agones-images/release/agones-sdk:1.61.0 --local -f <GameServer>`) via Testcontainers, so CI covers it without a cluster.*
 
-### S5.4 Fleets per Region and Autoscaling
+### S5.4 Fleets per Region and Autoscaling ✅
 - `infra/k8s/base/agones`: Fleets `instance-server-eu` and `instance-server-us`. Each has a node selector for its region, its port range, `REGION`, `LIFECYCLE=agones`, the `players` Counter, a `terminationGracePeriodSeconds` that covers the drain timeout, and resource requests.
 - A `FleetAutoscaler` per region with a Counter policy: keep a buffer of free player slots (e.g. 60), within min/max replicas (eu 2–4, us 1–3). In kind `CAPACITY` is lowered (e.g. 60), so a bot run can trigger scaling.
 - Scale-down removes only `Ready` (empty) servers. An empty dungeon that is still sleeping on such a server is lost, like an instance that timed out (documented, not prevented).
 - Rolling update (`pnpm cluster:reload instance-server`): Agones replaces `Ready` servers right away; `Allocated` ones keep running until they are empty. Optionally, the orchestrator can drain servers of the old version.
 - Verify: the race "the orchestrator places a player on an empty server while the autoscaler removes it" is covered by the `hold` flag (S5.3). A test (or smoke check) proves it.
+- *Implementation notes:*
+  - *kustomize doesn't know where a Fleet references ConfigMaps and Secrets, so `base/kustomizeconfig.yaml` tells it; otherwise the generated names (with their hash) wouldn't reach the Fleets.*
+  - *The base runs servers with capacity 200 (the default); the kind overlay sets `CAPACITY=60`, the Counter capacity 60, a buffer of 60 free slots, eu 120–240 and us 60–180 slots in total (2–4 and 1–3 servers).*
+  - *Draining old servers in a rolling update is not optional. Agones keeps Allocated servers of the old version, ours stay Allocated as long as players hop between them, and Agones counts them toward the Fleet's size: with every old server in use, the new version got **0** servers and the rollout stalled (found by the second smoke run; the first was lucky to have an empty old server). `cluster:reload instance-server` therefore raises the FleetAutoscaler's bounds by one server (a surge, which Agones starts in the new version), drains the old servers through the orchestrator one at a time (`POST /servers/:id/drain`), waits for each replacement, and puts the bounds back (also on failure).*
+  - *Found in the same run: `freeze()` stopped the Health pings at the start of a drain, so Agones declared draining servers Unhealthy after 15 s and killed them mid-drain (10 kicks). Health pings now go on until Shutdown (unit test).*
+  - *First check with bots: 80 bots in eu scaled the fleet from 2 to 3 servers and back without kicks; removed servers drained to `stopped`; servers returned to Ready when empty.*
 
-### S5.5 Monitoring
+### S5.5 Monitoring ✅
 - kube-prometheus-stack via Helm (chart pinned): Prometheus, Grafana, node and Kubernetes metrics and their dashboards, installed by `cluster:up`.
 - `PodMonitor`s for our services (the same `/metrics` endpoints; instance servers on their internal port), and Agones' controller metrics.
 - The **same** "Realm Overview" dashboard as in compose: a `ConfigMap` generated from `infra/observability/grafana/dashboards/realm-overview.json` with the label the Grafana sidecar loads. The Prometheus data source gets the UID the dashboard expects (`prometheus`). Optionally, Agones' own fleet dashboards as well.
 - Grafana on `localhost:3040` (anonymous viewer, like compose).
+- *Implementation notes:*
+  - *kube-prometheus-stack 91.9.0 is installed before Agones, whose ServiceMonitor (controller and extensions metrics, enabled in `agones/values.yaml`) needs the operator's CRDs. Prometheus selects every PodMonitor/ServiceMonitor in the cluster (`*SelectorNilUsesHelmValues: false`), scrapes every 5 s as in compose, keeps 2 days. Alertmanager is off, and kind's control-plane components (controller-manager, scheduler, etcd, kube-proxy) aren't scraped since they only listen on localhost.*
+  - *The dashboard needed no change: its queries use our own metric labels (`region`, `server`, …), not scrape labels. It is the home dashboard (`/tmp/dashboards/realm-overview.json`, where the sidecar writes it). Agones' own Grafana dashboards are not imported; its metrics are in Prometheus.*
 
-### S5.6 Dev Loop, Smoke Test and CI
+### S5.6 Dev Loop, Smoke Test and CI ✅
 - `pnpm cluster:reload <app>`: rebuild one image, `kind load` it, restart its Deployment (or roll its Fleets).
 - `pnpm cluster:status`: nodes, pods, fleets with their replicas and allocated counts, the orchestrator's fleet view.
 - `pnpm cluster:smoke` (`tools/bots`, against `localhost:8090`), one ✔/✘ line per check, exit code 1 on failure:
@@ -732,26 +758,30 @@ Host ports (all on `localhost`, chosen not to clash with compose):
   5. after the load, the fleet scales back down with 0 kicks.
 - `.github/workflows/cluster-smoke.yml`: on-demand (`workflow_dispatch`); installs the tools, runs `cluster:up`, `cluster:smoke` and `cluster:down`. CI on every push stays unchanged.
 - `pnpm chaos` stays a compose tool; the cluster's failure checks live in `cluster:smoke`.
+- *Implementation notes:*
+  - *`cluster:smoke` also checks a rolling update (step 5, through `cluster:reload`), with 10 observer bots playing from step 3 on. The crash is a `kill -9` of every process in the container except PID 1 (tsx), which then exits; Agones sees the container die, marks the GameServer Unhealthy and starts a new one.*
+  - *A burst of 70 bots within ~10 s is larger than the buffer (60 free slots), so eu is full for the ~13 s until the third server is up: those logins and hops get `region_unavailable` (visible in Grafana's "Allocation failures by reason"). The smoke test reports these failed hops as info; nobody is kicked.*
+  - *GitHub only offers `workflow_dispatch` for workflows on the default branch, so the workflow also runs when a `cluster-smoke-*` tag is pushed (any branch).*
 
-### S5.7 Documentation
+### S5.7 Documentation ✅
 - `infra/k8s/README.md`: what runs where, the commands, how to look around with `kubectl`, and a short Kubernetes and Agones primer tied to our manifests (pod, Deployment, Service, StatefulSet, Job, GameServer, Fleet, FleetAutoscaler).
 - Update ARCHITECTURE (deployment targets, the lifecycle modes), TESTS (cluster smoke), README (the third target) and SERVER_INFRASTRUCTURE.md.
 
-### Tests
-- Unit: the Agones SDK client (fake server), the lifecycle state rules (players/hold → Allocated/Ready), `PUBLIC_URL` from the GameServer status, the heartbeat `hold` flag in the orchestrator.
-- Integration: the lifecycle against Agones' local SDK server.
-- Unchanged: all existing unit, integration and multi-service tests run without Kubernetes.
-- Cluster: `pnpm cluster:smoke` by hand and as the on-demand CI workflow; a browser check against `localhost:8090`.
+### Tests ✅
+- Unit (`agones.test.ts`): the SDK client's requests (paths, int64 strings, errors) and GameServer parsing; `PUBLIC_URL` from the GameServer; the lifecycle rules (players or a hold → Allocated, else Ready), the Counter, holds from the orchestrator and for created instances, state frozen but health pings going on while draining, Shutdown, recovery after a failed SDK call; `FleetAgent` passes the `hold` flag on.
+- Unit (orchestrator, `registry.test.ts`): `holds()` for 15 s after a reservation; the heartbeat answer carries `hold: true` once a player was placed.
+- Integration (`agones.integration.test.ts`): an instance server with `LIFECYCLE=agones` against Agones' SDK server in local mode (Testcontainers): registers with the assigned host port, Ready, Allocated while held and before answering a create-instance call, Shutdown after stopping.
+- Unchanged: all unit, integration and multi-service tests run without Kubernetes (`pnpm test` in CI).
+- Cluster: `pnpm cluster:smoke` (14 checks) locally, and the on-demand `cluster-smoke` workflow on GitHub; a headless-browser check against `localhost:8090`.
 
-### Acceptance Criteria
-- [ ] From nothing, `pnpm cluster:up` brings up a playable realm with both regions; `pnpm cluster:down` leaves nothing behind.
-- [ ] In the browser, the region selector shows eu and us with the simulated distance, and gameplay matches compose: hubs per region, a party's dungeon in the leader's region, handoffs across servers.
-- [ ] Under bot load the EU fleet scales up; afterwards it scales back down, and no player is kicked in either direction.
-- [ ] Deleting an instance-server pod: Agones replaces it, the orchestrator marks the old one dead, and its players log in again.
-- [ ] A rolling update of the instance-server image kicks nobody.
-- [ ] Grafana in the cluster shows the Realm Overview dashboard plus the cluster dashboards.
-- [ ] `pnpm dev`, `pnpm realm:up` and the regular CI are unchanged; the on-demand `cluster-smoke` workflow passes on GitHub.
-
+### Acceptance Criteria ✅
+- [x] From nothing, `pnpm cluster:up` brings up a playable realm with both regions; `pnpm cluster:down` leaves nothing behind. *From no cluster to a ready realm in 6.5 min (2 eu + 1 us GameServers); repeated runs without code changes ~2 min. After `cluster:down` no node containers and no kind cluster remain; only the built images (`mmoexile/*:dev`) stay on the host.*
+- [x] In the browser, the region selector shows eu and us with the simulated distance, and gameplay matches compose: hubs per region, a party's dungeon in the leader's region, handoffs across servers. *Headless Chrome on `localhost:8090`: Europe 4 ms (preselected), North America 44 ms; picking North America connected to a us GameServer (`ws://localhost:7401/ws`) and into the nexus. Bots in each region played only on their region's servers, with dungeons and cross-server handoffs, 0 kicks. The placement rules are the same code as in compose (covered by the realm tests).*
+- [x] Under bot load the EU fleet scales up; afterwards it scales back down, and no player is kicked in either direction. *Smoke: 70 extra bots → eu 2 → 3 servers in 10–17 s, back to 2 in 21 s after they left; 0 kicks and 0 disconnects for the observers. A burst bigger than the buffer briefly fills the region (`region_unavailable` until the new server is up).*
+- [x] Deleting an instance-server pod: Agones replaces it, the orchestrator marks the old one dead, and its players log in again. *Smoke (`kill -9` in the busiest eu server, 18–21 players): marked dead after 5.0–6.6 s, all observers online again right after, the Fleet complete again within ~6 s. A graceful `kubectl delete pod` drains like SIGTERM in compose (scale-down and rollouts use it).*
+- [x] A rolling update of the instance-server image kicks nobody. *`pnpm cluster:reload instance-server` with 40 bots on every server (hubs and dungeons): 82 s including the build, 0 kicks, 0 failed hops; smoke: all servers replaced in 25 s, 0 kicks, autoscaler bounds restored.*
+- [x] Grafana in the cluster shows the Realm Overview dashboard plus the cluster dashboards. *The Realm Overview (home dashboard, same JSON as compose) shows both regions, the scale-up, the rollout and the crash (`docs/images/cluster-grafana.png`); kube-prometheus-stack's Kubernetes dashboards next to it; Agones' metrics in Prometheus.*
+- [x] `pnpm dev`, `pnpm realm:up` and the regular CI are unchanged; the on-demand `cluster-smoke` workflow passes on GitHub. *Compose realm re-checked after the changes (10 bots, 0 kicks, client proxy with the templated nginx config); `pnpm test` unchanged except for the new tests. GitHub: see the workflow run below.*
 ## Stage 6: Databases Outside the Cluster (outline)
 
 - Postgres and Redis move out of the cluster, the way managed databases (Cloud SQL, RDS, ElastiCache, …) are used in production: they run as separate containers next to the kind cluster, standing in for a managed service.
