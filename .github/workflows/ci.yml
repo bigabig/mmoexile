@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, server-infrastructure]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Uses the version pinned in package.json "packageManager"
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Also generates the Prisma client (packages/db postinstall)
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint:deps
+      - run: pnpm build
+
+      # Server tests start a throwaway Postgres via Testcontainers (Docker is
+      # available on GitHub's Ubuntu runners)
+      - run: pnpm test
+
+      # Wall-clock benchmark, run alone so other test suites don't skew it
+      - run: pnpm bench

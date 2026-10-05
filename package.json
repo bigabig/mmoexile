@@ -1,16 +1,39 @@
 {
-  "name": "rotmg-voxel-mmo",
+  "name": "mmoexile",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@12.5.1",
   "scripts": {
-    "dev": "pnpm --parallel --filter @rotmg/server --filter @rotmg/client dev",
-    "dev:server": "pnpm --filter @rotmg/server dev",
-    "dev:client": "pnpm --filter @rotmg/client dev",
+    "dev": "pnpm --parallel --filter @mmoexile/account-api --filter @mmoexile/social --filter @mmoexile/orchestrator --filter @mmoexile/directory --filter @mmoexile/instance-server --filter @mmoexile/client dev",
+    "dev:server": "pnpm --filter @mmoexile/instance-server dev",
+    "dev:client": "pnpm --filter @mmoexile/client dev",
     "build": "pnpm -r build",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "lint:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
+    "db:up": "docker compose -f infra/compose/docker-compose.yml up -d --wait",
+    "db:down": "docker compose -f infra/compose/docker-compose.yml --profile realm down",
+    "db:migrate": "pnpm --filter @mmoexile/db db:migrate",
+    "db:deploy": "pnpm --filter @mmoexile/db db:deploy",
+    "dev:account": "pnpm --filter @mmoexile/account-api dev",
+    "dev:social": "pnpm --filter @mmoexile/social dev",
+    "realm:up": "docker compose -f infra/compose/docker-compose.yml --profile realm up -d --build --wait",
+    "realm:down": "docker compose -f infra/compose/docker-compose.yml --profile realm down",
+    "bench": "pnpm --filter @mmoexile/simulation bench",
+    "dev:orchestrator": "pnpm --filter @mmoexile/orchestrator dev",
+    "dev:directory": "pnpm --filter @mmoexile/directory dev",
+    "chaos": "pnpm --filter @mmoexile/bots chaos",
+    "cluster:init": "bash infra/k8s/scripts/cluster-init.sh",
+    "cluster:up": "bash infra/k8s/scripts/cluster-up.sh",
+    "cluster:down": "bash infra/k8s/scripts/cluster-down.sh",
+    "cluster:reload": "bash infra/k8s/scripts/reload.sh",
+    "cluster:status": "bash infra/k8s/scripts/status.sh",
+    "cluster:smoke": "pnpm --filter @mmoexile/bots cluster-smoke",
+    "cluster-db:up": "bash infra/k8s/scripts/cluster-db-up.sh",
+    "cluster-db:down": "bash infra/k8s/scripts/cluster-db-down.sh",
+    "cluster-db:psql": "bash infra/k8s/scripts/cluster-db-psql.sh"
   },
   "devDependencies": {
+    "dependency-cruiser": "^18.4.0",
     "typescript": "^5.8.0"
   }
 }
-

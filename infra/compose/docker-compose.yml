@@ -1,0 +1,308 @@
+# Local infrastructure and the full realm.
+#   pnpm db:up      → Postgres + Redis only (for `pnpm dev`)
+#   pnpm realm:up   → everything below, built from this repository
+#
+# Topology (Stage 4): central services (account-api, social, orchestrator,
+# directory, Postgres, Redis, client) and two regions:
+#   eu: gateway-eu, instance-server-1, instance-server-2 (no extra latency)
+#   us: gateway-us, instance-server-3, behind region-us, which delays
+#       everything they send by US_LATENCY_MS (default 40) with tc netem
+# Instance servers are reached directly by the browser, so their WebSocket
+# ports are published; their internal ports (orchestrator calls, metrics)
+# are not.
+#
+#   US_LATENCY_MS=120 pnpm realm:up   → compare 0, 40 and 120 ms
+#
+# The ticket keys below are for this local setup only (committed on
+# purpose); override them via the environment for anything shared.
+name: mmoexile
+
+x-realm-env: &realm-env
+  DATABASE_URL: postgresql://mmoexile:mmoexile@postgres:5432/mmoexile
+  REDIS_URL: redis://redis:6379
+  SOCIAL_URL: http://social:3002
+  ORCHESTRATOR_URL: http://orchestrator:3003
+  SESSION_SECRET: ${SESSION_SECRET:-compose-local-session-secret-change-me-0001}
+  TICKET_PUBLIC_KEY: ${TICKET_PUBLIC_KEY:-MCowBQYDK2VwAyEA5x4WebokiBgXkMaoYISP5jTRPohe07UOHtwHccapyJw=}
+  # The realm's regions and their gateway ping endpoints, as the browser
+  # reaches them (directory lists them, account-api validates against them).
+  REGIONS: &regions "eu=Europe=http://localhost:7100/ping,us=North America=http://localhost:7200/ping"
+
+x-node-service: &node-service
+  restart: unless-stopped
+  profiles: [realm]
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    redis:
+      condition: service_healthy
+
+x-health: &health
+  interval: 3s
+  timeout: 3s
+  retries: 20
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mmoexile
+      POSTGRES_PASSWORD: mmoexile
+      POSTGRES_DB: mmoexile
+    ports:
+      - "${MMOEXILE_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mmoexile -d mmoexile"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7
+    ports:
+      - "${MMOEXILE_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Applies Prisma migrations once, then exits
+  migrate:
+    profiles: [realm]
+    build:
+      context: ../..
+      dockerfile: infra/docker/node.Dockerfile
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://mmoexile:mmoexile@postgres:5432/mmoexile
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  account-api:
+    <<: *node-service
+    build:
+      context: ../..
+      dockerfile: infra/docker/node.Dockerfile
+      args: { APP: account-api }
+    environment:
+      <<: *realm-env
+      PORT: "3000"
+    ports: ["3000:3000"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+
+  social:
+    <<: *node-service
+    build:
+      context: ../..
+      dockerfile: infra/docker/node.Dockerfile
+      args: { APP: social }
+    environment:
+      <<: *realm-env
+      PORT: "3002"
+    healthcheck:
+      <<: *health
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3002/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+
+  orchestrator:
+    <<: *node-service
+    build:
+      context: ../..
+      dockerfile: infra/docker/node.Dockerfile
+      args: { APP: orchestrator }
+    environment:
+      <<: *realm-env
+      PORT: "3003"
+      TICKET_PRIVATE_KEY: ${TICKET_PRIVATE_KEY:-MC4CAQAwBQYDK2VwBCIEIOHkkKV+F4K0ZaOGcbZMuTdQefvVi0gcF9rNxIfS7wBZ}
+    # Published on localhost only, for inspecting and draining the fleet.
+    ports: ["127.0.0.1:3003:3003"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3003/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+
+  # The global entry point: realms and their regions (GET /realms).
+  directory:
+    <<: *node-service
+    depends_on: {}
+    build:
+      context: ../..
+      dockerfile: infra/docker/node.Dockerfile
+      args: { APP: directory }
+    environment:
+      REGIONS: *regions
+      PORT: "3004"
+      REALM_NAME: Standard
+    healthcheck:
+      <<: *health
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3004/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+
+  # One gateway per region: answers GET /ping from the region's network
+  # position, so its round trip is the player's latency to that region.
+  gateway-eu:
+    image: nginx:1.29-alpine
+    profiles: [realm]
+    restart: unless-stopped
+    volumes:
+      - ../docker/gateway.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports: ["7100:80"]
+
+  gateway-us:
+    image: nginx:1.29-alpine
+    profiles: [realm]
+    restart: unless-stopped
+    network_mode: service:region-us
+    depends_on: [region-us]
+    volumes:
+      - ../docker/gateway.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # The US "location": owns the network namespace that gateway-us and
+  # instance-server-3 join, and delays everything sent from it. Owning the
+  # namespace here (rather than joining the app's) keeps the delay when an
+  # instance server is killed and restarted. Ports of the US services are
+  # published here; other containers reach them as region-us.
+  region-us:
+    profiles: [realm]
+    build:
+      context: ../docker
+      dockerfile: netem.Dockerfile
+    restart: unless-stopped
+    init: true
+    cap_add: [NET_ADMIN]
+    environment:
+      LATENCY_MS: ${US_LATENCY_MS:-40}
+    ports:
+      - "7200:80"     # gateway-us
+      - "7003:7003"   # instance-server-3
+
+  # Three interchangeable instance servers (any zone, placed by the
+  # orchestrator): two in region eu, one in region us. Each needs its own
+  # published port, because clients connect to instance servers directly. `docker compose stop` sends
+  # SIGTERM: the server drains (dungeons get DRAIN_TIMEOUT_SEC to finish)
+  # before Docker would kill it.
+  instance-server-1:
+    <<: *node-service
+    restart: on-failure  # a drained server exits 0 and stays stopped
+    build: &instance-build
+      context: ../..
+      dockerfile: infra/docker/node.Dockerfile
+      args: { APP: instance-server }
+    stop_grace_period: 2m
+    environment:
+      <<: *realm-env
+      DRAIN_TIMEOUT_SEC: "60"
+      REGION: eu
+      SERVER_ID: s1
+      PORT: "7001"
+      PUBLIC_URL: ws://localhost:7001/ws
+      INTERNAL_URL: http://instance-server-1:9001
+    ports: ["7001:7001"]
+    healthcheck: &instance-health
+      <<: *health
+      test: ["CMD", "node", "-e", "fetch('http://localhost:'+process.env.PORT+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+
+  instance-server-2:
+    <<: *node-service
+    restart: on-failure  # a drained server exits 0 and stays stopped
+    build: *instance-build
+    stop_grace_period: 2m
+    environment:
+      <<: *realm-env
+      DRAIN_TIMEOUT_SEC: "60"
+      REGION: eu
+      SERVER_ID: s2
+      PORT: "7002"
+      PUBLIC_URL: ws://localhost:7002/ws
+      INTERNAL_URL: http://instance-server-2:9001
+    ports: ["7002:7002"]
+    healthcheck: *instance-health
+
+  instance-server-3:
+    <<: *node-service
+    restart: on-failure  # a drained server exits 0 and stays stopped
+    build: *instance-build
+    stop_grace_period: 2m
+    environment:
+      <<: *realm-env
+      DRAIN_TIMEOUT_SEC: "60"
+      REGION: us
+      SERVER_ID: s3
+      PORT: "7003"
+      PUBLIC_URL: ws://localhost:7003/ws
+      INTERNAL_URL: http://region-us:9001
+    # In the US network position (see region-us), which publishes its port.
+    network_mode: service:region-us
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      region-us:
+        condition: service_started
+    healthcheck: *instance-health
+
+  client:
+    profiles: [realm]
+    build:
+      context: ../..
+      dockerfile: infra/docker/client.Dockerfile
+    ports: ["8080:80"]
+    depends_on:
+      account-api:
+        condition: service_healthy
+      directory:
+        condition: service_healthy
+
+  # --- Observability: http://localhost:3030 (Grafana, "Realm Overview") ---
+
+  # The databases' metrics (the "Databases" row of the Realm Overview), as
+  # in the cluster; compose has no PgBouncer, so its panels stay empty here
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    profiles: [realm]
+    environment:
+      DATA_SOURCE_NAME: postgresql://mmoexile:mmoexile@postgres:5432/mmoexile?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.93.0
+    profiles: [realm]
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [realm]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["127.0.0.1:9090:9090"]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    profiles: [realm]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/realm-overview.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3030:3000"]
+    depends_on: [prometheus]
+
+volumes:
+  postgres-data:

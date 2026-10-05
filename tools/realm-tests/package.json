@@ -1,0 +1,32 @@
+{
+  "name": "@mmoexile/realm-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mmoexile/account-api": "workspace:*",
+    "@mmoexile/auth": "workspace:*",
+    "@mmoexile/contracts": "workspace:*",
+    "@mmoexile/db": "workspace:*",
+    "@mmoexile/game-core": "workspace:*",
+    "@mmoexile/instance-server": "workspace:*",
+    "@mmoexile/messaging": "workspace:*",
+    "@mmoexile/orchestrator": "workspace:*",
+    "@mmoexile/protocol": "workspace:*",
+    "@mmoexile/service-kit": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@mmoexile/tsconfig": "workspace:*",
+    "@testcontainers/postgresql": "^12.2.0",
+    "@testcontainers/redis": "^12.2.0",
+    "@types/node": "^22.13.0",
+    "@types/ws": "^8.5.14",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

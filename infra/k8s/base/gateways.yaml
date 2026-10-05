@@ -1,0 +1,60 @@
+# One gateway per region: answers GET /ping from the region's network
+# position, so the browser measures its latency to that region (Stage 4).
+# The overlay pins each to its region's node and gives it a host port.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-eu
+  labels: { app.kubernetes.io/name: gateway-eu, app.kubernetes.io/component: gateway, mmoexile.dev/region: eu }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }  # a host port can't be held by two pods
+  selector:
+    matchLabels: { app.kubernetes.io/name: gateway-eu }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: gateway-eu, app.kubernetes.io/component: gateway, mmoexile.dev/region: eu }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.29-alpine
+          ports: [{ name: http, containerPort: 80 }]
+          readinessProbe:
+            httpGet: { path: /ping, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 16Mi }
+            limits: { memory: 64Mi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/nginx/conf.d }
+      volumes:
+        - { name: config, configMap: { name: gateway-nginx } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-us
+  labels: { app.kubernetes.io/name: gateway-us, app.kubernetes.io/component: gateway, mmoexile.dev/region: us }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: gateway-us }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: gateway-us, app.kubernetes.io/component: gateway, mmoexile.dev/region: us }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.29-alpine
+          ports: [{ name: http, containerPort: 80 }]
+          readinessProbe:
+            httpGet: { path: /ping, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 16Mi }
+            limits: { memory: 64Mi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/nginx/conf.d }
+      volumes:
+        - { name: config, configMap: { name: gateway-nginx } }

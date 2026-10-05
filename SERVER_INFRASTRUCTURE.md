@@ -24,7 +24,7 @@ Realm                        one universe: one character DB, one economy
 | **Node** | One machine (VPS, cloud VM, Kubernetes node). | 1 → many per gateway | The single dev machine |
 | **Instance Server** | A process hosting many instances. Accepts game connections and heartbeats to the orchestrator. | ≈ 1 per CPU core | The single Node process |
 | **Instance** | One running copy of a zone, with a unique ID, an owner/access policy, and a lifecycle. | Hundreds per server | `GameWorld` |
-| **Zone** (template) | Static definition: map layout, spawns, rules. Instances are created *from* it (PoE calls these *areas*). | Dozens | `STATIC_MAPS.*` |
+| **Zone** (template) | Static definition: map layout, spawns, rules. Instances are created *from* it (PoE calls these *areas*). | Dozens | `ZONES.*` (`ZoneDefinition`) |
 
 ### Instance Kinds
 
@@ -146,21 +146,27 @@ This is what a PoE loading screen is. The original RotMG does the same via its `
 
 ## 6. Current State vs. Target
 
-Today, everything runs in **one Node process** (`packages/server/src/index.ts`): HTTP, WebSocket gateway, `WorldCluster`, all worlds, and persistence.
+Stages 0–6 are complete. A realm runs as several cooperating processes (`pnpm realm:up` starts them in Docker): `account-api` (login, characters), `social` (parties), the `orchestrator` (fleet registry, allocation, the only ticket issuer), the `directory` (realms and their regions), three generic `instance-server`s that host any zone, Postgres, Redis, Prometheus and Grafana. The instance servers are split into two regions, `eu` and `us`; the US region sits behind a simulated 40 ms of distance. Players pick a region by ping. Characters move between servers with the ticket and lease handoff; the orchestrator decides where every new instance runs (within the right region), notices dead servers, and drains servers before they stop. The same realm also runs on a local Kubernetes cluster (`pnpm cluster:up`, Stage 5): a node per region, Agones Fleets of instance servers that scale on free player slots and never remove a server with players, and rolling updates without kicks. There, Postgres (behind PgBouncer) and Redis run next to the cluster like managed databases (Stage 6): their own lifecycle, TLS with a local CA, generated credentials, least-privilege users, a small network distance, and short outages without kicks.
 
 | Concern | Today | Target |
 | :--- | :--- | :--- |
-| Zone vs. instance | Conflated: three hard-coded worlds (`nexus`, `realm_1`, `dungeon_golem`) created at startup | Instances created on demand from zones |
-| Private instances | None; every player shares the same golem dungeon | Per-party, owned, with timeout |
-| Public sharding | One Nexus for everyone | N Nexus copies with a player cap |
-| Instance lifecycle | Worlds live forever | creating → running → empty → closed |
-| Execution | Only `InProcessWorldRunner`; all worlds tick on the main thread (worker threads are not yet implemented) | Many processes/cores, many machines |
-| Zone transfer | In-memory function call (`WorldCluster.transferPlayer`) | Save → release lease → ticket → reconnect → claim |
-| Client connection | One fixed `ws://host:3001/ws` for the whole session | Reconnects to whichever server hosts the instance |
-| Auth | Token stored in DB, looked up by the gateway | Signed session token, verifiable anywhere |
-| Message bus | `InMemoryMessageBus` | Redis / NATS |
-| Database | SQLite file | Central Postgres |
-| Regions | None | Gateways |
+| Zone vs. instance | **Done (S1.1–S1.3):** zones (`ZONES`) are templates; instances have ids like `golem_dungeon:7f3a9c` and are created on demand by `InstanceManager` | Instances created on demand from zones |
+| Private instances | **Done (S1.3):** one golem dungeon per party (solo players count as a party of one); `portal_bound` zones are supported but unused | Per-party, owned, with timeout |
+| Public sharding | **Done (S1.3):** fill-first placement below the soft cap, new shard when all are full, preferred shard up to the hard cap | N Nexus copies with a player cap |
+| Instance lifecycle | **Done (S1.4):** a 1 Hz sweeper closes instances empty longer than their zone's timeout (keeping warm hub instances); a tick that throws closes only its own instance and moves its players to the nexus | creating → running → empty → closed |
+| Execution | **Stage 2/3:** one instance-server process per container (N containers × 1 process); each process hosts many instances on its main thread; empty instances sleep (no ticks) until someone enters | Many processes/cores, many machines |
+| ECS isolation | **Fixed in S1.0:** all `GameWorld`s in a process allocate entity IDs from one shared index (`processEntityIndex`), so the module-global component arrays (`Health.current[eid]`) are never written by two worlds; `destroy()` releases a world's IDs | One shared entity index per process |
+| Zone transfer | **Done (S2.8):** every zone change is a handoff (fenced save → release lease → ticket → reconnect → claim), also within one server (decision D4) | Save → release lease → ticket → reconnect → claim |
+| Client connection | **Done (S2.6/S2.12):** the client gets a server URL and ticket from `account-api` (which asks the orchestrator), and follows `s2c_reconnect` to whichever server hosts the next instance | Reconnects to whichever server hosts the instance |
+| Auth | **Done (S2.3/S2.5/S3.4):** signed session tokens (JWT, HS256) from `account-api`; single-use transfer tickets (30 s, Ed25519) issued only by the orchestrator and verified with its public key by every instance server; refresh secrets stored only as hashes | Signed session token, verifiable anywhere |
+| Message bus | **Done (S2.4/S2.10):** Redis pub/sub between services (global and party chat, party updates, kicks); `InMemoryMessageBus` remains for in-process plumbing | Redis / NATS |
+| Database | **Done (S1.8, Stage 6):** Postgres via docker-compose, Prisma migrations; tests use Testcontainers. In the cluster: Postgres, PgBouncer (transaction pooling) and Redis outside Kubernetes with TLS, generated credentials and least-privilege users; saves retried through outages | Central Postgres |
+| Ownership | **Done (S2.7):** Redis lease plus Postgres fencing epoch per character; newest login wins | One owner per character |
+| Placement across servers | **Done (S3.1–S3.5):** the orchestrator applies each zone's access policy across the fleet and creates new instances on the least loaded server (players, instances, tick p95, event loop utilization); registry rebuilt from heartbeats | Load-based, dynamic |
+| Server lifecycle | **Done (S3.2/S3.6):** `starting → ready → draining → stopped`, plus `dead` after 6 s without heartbeats; SIGTERM drains (hubs move at once, dungeons get a timeout) | Matches Agones |
+| Orchestration | **Done (Stage 5):** a third deployment target, a kind cluster (`infra/k8s`): Deployments for the central services, an Agones Fleet per region (Ready when empty, Allocated with players), a FleetAutoscaler on free player slots, rolling updates that drain old servers, kube-prometheus-stack | Kubernetes + Agones |
+| Observability | **Done (S3.7/S4.7/S6.6):** Prometheus metrics in every service, labelled by region; Grafana "Realm Overview" with a region filter, a Regions row and a Databases row (Postgres, PgBouncer and Redis exporters); ticket IDs correlate a handoff across logs | Metrics, dashboards, traces |
+| Regions | **Done (Stage 4):** `eu` and `us` in compose (US delayed 40 ms with `tc netem`); the client pings each region's gateway and preselects the fastest; public zones are placed in the player's home region, a party's private instances in the leader's region; no capacity → `region_unavailable`; admission needs 2 central round trips | Gateways |
 
 ### Foundations Already in Place
 
@@ -174,15 +180,128 @@ Today, everything runs in **one Node process** (`packages/server/src/index.ts`):
 
 | Current | Target |
 | :--- | :--- |
-| `GameWorld` / "world" | **Instance** |
-| `STATIC_MAPS.*` / `MapData` | **Zone** (template) |
-| `WorldCluster` | Split into **InstanceServer** (hosts instances) + **Orchestrator** (placement, tickets, registry) |
+| `GameWorld` / "world" | **Instance** (done in S1.2: `Instance` wraps a `GameWorld`, which now carries `instanceId` and `zoneId`) |
+| `ZONES.*` / `ZoneDefinition` (done in S1.1) | **Zone** (template) |
+| `WorldCluster` | Renamed to `InstanceHost` in S1.2; later split into **InstanceServer** (hosts instances) + **Orchestrator** (placement, tickets, registry) |
 
 ---
 
-## 7. Staged Migration Path
+## 7. Repository Structure
 
-Each stage is independently shippable.
+### The Core Rule: `apps/` vs. `packages/`
+
+- **`apps/`**: things you **deploy**. One app = one Docker image = one container type.
+- **`packages/`**: libraries imported by apps. Never deployed on their own.
+
+Three dependency rules:
+
+1. Apps may import packages.
+2. Packages never import apps.
+3. **Apps never import each other.** They only talk over the network (HTTP, WebSocket, message broker), using shared **contracts**.
+
+Rule 3 is what later allows every app to run in its own container, on its own machine, in its own region.
+
+### Code vs. Deployment Topology
+
+Not every concept in this document is code:
+
+| Concept | Code? | Where it lives |
+| :--- | :--- | :--- |
+| Account/Login, Orchestrator, Instance Server, Social, Economy, Website, Directory | **Yes**, each is an app | `apps/*` |
+| Database, Redis / NATS | **No**, off-the-shelf software we run | `infra/` (compose / k8s manifests) |
+| **Realm, Gateway, Node** | **No**, they describe *where and how many* copies run | `infra/environments/*` |
+
+A gateway is "a set of instance-server containers running in Frankfurt, labeled `region=eu`". The instance-server code is identical everywhere.
+
+### Target Layout
+
+```
+mmoexile/
+├── apps/                          # deployables: one Dockerfile each
+│   ├── client/                    # game client (Vite + Three.js + React) → static files on CDN/nginx
+│   ├── website/                   # landing page, account page, news (much later)
+│   ├── account-api/               # login, session tokens, character list/create/delete
+│   ├── orchestrator/              # instance registry, placement, transfer tickets, server heartbeats
+│   ├── instance-server/           # hosts N instances, WebSocket data plane, handoff
+│   ├── social/                    # chat routing, party, friends, guilds, presence
+│   ├── economy/                   # trade, market, stash: anything transactional with items
+│   └── directory/                 # realm & gateway list, ping endpoints (tiny, global)
+│
+├── packages/                      # libraries: never deployed alone
+│   ├── game-core/                 # today's `shared`: math, zones/maps, items, prefabs, formulas, ECS components
+│   ├── simulation/                # pure GameWorld + systems (zero I/O), extracted from server
+│   ├── protocol/                  # client ⇄ instance-server packets (MessagePack)
+│   ├── contracts/                 # service ⇄ service: HTTP API schemas, broker subjects & message types
+│   ├── auth/                      # sign/verify session tokens & transfer tickets
+│   ├── db/                        # Prisma schema, migrations, generated client
+│   ├── messaging/                 # broker abstraction + in-memory / Redis (/ NATS) implementations
+│   ├── service-kit/               # shared service plumbing: config, logging, /health, metrics, graceful shutdown
+│   └── tsconfig/                  # shared TS config presets
+│
+├── infra/
+│   ├── docker/                    # shared Dockerfile base / build helpers
+│   ├── compose/                   # docker-compose.yml: postgres, redis, all apps locally
+│   ├── k8s/                       # later: Deployments/Services (kustomize or helm)
+│   ├── agones/                    # later: Fleet + FleetAutoscaler for instance-server
+│   └── environments/              # topology: realm-dev, realm-intl/{gateway-eu, gateway-us}
+│
+├── tools/                         # load-test bots, seed scripts, admin CLI
+├── docs/                          # architecture docs, decision records
+├── package.json
+├── pnpm-workspace.yaml            # packages: ["apps/*", "packages/*", "tools/*"]
+└── turbo.json                     # optional: Turborepo for cached builds/tests across the graph
+```
+
+The npm scope becomes `@mmoexile/*` (replacing `@rotmg/*`).
+
+### Where the Original Code Moved (done in Stage 0)
+
+| Before | After |
+| :--- | :--- |
+| `packages/client` | `apps/client` |
+| `packages/shared` | Split into `packages/game-core` + `packages/protocol` |
+| `packages/server/src/simulation` | `packages/simulation` (already pure, so it becomes a library) |
+| `packages/server/src/gateway` + `cluster` | `apps/instance-server` |
+| `packages/server/src/persistence` + `prisma/` | `packages/db` (schema/client) + the services that own the data |
+| `packages/server/src/cluster/messaging` | Stays inside `apps/instance-server` (it is in-process plumbing); `packages/messaging` is the *inter-service* broker, introduced in Stage 2 |
+
+Pulling `simulation` into its own package means benchmarks, tests, bots, and potentially client-side prediction can use it without importing a server.
+
+### Inside One App
+
+Every app follows the same skeleton:
+
+```
+apps/instance-server/
+├── Dockerfile
+├── package.json                  # @mmoexile/instance-server
+└── src/
+    ├── main.ts                   # wiring only: config → dependencies → start
+    ├── config.ts                 # env vars, validated (PORT, REGION, ORCHESTRATOR_URL, …)
+    ├── host/InstanceHost.ts      # owns many GameWorld instances + their runners
+    ├── transport/                # WebSocket endpoint, ticket check on connect
+    ├── handoff/                  # lease claim/release, transfer out/in
+    ├── clients/orchestrator.ts   # typed client for the orchestrator API (from contracts)
+    └── lifecycle/                # Ready / Health / Shutdown, abstracted (Agones SDK later)
+```
+
+### Structural Decisions
+
+1. **Contracts are the only shared surface between services.** `packages/contracts` defines e.g. `POST /tickets` or the subject `chat.instance.<id>` with runtime-validated schemas (zod). Changing an API breaks the build of every caller.
+2. **One database, strict table ownership.** One Postgres and one `packages/db` schema, but every table has exactly one owning service (account-api: accounts, characters; economy: items, trades; social: friends, guilds). Others ask the owner instead of writing its tables. This keeps a later database split possible and prevents a "distributed monolith".
+3. **One multi-stage Dockerfile per app.** Install with pnpm, build only that app plus its package dependencies (`pnpm deploy --filter` or `turbo prune`), copy into a slim runtime image. `docker compose up` runs an entire realm locally.
+4. **Only `instance-server` becomes an Agones `GameServer`/`Fleet`.** It is the only stateful, "don't kill me while players are connected" component. Everything else is a plain Kubernetes `Deployment`. Because each server hosts many instances, we use Agones' high-density pattern (Counters/Lists for player and instance counts). The `lifecycle/` abstraction keeps the Agones SDK out of the game code until it is needed.
+5. **One process per container (N containers × 1 process).** Node runs JavaScript on one thread, so one instance-server process uses about one CPU core; a 32-core machine runs ~32 instance-server containers rather than one container with 32 worker processes. Unlike stateless HTTP workers (e.g. uvicorn), game processes cannot share a port: each player must reach the specific process hosting their instance, so every process needs its own address and is tracked, drained, and health-checked individually by the orchestrator. Making that unit a container means restarts, deploys, out-of-memory kills, and node failures affect one process and its instances, never a whole group, and it matches Kubernetes/Agones (one `GameServer` per pod). Containers are isolated processes, not VMs, so the overhead is negligible. The instance-server code is identical either way; this is a packaging decision.
+6. **Folders appear when their stage arrives.** Empty services rot and obscure what is real. The layout above is the target map, not a scaffold to create up front.
+
+---
+
+## 8. Staged Migration Path
+
+Each stage is independently shippable. The detailed, task-level plan lives in [`SERVER_INFRASTRUCTURE_PLAN.md`](SERVER_INFRASTRUCTURE_PLAN.md).
+
+### Stage 0: Repository Restructure (no behavior change)
+- Move today's code into the `apps/` + `packages/` layout, rename the scope to `@mmoexile/*`.
 
 ### Stage 1: Real Instancing (single process)
 - Split zone templates from instance IDs; add an instance registry.
@@ -202,13 +321,27 @@ This is the point where it becomes a real distributed system.
 
 ### Stage 3: Orchestrator & Fleet
 - Instance servers register with the orchestrator and send heartbeats.
-- Load-aware placement of new instances.
+- Load-aware placement of new instances; the orchestrator becomes the only ticket issuer.
 - Failure handling: a crashed server loses its instances, but characters are safe up to their last save.
+- Draining: a server that is told to stop moves its players away first.
+- Metrics and a dashboard, so the fleet's load is visible.
 
 ### Stage 4: Regions
 - Region tag on instance servers.
 - Client-side latency probe to suggest a gateway.
 - Region-aware placement. Central services stay central.
+- The cost of distance to the central services is measured and reduced (fewer round trips per handoff).
 
-### Later Tooling (not needed yet)
-Docker, Kubernetes, and **Agones** (Kubernetes for game servers: fleets, allocation, player counts). Build the pieces by hand first; these tools make much more sense afterwards.
+### Stage 5: Kubernetes & Agones
+- A local kind cluster as an additional deployment target; development and compose stay as they are.
+- Plain `Deployment`s for stateless apps; an Agones `Fleet` per region for instance servers, scaled on free player capacity.
+- The orchestrator stays the brain (placement, tickets); Agones manages the server processes and never removes a busy one.
+
+### Stage 6: Databases Outside the Cluster ✅
+- Postgres, PgBouncer and Redis as "managed databases" next to the cluster, with their own lifecycle (`cluster-db:up/down`); the data outlives the cluster.
+- Generated credentials (`cluster:init`), least-privilege users, TLS with certificate verification, connection pooling, a small network distance, and short database outages without kicks.
+
+### Stage 7: One Cluster per Region
+- A central cluster plus one cluster per region, each with its own Agones; service-to-service authentication across clusters.
+
+Build the pieces by hand first; Kubernetes and Agones make much more sense afterwards.

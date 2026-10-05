@@ -1,0 +1,69 @@
+# Helm values for kube-prometheus-stack (chart version pinned in
+# scripts/lib.sh): Prometheus (run by the Prometheus Operator), Grafana,
+# kube-state-metrics and node-exporter, plus their Kubernetes dashboards.
+#
+# Our services are scraped through PodMonitors (base/monitoring.yaml), the
+# Realm Overview dashboard is the same file as in compose, loaded from a
+# ConfigMap by Grafana's sidecar. Everything runs on the central node
+# (node-exporter on every node).
+
+# Local cluster: no alerting, and kind's control-plane components only
+# listen on localhost, so they can't be scraped
+alertmanager: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeEtcd: { enabled: false }
+kubeProxy: { enabled: false }
+
+prometheusOperator:
+  nodeSelector: { mmoexile.dev/role: central }
+  admissionWebhooks:
+    patch:
+      nodeSelector: { mmoexile.dev/role: central }
+
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30091  # localhost:9091 (kind.yaml)
+  prometheusSpec:
+    nodeSelector: { mmoexile.dev/role: central }
+    scrapeInterval: 5s  # as in compose
+    evaluationInterval: 5s
+    retention: 2d
+    # Pick up every PodMonitor/ServiceMonitor in the cluster, not only the
+    # ones labelled for this Helm release
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    # Find a ServiceMonitor's targets through EndpointSlices (not the
+    # deprecated Endpoints): the databases outside the cluster only have
+    # EndpointSlices (overlays/kind/databases.yaml)
+    serviceDiscoveryRole: EndpointSlice
+
+kube-state-metrics:
+  nodeSelector: { mmoexile.dev/role: central }
+
+prometheus-node-exporter:
+  # kind nodes are containers: no host root filesystem to mount
+  hostRootFsMount: { enabled: false }
+
+grafana:
+  nodeSelector: { mmoexile.dev/role: central }
+  service:
+    type: NodePort
+    nodePort: 30040  # localhost:3040 (kind.yaml)
+  adminPassword: admin  # local only; viewers need no login
+  grafana.ini:
+    auth.anonymous: { enabled: true, org_role: Viewer }
+    analytics: { reporting_enabled: false, check_for_updates: false }
+    # The sidecar writes each dashboard ConfigMap's files to /tmp/dashboards
+    dashboards: { default_home_dashboard_path: /tmp/dashboards/realm-overview.json }
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+    datasources:
+      # The UID the Realm Overview dashboard refers to (same as compose)
+      uid: prometheus

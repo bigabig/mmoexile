@@ -1,0 +1,24 @@
+import { createRedis } from "@mmoexile/messaging";
+import { createLogger, handleShutdownSignals, logUnhandledRejections } from "@mmoexile/service-kit";
+import { assertNotDevSecrets } from "@mmoexile/auth";
+import { readConfig } from "./config.js";
+import { createOrchestrator } from "./app.js";
+
+const config = readConfig();
+assertNotDevSecrets(config.NODE_ENV, [config.TICKET_PRIVATE_KEY]);
+const logger = createLogger("orchestrator", config.LOG_LEVEL);
+logUnhandledRejections(logger);
+const redis = createRedis({ url: config.REDIS_URL, caFile: config.REDIS_CA_FILE });
+const orchestrator = createOrchestrator({ config, logger, redis });
+
+handleShutdownSignals({
+  logger,
+  shutdown: async () => {
+    await orchestrator.stop();
+    await redis.quit();
+  },
+});
+
+await orchestrator.start();
+await orchestrator.app.listen({ port: config.PORT, host: "0.0.0.0" });
+logger.info({ port: config.PORT }, "orchestrator listening");

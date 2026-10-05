@@ -1,0 +1,42 @@
+# The realm without anything environment-specific: no node placement, no
+# host ports, no secrets, no region list, no databases. An overlay
+# (overlays/kind) adds those. Files are shared with compose (../../docker, ../../observability),
+# so builds need `--load-restrictor LoadRestrictionsNone` (scripts/apply.sh).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mmoexile
+labels:
+  - pairs: { app.kubernetes.io/part-of: mmoexile }
+resources:
+  - migrate.yaml
+  - account-api.yaml
+  - social.yaml
+  - orchestrator.yaml
+  - directory.yaml
+  - client.yaml
+  - gateways.yaml
+  - instance-servers.yaml
+  - monitoring.yaml
+configurations:
+  - kustomizeconfig.yaml
+# Generated ConfigMaps/Secrets are applied with the data (scripts/apply.sh)
+generatorOptions:
+  labels: { app.kubernetes.io/component: config }
+configMapGenerator:
+  # Shared by the Node services (like x-realm-env in compose). Secrets
+  # (keys, the database and Redis URLs with their passwords) and the
+  # databases' CA (ConfigMap database-ca) come from the overlay.
+  - name: realm
+    literals:
+      - SOCIAL_URL=http://social:3002
+      - ORCHESTRATOR_URL=http://orchestrator:3003
+  - name: gateway-nginx
+    files:
+      - default.conf=../../docker/gateway.nginx.conf  # the same file as compose
+  # The Realm Overview dashboard, the same file as in compose. Grafana's
+  # sidecar loads every ConfigMap labelled grafana_dashboard=1.
+  - name: realm-overview-dashboard
+    files:
+      - realm-overview.json=../../observability/grafana/dashboards/realm-overview.json
+    options:
+      labels: { grafana_dashboard: "1" }

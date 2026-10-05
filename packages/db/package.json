@@ -1,0 +1,36 @@
+{
+  "name": "@mmoexile/db",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": [
+    "src",
+    "generated",
+    "prisma"
+  ],
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:migrate": "DATABASE_URL=\"${DATABASE_URL:-postgresql://mmoexile:mmoexile@localhost:5432/mmoexile}\" prisma migrate dev",
+    "db:deploy": "DATABASE_URL=\"${DATABASE_URL:-postgresql://mmoexile:mmoexile@localhost:5432/mmoexile}\" prisma migrate deploy",
+    "db:reset": "DATABASE_URL=\"${DATABASE_URL:-postgresql://mmoexile:mmoexile@localhost:5432/mmoexile}\" prisma migrate reset --force"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1"
+  },
+  "devDependencies": {
+    "@mmoexile/tsconfig": "workspace:*",
+    "@types/node": "^22.13.0",
+    "prisma": "^6.4.1",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,40 @@
+# Helm values for Agones (chart version pinned in scripts/lib.sh).
+#
+# Agones' own components run on the central node. We use Agones for the
+# lifecycle and autoscaling of instance servers only: placement stays with
+# our orchestrator (D13), so Agones' allocator and ping services are off.
+#
+# Explicit resources replace the chart's default, which only requests
+# ephemeral storage: kind.yaml turns ephemeral-storage accounting off (for
+# Docker on ZFS/btrfs), and such a request could then never be scheduled.
+agones:
+  metrics:
+    # Agones' controller metrics (fleets, GameServer states, autoscaler)
+    # in Prometheus, via the operator from kube-prometheus-stack
+    serviceMonitor: { enabled: true }
+  controller:
+    replicas: 1  # one is enough locally (production runs two, for failover)
+    nodeSelector: { mmoexile.dev/role: central }
+    resources: &resources
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { memory: 512Mi }
+  extensions:
+    replicas: 1
+    nodeSelector: { mmoexile.dev/role: central }
+    resources: *resources
+  ping:
+    install: false
+  allocator:
+    install: false
+
+gameservers:
+  namespaces: [mmoexile]
+  # Host ports per region (D15): a GameServer asks for a port from its
+  # region's range, and kind.yaml publishes exactly that range on the
+  # region's node. The default range is unused by our Fleets; it only must
+  # not overlap the others.
+  minPort: 7500
+  maxPort: 7509
+  additionalPortRanges:
+    eu: [7300, 7319]
+    us: [7400, 7419]

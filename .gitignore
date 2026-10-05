@@ -5,7 +5,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Local SQLite database (recreate with `pnpm --filter @rotmg/server db:push`)
+# Local SQLite files from before the move to Postgres
 *.db
 *.db-journal
 
@@ -27,3 +27,6 @@ coverage/
 !.vscode/extensions.json
 .idea/
 .DS_Store
+
+# Generated secrets of the local cluster (pnpm cluster:init)
+infra/k8s/.secrets/

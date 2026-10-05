@@ -1,7 +1,16 @@
 packages:
+  - "apps/*"
   - "packages/*"
+  - "tools/*"
 allowBuilds:
-  '@prisma/client': set this to true or false
-  '@prisma/engines': set this to true or false
-  esbuild: set this to true or false
-  prisma: set this to true or false
+  '@prisma/client': true
+  '@prisma/engines': true
+  esbuild: true
+  prisma: true
+  # Testcontainers dependencies: optional native addons / version checks, not needed
+  cpu-features: false
+  protobufjs: false
+  ssh2: false
+  # When copied by `pnpm deploy` (Docker), the db package ships its generated
+  # Prisma client already; its postinstall (prisma generate) must not run
+  '@mmoexile/db': false

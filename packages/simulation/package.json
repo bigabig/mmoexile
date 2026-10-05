@@ -1,0 +1,28 @@
+{
+  "name": "@mmoexile/simulation",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --exclude 'src/**/*.bench.test.ts'",
+    "bench": "vitest run src/__tests__/simulation.bench.test.ts"
+  },
+  "dependencies": {
+    "@mmoexile/game-core": "workspace:*",
+    "@mmoexile/protocol": "workspace:*",
+    "bitecs": "^0.4.0"
+  },
+  "devDependencies": {
+    "@mmoexile/tsconfig": "workspace:*",
+    "@types/node": "^22.13.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,54 @@
+generator client {
+  provider      = "prisma-client-js"
+  // Generated into this package so it ships with it (e.g. in Docker images)
+  output        = "../generated"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id         String      @id @default(uuid())
+  nickname          String
+  /// SHA-256 of the client's refresh secret; the secret itself is never stored
+  refreshSecretHash String      @unique
+  createdAt         DateTime    @default(now())
+  characters        Character[]
+}
+
+model Character {
+  id             String   @id @default(uuid())
+  accountId      String
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  class          String   @default("wizard")
+  level          Int      @default(1)
+  xp             Int      @default(0)
+  hp             Int      @default(100)
+  maxHp          Int      @default(100)
+  mp             Int      @default(50)
+  maxMp          Int      @default(50)
+  defense        Float    @default(0)
+  speed          Float    @default(5.5)
+  attack         Float    @default(10)
+  dexterity      Float    @default(10)
+  equippedWeapon String?  @default("staff_energy")
+  equippedArmor  String?  @default("robe_apprentice")
+  /// 8 inventory slots: item id or null
+  inventory      Json     @default("[]")
+  /// Zone (not instance) the character was last saved in
+  lastZoneId     String   @default("nexus")
+  x              Float    @default(20.0)
+  y              Float    @default(20.0)
+  isAlive        Boolean  @default(true)
+  deathReason    String?
+  /// Fencing token: incremented whenever a server takes ownership of the
+  /// character; state writes must match it (see instance-server ownership)
+  ownerEpoch     Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([accountId])
+}

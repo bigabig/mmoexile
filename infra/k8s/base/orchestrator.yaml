@@ -1,0 +1,61 @@
+# Placement: the fleet registry, zone allocation, tickets (D13: also with
+# Agones it stays the brain). One replica, its fleet view lives in memory;
+# Recreate, so an old and a new one never run side by side.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  labels: { app.kubernetes.io/name: orchestrator, app.kubernetes.io/component: central }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: orchestrator }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: orchestrator, app.kubernetes.io/component: central }
+    spec:
+      containers:
+        - name: orchestrator
+          image: mmoexile/orchestrator:dev
+          imagePullPolicy: IfNotPresent  # loaded into the nodes, never pulled
+          envFrom:
+            - configMapRef: { name: realm }
+          env:
+            - { name: PORT, value: "3003" }
+            - name: REDIS_URL
+              valueFrom: { secretKeyRef: { name: realm-secrets, key: REDIS_URL } }
+            - name: TICKET_PRIVATE_KEY
+              valueFrom: { secretKeyRef: { name: realm-secrets, key: TICKET_PRIVATE_KEY } }
+          ports: [{ name: http, containerPort: 3003 }]
+          # Restarted if it stops answering; gets traffic only when ready
+          # (its dependencies are reachable)
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            periodSeconds: 3
+          # tsx compiles the TypeScript sources on start, which takes a few seconds
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 768Mi }
+          volumeMounts:
+            - { name: database-ca, mountPath: /etc/mmoexile/database-ca, readOnly: true }
+      volumes:
+        # The CA the databases' certificates are signed by (from the overlay)
+        - { name: database-ca, configMap: { name: database-ca } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  labels: { app.kubernetes.io/name: orchestrator }
+spec:
+  selector: { app.kubernetes.io/name: orchestrator }
+  ports: [{ name: http, port: 3003, targetPort: http }]

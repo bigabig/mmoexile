@@ -1,0 +1,463 @@
+/**
+ * Smoke test of the realm on the local Kubernetes cluster (Stages 5 and 6):
+ * plays with bots while it scales, rolls out, loses a pod and its
+ * databases, and checks the acceptance criteria. See TESTS.md ("Cluster
+ * Smoke Test").
+ *
+ *   pnpm cluster:up
+ *   pnpm cluster:smoke
+ *   pnpm cluster:smoke --mode persistence   (the data outlives the
+ *                                            databases' and the cluster's
+ *                                            restart, ~8 min)
+ *
+ * Checks, in order:
+ *   1. The realm is reachable and both regions answer pings (us farther).
+ *   2. Bots play in each region, on that region's servers.
+ *   3. Under load, the eu fleet scales up; nobody is kicked.
+ *   4. After the load, it scales back down; players stay connected.
+ *   5. A rolling update of the instance servers (pnpm cluster:reload
+ *      instance-server) moves players without a kick.
+ *   6. A crashed instance server: the orchestrator marks it dead, Agones
+ *      replaces it, and its players log in again.
+ *   7. The databases: TLS only, certificates from another CA rejected, the
+ *      services' database user can't change the schema.
+ *   8. Postgres unavailable for 30 s: nobody is kicked, logins get a clear
+ *      503, every save is written afterwards.
+ *   9. Redis unavailable for 10 s: nobody is kicked.
+ * Steps 3-9 run with "observer" bots playing in eu the whole time.
+ * Prints one line per check and exits with 1 if any failed.
+ */
+import { execFile } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import {
+  accountApi,
+  createHttpClient,
+  directoryApi,
+  HttpError,
+  measureRegions,
+  orchestratorApi,
+  type ServerView,
+} from "@mmoexile/contracts";
+import { sleep } from "./bot.js";
+import { directoryNextTo } from "./regions.js";
+import { Swarm, type SwarmReport } from "./swarm.js";
+
+function arg(name: string, fallback: string): string {
+  const index = process.argv.indexOf(`--${name}`);
+  return index >= 0 ? process.argv[index + 1] : fallback;
+}
+
+const apiUrl = arg("api", "http://localhost:8090/api");
+const orchestratorUrl = arg("orchestrator", "http://localhost:3013");
+const context = arg("context", "kind-mmoexile");
+const loadBots = Number(arg("load", "70"));
+const observerBots = Number(arg("observers", "10"));
+const prometheusUrl = arg("prometheus", "http://localhost:9091");
+const mode = arg("mode", "realm");
+const k8sDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../infra/k8s");
+const reloadScript = path.join(k8sDir, "scripts/reload.sh");
+const secret = (name: string) => readFileSync(path.join(k8sDir, ".secrets", name), "utf8").trim();
+
+// --- Helpers ---
+
+const run = promisify(execFile);
+
+async function kubectl(...args: string[]): Promise<string> {
+  const { stdout } = await run("kubectl", ["--context", context, "-n", "mmoexile", ...args], {
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return stdout;
+}
+
+interface FleetStatus {
+  replicas: number;
+  ready: number;
+  allocated: number;
+}
+
+async function fleetStatus(name: string): Promise<FleetStatus> {
+  const fleet = JSON.parse(await kubectl("get", "fleet", name, "-o", "json")) as {
+    spec: { replicas: number };
+    status?: { readyReplicas?: number; allocatedReplicas?: number };
+  };
+  return {
+    replicas: fleet.spec.replicas,
+    ready: fleet.status?.readyReplicas ?? 0,
+    allocated: fleet.status?.allocatedReplicas ?? 0,
+  };
+}
+
+/** The FleetAutoscaler's bounds, e.g. "120-240". */
+async function autoscalerBounds(name: string): Promise<string> {
+  return kubectl("get", "fleetautoscaler", name, "-o", "jsonpath={.spec.policy.counter.minCapacity}-{.spec.policy.counter.maxCapacity}");
+}
+
+async function gameServerNames(fleet: string): Promise<string[]> {
+  const out = await kubectl("get", "gameservers", "-l", `agones.dev/fleet=${fleet}`, "-o", "jsonpath={.items[*].metadata.name}");
+  return out.split(/\s+/).filter(Boolean);
+}
+
+// --- The databases next to the cluster (cluster-db-up.sh) ---
+
+const dbContainer = (service: string) => `mmoexile-db-${service}`;
+const paused = new Set<string>();
+async function pause(service: string): Promise<void> {
+  await run("docker", ["pause", dbContainer(service)]);
+  paused.add(service);
+}
+async function unpause(service: string): Promise<void> {
+  await run("docker", ["unpause", dbContainer(service)]);
+  paused.delete(service);
+}
+
+/**
+ * Runs a client in a throwaway container on kind's network, like a pod
+ * would connect; returns its output (also when it fails). Passwords go
+ * through the environment.
+ */
+async function client(image: string, command: string[], env: Record<string, string> = {}, mounts: string[] = []) {
+  const args = ["run", "--rm", "--network", "kind", ...Object.keys(env).flatMap((name) => ["-e", name]),
+    ...mounts.flatMap((m) => ["-v", m]), image, ...command];
+  try {
+    const { stdout, stderr } = await run("docker", args, { env: { ...process.env, ...env } });
+    return `${stdout}${stderr}`;
+  } catch (err) {
+    const { stdout = "", stderr = "" } = err as { stdout?: string; stderr?: string };
+    return `${stdout}${stderr}`;
+  }
+}
+const psql = (conninfo: string, sql: string, password: string, mounts: string[] = []) =>
+  client("postgres:16", ["psql", conninfo, "-tAc", sql], { PGPASSWORD: password }, mounts);
+
+async function prometheus(query: string): Promise<number | undefined> {
+  const res = await fetch(`${prometheusUrl}/api/v1/query?${new URLSearchParams({ query })}`);
+  const { data } = (await res.json()) as { data: { result: { value: [number, string] }[] } };
+  return data.result[0] ? Number(data.result[0].value[1]) : undefined;
+}
+
+const firstLine = (text: string) => text.trim().split("\n").find((l) => l.trim())?.trim().slice(0, 110) ?? "";
+
+const orchestrator = createHttpClient({ baseUrl: orchestratorUrl });
+
+async function servers(): Promise<ServerView[]> {
+  try {
+    return (await orchestrator(orchestratorApi.listServers, undefined)).servers;
+  } catch {
+    return [];
+  }
+}
+
+/** Polls until `check` holds; returns the elapsed milliseconds. */
+async function waitFor(
+  what: string,
+  check: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 500,
+): Promise<number> {
+  const started = Date.now();
+  while (!(await check())) {
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(`Timed out after ${timeoutMs / 1000} s waiting for: ${what}`);
+    }
+    await sleep(intervalMs);
+  }
+  return Date.now() - started;
+}
+
+const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
+
+let failed = 0;
+function record(check: string, ok: boolean, value: string): void {
+  if (!ok) failed++;
+  console.log(`  ${ok ? "✔" : "✘"} ${check}: ${value}`);
+}
+
+/** Kicks and disconnects since a snapshot of a swarm's counters. */
+function disruptions(swarm: Swarm, since: ReturnType<Swarm["totals"]>) {
+  const now = swarm.totals();
+  const kicks = now.kicks - since.kicks;
+  const disconnects = now.disconnects - since.disconnects;
+  return { ok: kicks === 0 && disconnects === 0, text: `${kicks} kicks, ${disconnects} disconnects` };
+}
+
+// --- Checks ---
+
+let observers: Swarm | undefined;
+let load: Swarm | undefined;
+
+/** A fresh guest with a character; returns what is needed to find it again. */
+async function newCharacter() {
+  let token: string | undefined;
+  const api = createHttpClient({ baseUrl: apiUrl, token: () => token });
+  const login = await api(accountApi.guestLogin, { nickname: "Keeper" });
+  token = login.sessionToken;
+  const { character } = await api(accountApi.createCharacter, { classId: "knight" });
+  return { refreshSecret: login.refreshSecret, characterId: character.id };
+}
+
+/** Logs in again with the refresh secret: is the character still there? */
+async function stillThere(saved: { refreshSecret: string; characterId: string }): Promise<string> {
+  let token: string | undefined;
+  const api = createHttpClient({ baseUrl: apiUrl, token: () => token });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      token = (await api(accountApi.refresh, { refreshSecret: saved.refreshSecret })).sessionToken;
+      const { characters } = await api(accountApi.listCharacters, undefined);
+      return characters.some((c) => c.id === saved.characterId) ? "found" : "character missing";
+    } catch (err) {
+      if (attempt >= 30) return `login failed: ${(err as Error).message}`;
+      await sleep(2000); // the realm is still starting
+    }
+  }
+}
+
+async function script(name: string, ...args: string[]): Promise<number> {
+  const started = Date.now();
+  await run("bash", [path.join(k8sDir, "scripts", name), ...args], { maxBuffer: 256 * 1024 * 1024 });
+  return Date.now() - started;
+}
+
+if (mode === "persistence") {
+  try {
+    console.log("Data outlives the databases' and the cluster's restart");
+    const saved = await newCharacter();
+    console.log(`  character ${saved.characterId}; pnpm cluster-db:down, cluster-db:up`);
+    const dbMs = (await script("cluster-db-down.sh")) + (await script("cluster-db-up.sh"));
+    const afterDb = await stillThere(saved);
+    record("still there after the databases restarted", afterDb === "found", `${afterDb} (databases back after ${seconds(dbMs)})`);
+    console.log("  pnpm cluster:down, cluster:up");
+    const clusterMs = (await script("cluster-down.sh")) + (await script("cluster-up.sh"));
+    const afterCluster = await stillThere(saved);
+    record("still there after the cluster was deleted and created again", afterCluster === "found",
+      `${afterCluster} (cluster back after ${seconds(clusterMs)})`);
+  } catch (err) {
+    record("persistence check completed", false, (err as Error).message);
+  }
+  console.log(failed === 0 ? "\nAll checks passed" : `\n${failed} check(s) failed`);
+  process.exit(failed === 0 ? 0 : 1);
+}
+
+try {
+  // 1. Reachability
+  {
+    console.log("1. Reachable");
+    const directory = createHttpClient({ baseUrl: directoryNextTo(apiUrl) });
+    const { realms } = await directory(directoryApi.listRealms, undefined);
+    const regions = await measureRegions(realms[0]?.regions ?? []);
+    const text = regions.map((r) => `${r.id}=${r.pingMs ?? "unreachable"}${r.pingMs !== undefined ? " ms" : ""}`).join(", ");
+    record("the directory lists eu and us, both answer pings", ["eu", "us"].every((id) => regions.some((r) => r.id === id && r.pingMs !== undefined)), text);
+    const eu = regions.find((r) => r.id === "eu")?.pingMs ?? 0;
+    const us = regions.find((r) => r.id === "us")?.pingMs ?? 0;
+    record("us is farther away than eu (simulated distance)", us - eu >= 20, `${us - eu} ms`);
+  }
+
+  // 2. Bots in each region
+  {
+    console.log("2. Bots play in each region");
+    const swarms = ["eu", "us"].map((region) => ({
+      region,
+      swarm: new Swarm({ apiUrl, region, bots: 5, route: ["nexus", "overworld", "golem_dungeon"] }),
+    }));
+    swarms.forEach(({ swarm }) => swarm.start());
+    await sleep(30_000);
+    const regionOf = new Map((await servers()).map((s) => [s.url, s.region]));
+    for (const { region, swarm } of swarms) {
+      const report: SwarmReport = await swarm.stop();
+      const foreign = Object.keys(report.welcomesPerServer).filter((url) => regionOf.get(url) !== region);
+      record(
+        `${region}: played on ${region} servers without kicks or errors`,
+        report.welcomes > 0 && report.kicks === 0 && report.errors === 0 && foreign.length === 0,
+        `${report.welcomes} welcomes on ${Object.keys(report.welcomesPerServer).length} servers, ${report.kicks} kicks, ${report.errors} errors` +
+          (foreign.length ? `, foreign servers: ${foreign.join(" ")}` : ""),
+      );
+    }
+  }
+
+  observers = new Swarm({ apiUrl, region: "eu", bots: observerBots, route: ["nexus", "overworld"] });
+  observers.start();
+  await waitFor("observers online", () => observers!.online() === observerBots, 60_000);
+  const initial = await fleetStatus("instance-server-eu");
+
+  // 3. Scale up
+  {
+    console.log(`3. Scale up: ${loadBots} more bots in eu (fleet: ${initial.replicas} servers)`);
+    const since = observers.totals();
+    load = new Swarm({ apiUrl, region: "eu", bots: loadBots, route: ["nexus", "overworld"] });
+    load.start();
+    const ms = await waitFor(
+      "eu fleet scaled up",
+      async () => (await fleetStatus("instance-server-eu")).replicas > initial.replicas,
+      240_000,
+      2000,
+    );
+    const now = await fleetStatus("instance-server-eu");
+    record("the eu fleet scaled up", true, `${initial.replicas} → ${now.replicas} servers after ${seconds(ms)}`);
+    await sleep(15_000);
+    const loadTotals = load.totals();
+    const observed = disruptions(observers, since);
+    record("nobody kicked under load", observed.ok && loadTotals.kicks === 0,
+      `observers: ${observed.text}; load: ${loadTotals.kicks} kicks, ${loadTotals.errors} errors`);
+  }
+
+  // 4. Scale down
+  {
+    console.log("4. Scale down: the load leaves");
+    const loadReport = await load.stop();
+    load = undefined;
+    // Not a failure: a burst bigger than the autoscaler's buffer fills the
+    // region until the new server is up ("region_unavailable" meanwhile)
+    console.log(`  (info) load bots: ${loadReport.failedHops} failed hops while eu was full, ${loadReport.kicks} kicks`);
+    const since = observers.totals();
+    const ms = await waitFor(
+      "eu fleet back to its size",
+      async () => (await fleetStatus("instance-server-eu")).replicas <= initial.replicas,
+      300_000,
+      2000,
+    );
+    record("the eu fleet scaled back down", true, `${(await fleetStatus("instance-server-eu")).replicas} servers after ${seconds(ms)}`);
+    await sleep(10_000); // the removed servers drain and stop
+    const observed = disruptions(observers, since);
+    record("players stayed connected", observed.ok, observed.text);
+  }
+
+  // 5. Rolling update
+  {
+    console.log("5. Rolling update (pnpm cluster:reload instance-server)");
+    const since = observers.totals();
+    const before = new Set([...(await gameServerNames("instance-server-eu")), ...(await gameServerNames("instance-server-us"))]);
+    const bounds = [await autoscalerBounds("instance-server-eu"), await autoscalerBounds("instance-server-us")];
+    const started = Date.now();
+    await run("bash", [reloadScript, "instance-server"], { maxBuffer: 64 * 1024 * 1024 });
+    const after = [...(await gameServerNames("instance-server-eu")), ...(await gameServerNames("instance-server-us"))];
+    record("every instance server replaced", after.length > 0 && after.every((name) => !before.has(name)),
+      `${before.size} old → ${after.length} new in ${seconds(Date.now() - started)}`);
+    const boundsAfter = [await autoscalerBounds("instance-server-eu"), await autoscalerBounds("instance-server-us")];
+    record("the autoscalers' bounds are back", boundsAfter.join() === bounds.join(), `eu ${boundsAfter[0]}, us ${boundsAfter[1]} slots`);
+    await sleep(5_000);
+    const observed = disruptions(observers, since);
+    record("players moved without a kick", observed.ok, observed.text);
+  }
+
+  // 6. Crash
+  {
+    const target = (await servers())
+      .filter((s) => s.region === "eu" && s.state === "ready")
+      .sort((a, b) => b.players - a.players)[0];
+    if (!target) throw new Error("No ready eu server to crash");
+    console.log(`6. Crash: kill -9 in ${target.serverId} (${target.players} players)`);
+    const killedAt = Date.now();
+    // Every process of the container except PID 1 (tsx), which then exits too
+    await kubectl("exec", target.serverId, "-c", "instance-server", "--", "sh", "-c", "kill -9 -1").catch(() => {});
+    const deadMs = await waitFor(
+      `${target.serverId} marked dead`,
+      async () => (await servers()).find((s) => s.serverId === target.serverId)?.state === "dead",
+      30_000,
+    );
+    record("the orchestrator marked it dead within 10 s", deadMs <= 10_000, seconds(deadMs));
+    const onlineMs = await waitFor("observers online again", () => observers!.online() === observerBots, 90_000);
+    record("its players logged in again", true, `all ${observerBots} observers online after ${seconds(onlineMs + deadMs)}`);
+    const replacedMs = await waitFor(
+      "Agones replaced it",
+      async () => {
+        const fleet = await fleetStatus("instance-server-eu");
+        const names = await gameServerNames("instance-server-eu");
+        return !names.includes(target.serverId) && fleet.ready + fleet.allocated >= fleet.replicas;
+      },
+      180_000,
+      2000,
+    );
+    record("Agones replaced the GameServer", true, `fleet complete again ${seconds(Date.now() - killedAt)} after the crash (${seconds(replacedMs)} of waiting)`);
+  }
+
+  // 7. TLS and least privilege
+  {
+    console.log("7. The databases: TLS, certificates, least privilege");
+    const app = secret("postgres-app-password");
+    const migrate = secret("postgres-migrate-password");
+    const refused = [
+      await psql("host=mmoexile-db-postgres dbname=mmoexile user=mmoexile_migrate sslmode=disable", "select 1", migrate),
+      await psql("host=mmoexile-db-postgres port=6432 dbname=mmoexile user=mmoexile_app sslmode=disable", "select 1", app),
+      await client("redis:7", ["redis-cli", "-h", dbContainer("redis"), "-p", "6380", "ping"]),
+    ];
+    record("connections without TLS are refused (Postgres, PgBouncer, Redis)",
+      /no encryption/.test(refused[0]) && /SSL required/.test(refused[1]) && !/PONG/.test(refused[2]),
+      refused.map(firstLine).join(" | "));
+
+    // A CA of our own: the servers' certificates aren't signed by it
+    const dir = mkdtempSync(path.join(os.tmpdir(), "other-ca-"));
+    try {
+      await run("openssl", ["req", "-x509", "-new", "-nodes", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+        "-keyout", path.join(dir, "ca.key"), "-out", path.join(dir, "ca.crt"), "-days", "1", "-subj", "/CN=another CA"]);
+      const mount = [`${dir}/ca.crt:/other/ca.crt:ro`];
+      const pg = await psql("host=mmoexile-db-postgres dbname=mmoexile user=mmoexile_migrate sslmode=verify-full sslrootcert=/other/ca.crt",
+        "select 1", migrate, mount);
+      const redis = await client("redis:7", ["redis-cli", "-h", dbContainer("redis"), "-p", "6380", "--tls", "--cacert", "/other/ca.crt", "ping"], {}, mount);
+      record("a server certificate from another CA is rejected", /certificate verify failed/.test(pg) && !/PONG/.test(redis),
+        `${firstLine(pg)} | ${firstLine(redis)}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    // The services' user, through PgBouncer like the pods
+    const conninfo = "host=mmoexile-db-postgres port=6432 dbname=mmoexile user=mmoexile_app sslmode=require";
+    const reads = await psql(conninfo, `select count(*) from "Character"`, app);
+    const drop = await psql(conninfo, `drop table "Character"`, app);
+    record("the services' database user reads data but can't change the schema",
+      /^\d+$/.test(reads.trim()) && /must be owner/.test(drop), `${reads.trim()} characters | ${firstLine(drop)}`);
+  }
+
+  // 8. Postgres outage
+  {
+    const outageMs = 30_000;
+    console.log(`8. Postgres unavailable for ${outageMs / 1000} s (docker pause)`);
+    await waitFor("observers online", () => observers!.online() === observerBots, 90_000);
+    const since = observers.totals();
+    const failuresBefore = (await prometheus("sum(mmoexile_character_save_failures_total)")) ?? 0;
+    await pause("postgres");
+    const pausedAt = Date.now();
+    await sleep(3000);
+    const loginStarted = Date.now();
+    const login = await createHttpClient({ baseUrl: apiUrl })(accountApi.guestLogin, { nickname: "Outage" }).then(
+      () => "login succeeded",
+      (err: unknown) => (err instanceof HttpError ? `${err.status} ${err.message}` : String(err)),
+    );
+    const loginMs = Date.now() - loginStarted;
+    await sleep(Math.max(0, outageMs - (Date.now() - pausedAt)));
+    await unpause("postgres");
+    record("logins during the outage get a clear error", /^503 .*unavailable/.test(login), `${login} after ${seconds(loginMs)}`);
+    const caughtUpMs = await waitFor("saves written", async () => (await prometheus("sum(mmoexile_character_saves_pending)")) === 0, 60_000, 1000);
+    const failures = ((await prometheus("sum(mmoexile_character_save_failures_total)")) ?? 0) - failuresBefore;
+    record("every save waiting for the database was written afterwards", true,
+      `${failures} failed writes retried, none waiting ${seconds(caughtUpMs)} after the outage`);
+    await sleep(5000);
+    const observed = disruptions(observers, since);
+    record("nobody kicked during the Postgres outage", observed.ok, observed.text);
+  }
+
+  // 9. Redis outage
+  {
+    const outageMs = 10_000;
+    console.log(`9. Redis unavailable for ${outageMs / 1000} s (docker pause)`);
+    const since = observers.totals();
+    await pause("redis");
+    await sleep(outageMs);
+    await unpause("redis");
+    await sleep(10_000);
+    const observed = disruptions(observers, since);
+    record("nobody kicked during the Redis outage", observed.ok, observed.text);
+  }
+} catch (err) {
+  record("smoke test completed", false, (err as Error).message);
+} finally {
+  for (const service of paused) await unpause(service).catch(() => {});
+  await load?.stop();
+  const report = await observers?.stop();
+  if (report) console.log(`Observers: ${report.welcomes} welcomes, ${report.kicks} kicks, ${report.disconnects} disconnects, ${report.errors} errors`);
+}
+
+console.log(failed === 0 ? "\nAll checks passed" : `\n${failed} check(s) failed`);
+process.exit(failed === 0 ? 0 : 1);

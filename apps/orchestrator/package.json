@@ -1,0 +1,34 @@
+{
+  "name": "@mmoexile/orchestrator",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mmoexile/auth": "workspace:*",
+    "@mmoexile/contracts": "workspace:*",
+    "@mmoexile/game-core": "workspace:*",
+    "@mmoexile/messaging": "workspace:*",
+    "@mmoexile/service-kit": "workspace:*",
+    "fastify": "^5.12.5",
+    "tsx": "^4.19.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@mmoexile/tsconfig": "workspace:*",
+    "@testcontainers/redis": "^12.2.0",
+    "@types/node": "^22.13.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}
