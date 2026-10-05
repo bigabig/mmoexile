@@ -117,13 +117,15 @@ export const orchestratorApi = {
   /**
    * Path: /servers/<id>/heartbeat. Also registers unknown servers, so the
    * registry is rebuilt from heartbeats after an orchestrator restart. The
-   * response tells the server the state the orchestrator wants (draining).
+   * response tells the server the state the orchestrator wants (draining),
+   * and `hold` while players were just sent to it but may not have arrived
+   * yet (with Agones, the server then stays Allocated: not scaled down).
    */
   heartbeat: {
     method: "POST",
     path: "/servers/:id/heartbeat",
     body: HeartbeatBody,
-    response: z.object({ desiredState: ServerState }),
+    response: z.object({ desiredState: ServerState, hold: z.boolean().default(false) }),
   },
   /** Path: /servers/<id>/drain. No new allocations; the server empties itself. */
   drain: {

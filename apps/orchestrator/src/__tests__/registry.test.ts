@@ -112,6 +112,21 @@ describe("Registry", () => {
     expect(registry.load(registry.get("s1")!.instances.get("nexus:aaaaaa")!)).toBe(3);
   });
 
+  it("asks a server to hold while players sent there may still be on the way", () => {
+    let clock = 0;
+    const registry = new Registry({ now: () => clock, holdMs: 15_000 });
+    registry.heartbeat(heartbeat("s1", [nexus("nexus:aaaaaa")]));
+    const server = registry.get("s1")!;
+    expect(registry.holds(server)).toBe(false);
+
+    registry.reserve(server.instances.get("nexus:aaaaaa")!);
+    clock = 14_000;
+    registry.heartbeat(heartbeat("s1", [nexus("nexus:aaaaaa")])); // reservation already dropped from the load
+    expect(registry.holds(server)).toBe(true);
+    clock = 15_000;
+    expect(registry.holds(server)).toBe(false);
+  });
+
   it("keeps a requested drain until the server reports draining", () => {
     const registry = new Registry({ now: () => 0 });
     registry.heartbeat(heartbeat("s1"));
@@ -154,6 +169,37 @@ describe("Orchestrator restart", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().instanceId).toBe("nexus:eeeeee");
     expect(Date.now() - started).toBeLessThan(2000); // answered on the heartbeat, not at the end of the window
+    await orchestrator.stop();
+  });
+});
+
+describe("Heartbeat answer", () => {
+  let redis: Redis;
+  beforeAll(() => {
+    redis = new Redis(process.env.TEST_REDIS_URL!);
+  });
+  afterAll(async () => {
+    await redis.quit();
+  });
+
+  it("tells a server to hold once a player was placed on it", async () => {
+    const orchestrator = createOrchestrator({
+      config: { HEARTBEAT_INTERVAL_MS: 2000, TICKET_PRIVATE_KEY: DEV_TICKET_PRIVATE_KEY },
+      logger: createLogger("test", "silent"),
+      redis,
+    });
+    await orchestrator.app.ready();
+    const beat = () =>
+      orchestrator.app.inject({ method: "POST", url: "/servers/hold-s1/heartbeat", payload: heartbeat("hold-s1", [nexus("nexus:ffffff")]) });
+
+    expect((await beat()).json()).toEqual({ desiredState: "ready", hold: false });
+    const allocation = await orchestrator.app.inject({
+      method: "POST",
+      url: "/allocate",
+      payload: { zoneId: "nexus", characterId: "c", accountId: "a", region: "local" },
+    });
+    expect(allocation.json().serverId).toBe("hold-s1");
+    expect((await beat()).json()).toEqual({ desiredState: "ready", hold: true });
     await orchestrator.stop();
   });
 });

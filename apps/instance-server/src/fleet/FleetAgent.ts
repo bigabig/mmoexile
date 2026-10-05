@@ -19,6 +19,8 @@ export interface FleetAgentDeps {
   intervalMs?: number;
   /** The orchestrator asked this server to drain. */
   onDrainRequested?: () => void;
+  /** Every heartbeat answer: `hold` while players are on their way here. */
+  onHeartbeatAnswer?: (answer: { hold: boolean }) => void;
   log?: (level: "info" | "warn", message: string, extra?: Record<string, unknown>) => void;
   fetch?: typeof fetch;
 }
@@ -123,13 +125,14 @@ export class FleetAgent {
       eventLoopUtilization: this.eluSinceLastReport(),
     };
     try {
-      const { desiredState } = await this.call(orchestratorApi.heartbeat, body, {
+      const { desiredState, hold } = await this.call(orchestratorApi.heartbeat, body, {
         path: `/servers/${encodeURIComponent(body.serverId)}/heartbeat`,
       });
       if (!this.orchestratorReachable) {
         this.orchestratorReachable = true;
         this.log("info", "Orchestrator reachable again");
       }
+      this.deps.onHeartbeatAnswer?.({ hold });
       if (desiredState === "draining" && this.state === "ready") {
         this.deps.onDrainRequested?.();
       }

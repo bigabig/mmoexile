@@ -11,6 +11,11 @@ export interface InternalApiDeps {
   acceptsInstances: () => boolean;
   /** Served on GET /metrics. */
   metrics?: Registry;
+  /**
+   * Awaited before answering a create: players will arrive (with Agones the
+   * server becomes Allocated first, so it can't be scaled down meanwhile).
+   */
+  onInstanceCreated?: () => Promise<void>;
 }
 
 /**
@@ -22,6 +27,7 @@ export function buildInternalApi({
   host,
   acceptsInstances,
   metrics,
+  onInstanceCreated,
 }: InternalApiDeps): FastifyInstance {
   const app = createHttpService({ logger, metrics });
 
@@ -60,6 +66,7 @@ export function buildInternalApi({
         ownerPartyId: body.ownerPartyId,
         boundPortalKey: body.boundPortalKey,
       });
+      await onInstanceCreated?.();
       logger.info({ instanceId: body.instanceId }, "Instance created for the orchestrator");
       return { instanceId: body.instanceId };
     },

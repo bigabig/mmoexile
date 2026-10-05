@@ -21,6 +21,8 @@ import { FencedCharacterWriter } from "./ownership/FencedCharacterWriter.js";
 import { PlayerLifecycle } from "./players/PlayerLifecycle.js";
 import { buildInternalApi } from "./internalApi.js";
 import { FleetAgent } from "./fleet/FleetAgent.js";
+import { AgonesSdk } from "./fleet/AgonesSdk.js";
+import { AgonesLifecycle, publicUrlFor } from "./fleet/AgonesLifecycle.js";
 import { Drainer } from "./fleet/Drainer.js";
 import {
   NO_ALLOCATOR,
@@ -42,6 +44,8 @@ export interface InstanceServerDeps {
   presence?: Presence;
   /** Defaults to the orchestrator at config.ORCHESTRATOR_URL. */
   allocator?: ZoneAllocator;
+  /** LIFECYCLE=agones: defaults to the SDK sidecar on localhost. */
+  agonesSdk?: AgonesSdk;
   /**
    * The orchestrator asked this server to drain (POST /servers/:id/drain).
    * main.ts drains, stops and exits, exactly like on SIGTERM.
@@ -55,6 +59,8 @@ export interface InstanceServer {
   readonly gateway: WebSocketGateway;
   /** Link to the orchestrator; unset if ORCHESTRATOR_URL is empty. */
   readonly fleet: FleetAgent | undefined;
+  /** Link to Agones; set with LIFECYCLE=agones. */
+  readonly agones: AgonesLifecycle | undefined;
   /** Port of the internal API, once listening. */
   readonly internalPort: number | undefined;
   /** Opens the public and internal ports, then joins the fleet. */
@@ -78,6 +84,7 @@ export async function createInstanceServer({
   allocator = config.ORCHESTRATOR_URL
     ? new OrchestratorAllocator(config.ORCHESTRATOR_URL)
     : NO_ALLOCATOR,
+  agonesSdk,
   onDrainRequested,
 }: InstanceServerDeps): Promise<InstanceServer> {
   const ticketKey = await ticketVerificationKey(config.TICKET_PUBLIC_KEY);
@@ -111,6 +118,21 @@ export async function createInstanceServer({
 
   let fleet: FleetAgent | undefined;
   let internalPort: number | undefined;
+
+  // Agones (LIFECYCLE=agones): Ready while empty, Allocated while in use
+  const agonesClient =
+    config.LIFECYCLE === "agones"
+      ? (agonesSdk ?? new AgonesSdk({ baseUrl: `http://localhost:${config.AGONES_SDK_HTTP_PORT}` }))
+      : undefined;
+  const agones = agonesClient
+    ? new AgonesLifecycle({
+        sdk: agonesClient,
+        players: () => lifecycle.all().length,
+        capacity: config.CAPACITY,
+        healthIntervalMs: config.HEARTBEAT_INTERVAL_MS,
+        log: (level, message, extra) => logger[level](extra ?? {}, message),
+      })
+    : undefined;
 
   const host = new InstanceHost({
     persistence,
@@ -159,6 +181,7 @@ export async function createInstanceServer({
         Math.max(0, Date.now() - ticket.issuedAt) / 1000,
       );
       void presence.set(player);
+      void agones?.sync();
       parties
         .getParty(player.characterId)
         .then((party) => partyCache.seed(player.characterId, party))
@@ -167,6 +190,7 @@ export async function createInstanceServer({
     onRejected: (reason) => metrics.ticketRejections.inc({ reason }),
     onDeparted: (characterId, name) => {
       void presence.remove(characterId, name);
+      void agones?.sync();
     },
     sendReconnect: (...args) => gateway.sendReconnect(...args),
     kickSession: (...args) => gateway.kickSession(...args),
@@ -190,6 +214,7 @@ export async function createInstanceServer({
     host,
     metrics: metrics.registry,
     acceptsInstances: () => !fleet || fleet.currentState === "ready",
+    onInstanceCreated: agones ? () => agones.hold() : undefined,
   });
 
   // Keep presence entries of local players alive.
@@ -215,12 +240,25 @@ export async function createInstanceServer({
     log: (message, extra) => logger.info(extra ?? {}, message),
   });
 
+  // Draining (SIGTERM or the orchestrator): with Agones, the server keeps
+  // its state until it shuts down, so it isn't removed while players leave.
+  const drain = () => {
+    agones?.freeze();
+    return drainer.drain();
+  };
+
   const joinFleet = async (publicPort: number) => {
     if (!config.ORCHESTRATOR_URL) return;
+    // With Agones, players reach the host port it assigned on this node
+    const publicUrl =
+      config.PUBLIC_URL ??
+      (agonesClient
+        ? publicUrlFor(await agonesClient.gameServer(), config.PUBLIC_HOST)
+        : `ws://localhost:${publicPort}/ws`);
     fleet = new FleetAgent({
       identity: {
         serverId: config.SERVER_ID,
-        url: config.PUBLIC_URL ?? `ws://localhost:${publicPort}/ws`,
+        url: publicUrl,
         internalUrl: config.INTERNAL_URL ?? `http://localhost:${internalPort}`,
         region: config.REGION,
         capacity: config.CAPACITY,
@@ -231,11 +269,13 @@ export async function createInstanceServer({
       onDrainRequested: () => {
         logger.info("The orchestrator asked this server to drain");
         if (onDrainRequested) onDrainRequested();
-        else void drainer.drain();
+        else void drain();
       },
+      onHeartbeatAnswer: ({ hold }) => void agones?.setOrchestratorHold(hold),
       log: (level, message, extra) => logger[level](extra ?? {}, message),
     });
     await fleet.start();
+    await agones?.start();
   };
 
   return {
@@ -245,6 +285,7 @@ export async function createInstanceServer({
     get fleet() {
       return fleet;
     },
+    agones,
     get internalPort() {
       return internalPort;
     },
@@ -259,7 +300,7 @@ export async function createInstanceServer({
       await joinFleet(publicPort);
       return publicPort;
     },
-    drain: () => drainer.drain(),
+    drain,
     get draining() {
       return drainer.active;
     },
@@ -282,6 +323,8 @@ export async function createInstanceServer({
       });
       await fleet?.stop();
       await internalApi.close();
+      // Agones deletes the GameServer (a Fleet then starts a fresh one)
+      await agones?.shutdown().catch((err) => logger.warn({ err }, "Agones shutdown failed"));
     },
   };
 }

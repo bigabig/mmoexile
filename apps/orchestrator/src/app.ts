@@ -147,7 +147,7 @@ export function createOrchestrator({
         logger.info({ serverId: id, state: report.state }, "Instance server changed state");
       }
       mirrorServer(id);
-      return { desiredState };
+      return { desiredState, hold: registry.holds(registry.get(id)!) };
     },
   );
 

@@ -26,6 +26,17 @@ export const configSchema = baseConfigSchema.extend({
   /** Players this server should hold at most (placement limit). */
   CAPACITY: z.coerce.number().int().positive().default(200),
   HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
+  /**
+   * Who manages this process's lifecycle: `orchestrator` (pnpm dev, compose,
+   * tests) or `agones` (Kubernetes): additionally reports to the Agones SDK
+   * sidecar (Ready/Allocated, health, the players Counter) and takes its
+   * public port from the GameServer. Both register with the orchestrator.
+   */
+  LIFECYCLE: z.enum(["orchestrator", "agones"]).default("orchestrator"),
+  /** Set by Agones in every GameServer container. */
+  AGONES_SDK_HTTP_PORT: z.coerce.number().int().positive().default(9358),
+  /** agones: host for PUBLIC_URL (default: the node's address from Agones). */
+  PUBLIC_HOST: z.string().optional(),
   /** Draining: how long private instances may finish before players are moved. */
   DRAIN_TIMEOUT_SEC: z.coerce.number().nonnegative().default(600),
 });

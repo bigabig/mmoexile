@@ -353,6 +353,9 @@ importers:
       '@types/ws':
         specifier: ^8.5.14
         version: 8.18.1
+      testcontainers:
+        specifier: ^12.2.0
+        version: 12.2.0(supports-color@7.2.0)
       typescript:
         specifier: ^5.8.0
         version: 5.9.3

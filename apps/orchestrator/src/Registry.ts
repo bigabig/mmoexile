@@ -25,6 +25,8 @@ export interface ServerEntry extends ServerIdentity {
   cpu: number;
   eventLoopUtilization: number;
   lastHeartbeat: number;
+  /** When a player was last sent here (see `holds`). */
+  lastReservedAt?: number;
 }
 
 export interface RegistryOptions {
@@ -45,6 +47,8 @@ export interface RegistryOptions {
   creationGraceMs?: number;
   /** Reservations older than this are covered by heartbeats. */
   reservationTtlMs?: number;
+  /** How long after sending a player to a server it is asked to hold (see `holds`). */
+  holdMs?: number;
 }
 
 /**
@@ -60,6 +64,7 @@ export class Registry {
   private readonly forgetAfterMs: number;
   private readonly creationGraceMs: number;
   private readonly reservationTtlMs: number;
+  private readonly holdMs: number;
 
   constructor(options: RegistryOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -68,6 +73,7 @@ export class Registry {
     this.forgetAfterMs = options.forgetAfterMs ?? 5 * 60_000;
     this.creationGraceMs = options.creationGraceMs ?? 5000;
     this.reservationTtlMs = options.reservationTtlMs ?? 1000;
+    this.holdMs = options.holdMs ?? 15_000;
   }
 
   get(serverId: string): ServerEntry | undefined {
@@ -187,7 +193,20 @@ export class Registry {
 
   /** Counts a player who was just sent to an instance. */
   reserve(instance: InstanceEntry): void {
-    instance.reservations.push(this.now());
+    const now = this.now();
+    instance.reservations.push(now);
+    const server = this.servers.get(instance.serverId);
+    if (server) server.lastReservedAt = now;
+  }
+
+  /**
+   * A player was sent to this server recently and may not have arrived yet.
+   * The heartbeat response passes this on as `hold`: with Agones, the server
+   * then stays Allocated, so the autoscaler can't remove it under the
+   * player's feet.
+   */
+  holds(entry: ServerEntry): boolean {
+    return entry.lastReservedAt !== undefined && this.now() - entry.lastReservedAt < this.holdMs;
   }
 
   /** Players inside plus players on their way. */
