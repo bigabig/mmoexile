@@ -4,7 +4,7 @@ name: Cluster smoke test
 # (Stages 5 and 6): pnpm cluster:up, then pnpm cluster:smoke (scaling,
 # rolling update, crash, TLS, database outages) and its persistence mode
 # (the data outlives the databases' and the cluster's restart). Takes
-# ~30 min, so it runs on demand only; the regular CI on every push doesn't
+# ~15 min, so it runs on demand only; the regular CI on every push doesn't
 # need Kubernetes.
 #   - Actions → "Cluster smoke test" → Run workflow (GitHub offers this once
 #     the workflow is on the default branch), or
