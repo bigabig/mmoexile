@@ -1,0 +1,22 @@
+# Helm values for Linkerd's control plane (linkerd-control-plane, version
+# pinned in scripts/lib.sh), the same in every cluster. The trust anchor
+# (our CA) and the cluster's issuer come from pnpm cluster:init and are
+# passed by cluster-up.sh.
+#
+# Every pod in the namespace mmoexile gets a Linkerd proxy (the namespace
+# is annotated linkerd.io/inject=enabled): it encrypts and authenticates
+# the pod's calls to other meshed pods (mTLS) with a certificate for the
+# pod's ServiceAccount, and reports metrics per call.
+
+proxy:
+  # Small requests: one proxy per pod, mostly idle locally
+  resources:
+    cpu: { request: 10m }
+    memory: { request: 24Mi, limit: 128Mi }
+
+proxyInit:
+  # Connections the proxies leave alone (passed through untouched): the
+  # databases outside the clusters already use TLS with their own
+  # certificates (Stage 6), and the mesh has nothing to add there.
+  # 4567/4568 are Linkerd's defaults (Galera).
+  ignoreOutboundPorts: "4567,4568,5432,6432,6380"

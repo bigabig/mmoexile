@@ -14,6 +14,9 @@ spec:
   template:
     metadata:
       labels: { app.kubernetes.io/name: region-gateway, app.kubernetes.io/component: gateway }
+      annotations:
+        # Browsers ping port 80 (a host port), outside the mesh
+        config.linkerd.io/skip-inbound-ports: "80"
     spec:
       containers:
         - name: nginx

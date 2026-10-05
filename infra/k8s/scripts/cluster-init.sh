@@ -5,6 +5,10 @@
 #   ca.crt / ca.key                    a local certificate authority (CA)
 #   <postgres|pgbouncer|redis>.crt/.key  server certificates signed by it, for
 #                                      the names clients use (SANs)
+#   linkerd-issuer-<cluster>.crt/.key  the mesh's issuer per cluster, an
+#                                      intermediate CA signed by it: issues
+#                                      the proxies' certificates; the CA is
+#                                      the mesh's trust anchor
 #   postgres-migrate-password          owns the schema, runs migrations
 #   postgres-app-password              the services: read and write data only
 #   postgres-monitor-password          the metrics exporters (Postgres, PgBouncer)
@@ -76,6 +80,28 @@ for service in postgres pgbouncer redis; do
     created+=("$service.crt")
   fi
   echo "$service: $(openssl x509 -in "$SECRETS/$service.crt" -noout -ext subjectAltName | tail -1 | sed 's/^ *//')"
+done
+rm -f "$SECRETS/ca.srl"
+
+step "Linkerd issuers"
+# Linkerd's proxies get short-lived certificates (24 h) for their
+# workload's identity from the cluster's identity service, which signs them
+# with this issuer. Every cluster has its own issuer, all signed by our CA
+# (the trust anchor): a proxy in one cluster trusts the others' because
+# their chains end at the same CA. Linkerd requires ECDSA P-256 and these
+# fields (CN = identity.linkerd.<cluster domain>, a CA that only signs
+# end-entity certificates).
+for cluster in "${CLUSTERS[@]}"; do
+  name=linkerd-issuer-$cluster
+  if new "$name.key" "$rotate_certs"; then
+    openssl req -new -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+      -keyout "$SECRETS/$name.key" -subj "/CN=identity.linkerd.cluster.local" 2>/dev/null |
+      openssl x509 -req -CA "$SECRETS/ca.crt" -CAkey "$SECRETS/ca.key" -CAcreateserial \
+        -out "$SECRETS/$name.crt" -days 365 \
+        -extfile <(printf 'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n') 2>/dev/null
+    created+=("$name.crt")
+  fi
+  echo "$cluster: $(openssl x509 -in "$SECRETS/$name.crt" -noout -subject -enddate | paste -sd' ')"
 done
 rm -f "$SECRETS/ca.srl"
 

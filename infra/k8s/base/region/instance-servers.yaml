@@ -39,6 +39,10 @@ spec:
       template:
         metadata:
           labels: { app.kubernetes.io/name: instance-server, app.kubernetes.io/component: game }
+          annotations:
+            # Players connect to the game port directly (a host port), not
+            # through the mesh; the internal API (9001) is meshed
+            config.linkerd.io/skip-inbound-ports: "7777"
         spec:
           # SIGTERM starts the drain (DRAIN_TIMEOUT_SEC plus moving players)
           terminationGracePeriodSeconds: 120

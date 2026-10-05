@@ -12,6 +12,10 @@ spec:
   template:
     metadata:
       labels: { app.kubernetes.io/name: client, app.kubernetes.io/component: central }
+      annotations:
+        # Browsers connect to port 80 (a NodePort), outside the mesh; the
+        # client's calls to account-api and directory go through it
+        config.linkerd.io/skip-inbound-ports: "80"
     spec:
       containers:
         - name: client

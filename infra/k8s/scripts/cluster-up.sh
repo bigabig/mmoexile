@@ -11,10 +11,12 @@ source "$(dirname "$0")/lib.sh"
 US_LATENCY_MS=${US_LATENCY_MS:-40}
 
 step "Tools"
-for tool in docker kind kubectl helm openssl; do
+for tool in docker kind kubectl helm openssl linkerd; do
   command -v "$tool" >/dev/null || fail "$tool not found (see docs/DEVELOPMENT_SETUP.md)"
 done
-echo "kind $(kind version | cut -d' ' -f2), kubectl $(kubectl version --client -o json | sed -n 's/.*"gitVersion": "\(v[^"]*\)".*/\1/p' | head -1), helm $(helm version --short)"
+echo "kind $(kind version | cut -d' ' -f2), kubectl $(kubectl version --client -o json | sed -n 's/.*"gitVersion": "\(v[^"]*\)".*/\1/p' | head -1), helm $(helm version --short), linkerd $(linkerd version --client --short)"
+[[ "$(linkerd version --client --short)" == "$LINKERD_CLI_VERSION" ]] ||
+  fail "linkerd CLI $(linkerd version --client --short), expected $LINKERD_CLI_VERSION (see docs/DEVELOPMENT_SETUP.md)"
 # Every kind node runs systemd, containerd and the kubelet as root, and they
 # share root's inotify budget; at Linux' default (128) kube-proxy fails with
 # "too many open files". See docs/DEVELOPMENT_SETUP.md.
@@ -37,7 +39,6 @@ for cluster in "${CLUSTERS[@]}"; do
   # plane nodes as unsuitable for load balancers, which would leave our
   # LoadBalancer Services without a backend
   kc "$cluster" label node "$(node "$cluster")" node.kubernetes.io/exclude-from-external-load-balancers- >/dev/null 2>&1 || true
-  kc "$cluster" create namespace "$NAMESPACE" --dry-run=client -o yaml | kc "$cluster" apply -f - >/dev/null
 done
 
 step "Load balancers: cloud-provider-kind"
@@ -59,6 +60,36 @@ step "Simulated distance: us cluster +${US_LATENCY_MS} ms"
 # netem qdisc there delays the whole region, like region-us does in compose.
 docker exec "$(node us)" tc qdisc replace dev eth0 root netem delay "${US_LATENCY_MS}ms"
 docker exec "$(node us)" tc qdisc show dev eth0
+
+step "Service mesh: Linkerd $LINKERD_CLI_VERSION"
+install_linkerd() {
+  local cluster=$1
+  # Linkerd's policy resources build on the Gateway API's (HTTPRoute)
+  kc "$cluster" apply --server-side -f \
+    "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API_VERSION/standard-install.yaml" >/dev/null
+  hc "$cluster" upgrade --install linkerd-crds linkerd-crds --repo "$LINKERD_CHART_REPO" --version "$LINKERD_VERSION" \
+    --namespace linkerd --create-namespace --wait >/dev/null
+  # Trust anchor: our CA (its certificate only; the key stays in .secrets).
+  # Issuer: this cluster's, signed by the CA (cluster:init).
+  hc "$cluster" upgrade --install linkerd-control-plane linkerd-control-plane --repo "$LINKERD_CHART_REPO" --version "$LINKERD_VERSION" \
+    --namespace linkerd --values "$K8S/linkerd/values.yaml" \
+    --set-file identityTrustAnchorsPEM="$SECRETS/ca.crt" \
+    --set-file identity.issuer.tls.crtPEM="$SECRETS/linkerd-issuer-$cluster.crt" \
+    --set-file identity.issuer.tls.keyPEM="$SECRETS/linkerd-issuer-$cluster.key" \
+    --wait --timeout 5m >/dev/null
+  local check
+  check=$(linkerd --context "$(context "$cluster")" check --wait 2m 2>&1) || { echo "$check"; return 1; }
+  echo "$check" | grep -E "^Status|‼" || true
+  # The realm's namespace: every pod gets a proxy
+  kc "$cluster" apply -f - >/dev/null <<END
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: $NAMESPACE
+  annotations: { linkerd.io/inject: enabled }
+END
+}
+for_clusters install_linkerd "${CLUSTERS[@]}"
 
 step "Monitoring: kube-prometheus-stack $MONITORING_VERSION"
 # First, so that Agones' ServiceMonitor (its controller metrics) has its CRD

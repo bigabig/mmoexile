@@ -17,6 +17,10 @@ spec:
   template:
     metadata:
       labels: { app.kubernetes.io/name: migrate }
+      annotations:
+        # Only talks to Postgres (outside the mesh); without a proxy the
+        # Job's pod ends when the migration does
+        linkerd.io/inject: disabled
     spec:
       restartPolicy: OnFailure
       containers:

@@ -106,6 +106,14 @@ load_balancer_containers() {
     --format '{{.ID}} {{.Label "io.x-k8s.cloud-provider-kind.cluster"}}' | awk '$2 ~ /^mmoexile/ { print $1 }'
 }
 
+# The service mesh (D30): only Linkerd's edge releases are open source
+# builds; chart 2026.9.3 = edge-26.9.3. The CLI (linkerd) has the same
+# version. Linkerd's policy needs the Gateway API's CRDs (HTTPRoute).
+LINKERD_CHART_REPO=https://helm.linkerd.io/edge
+LINKERD_VERSION=2026.9.3
+LINKERD_CLI_VERSION=edge-26.9.3
+GATEWAY_API_VERSION=v1.5.1
+
 AGONES_CHART_REPO=https://agones.dev/chart/stable
 AGONES_VERSION=1.61.0
 MONITORING_CHART_REPO=https://prometheus-community.github.io/helm-charts
