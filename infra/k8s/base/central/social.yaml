@@ -12,6 +12,7 @@ spec:
     metadata:
       labels: { app.kubernetes.io/name: social, app.kubernetes.io/component: central }
     spec:
+      serviceAccountName: social
       containers:
         - name: social
           image: mmoexile/social:dev
@@ -56,3 +57,14 @@ metadata:
 spec:
   selector: { app.kubernetes.io/name: social }
   ports: [{ name: http, port: 3002, targetPort: http }]
+---
+# Its identity in the mesh (D32): Linkerd issues the pod a certificate for
+# social.mmoexile.serviceaccount.identity.linkerd.cluster.local, which
+# the policies (policies.yaml) authorize. It doesn't call the Kubernetes
+# API, so it gets no API token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: social
+  labels: { app.kubernetes.io/name: social }
+automountServiceAccountToken: false

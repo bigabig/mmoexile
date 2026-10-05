@@ -17,6 +17,7 @@ spec:
         # client's calls to account-api and directory go through it
         config.linkerd.io/skip-inbound-ports: "80"
     spec:
+      serviceAccountName: client
       containers:
         - name: client
           image: mmoexile/client:dev
@@ -43,3 +44,14 @@ metadata:
 spec:
   selector: { app.kubernetes.io/name: client }
   ports: [{ name: http, port: 80, targetPort: http }]
+---
+# Its identity in the mesh (D32): Linkerd issues the pod a certificate for
+# client.mmoexile.serviceaccount.identity.linkerd.cluster.local, which
+# the policies (policies.yaml) authorize. It doesn't call the Kubernetes
+# API, so it gets no API token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: client
+  labels: { app.kubernetes.io/name: client }
+automountServiceAccountToken: false

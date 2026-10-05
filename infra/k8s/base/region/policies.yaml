@@ -1,0 +1,99 @@
+# Who may call what in a region's cluster (D32); see
+# base/central/policies.yaml for how Linkerd's policies work. The
+# namespace denies by default.
+#
+# The only calls into a region come from the central orchestrator, through
+# this cluster's multicluster gateway (which lets in only the orchestrator's
+# identity, cluster-up.sh, and forwards with its own, linkerd-gateway):
+#
+#   orchestrator (gateway) → region-gateway :9000 /servers/<id>/…  (the entry point)
+#   region-gateway         → instance server :9001 POST /internal/instances
+#   anyone (Prometheus)    → instance server :9001 GET /metrics
+#
+# Players don't pass the mesh: the game port (7777) and the ping (80) skip
+# the proxy.
+
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: from-central }
+spec:
+  identityRefs: [{ kind: ServiceAccount, name: linkerd-gateway, namespace: linkerd-multicluster }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: region-gateway }
+spec:
+  identityRefs: [{ kind: ServiceAccount, name: region-gateway }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: NetworkAuthentication
+metadata: { name: anyone }
+spec:
+  networks: [{ cidr: 0.0.0.0/0 }]
+
+# --- The entry point ---
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: region-gateway }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: region-gateway } }
+  port: entry-point
+  proxyProtocol: HTTP/1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: region-gateway-servers }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: region-gateway }]
+  rules:
+    - matches: [{ path: { type: PathPrefix, value: /servers/ } }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: region-gateway-servers }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: region-gateway-servers }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: from-central }]
+
+# --- Instance servers' internal API ---
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: instance-server }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: instance-server } }
+  port: internal
+  proxyProtocol: HTTP/1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: instance-server-ops }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: instance-server }]
+  rules:
+    - matches:
+        - { path: { type: Exact, value: /health }, method: GET }
+        - { path: { type: Exact, value: /metrics }, method: GET }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: instance-server-ops }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: instance-server-ops }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: NetworkAuthentication, name: anyone }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: instance-server-instances }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: instance-server }]
+  rules:
+    - matches: [{ path: { type: Exact, value: /internal/instances }, method: POST }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: instance-server-instances }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: instance-server-instances }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: region-gateway }]

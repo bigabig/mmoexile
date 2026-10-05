@@ -49,6 +49,9 @@ spec:
           # <name>.instance-servers.mmoexile.svc.cluster.local (used by the
           # region's entry point)
           subdomain: instance-servers
+          # Its identity in the mesh (instance-server.mmoexile...), see
+          # the ServiceAccount below
+          serviceAccountName: instance-server
           # SIGTERM starts the drain (DRAIN_TIMEOUT_SEC plus moving players)
           terminationGracePeriodSeconds: 120
           containers:
@@ -90,6 +93,25 @@ spec:
           volumes:
             # The CA the databases' certificates are signed by (from the overlay)
             - { name: database-ca, configMap: { name: database-ca } }
+---
+# The instance servers' identity in the mesh (D32), authorized by the
+# policies (policies.yaml, and the central cluster's gateway). Their Agones
+# SDK sidecar updates the GameServer through the Kubernetes API, so it
+# keeps its token and gets the role Agones gives its own default account
+# (agones-sdk).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: instance-server
+  labels: { app.kubernetes.io/name: instance-server }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: instance-server-agones-sdk
+  labels: { app.kubernetes.io/name: instance-server }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: agones-sdk }
+subjects: [{ kind: ServiceAccount, name: instance-server }]
 ---
 # Headless (no virtual IP): DNS answers with the pods themselves, and each
 # pod gets its own name (see subdomain above)

@@ -12,6 +12,7 @@ spec:
     metadata:
       labels: { app.kubernetes.io/name: directory, app.kubernetes.io/component: central }
     spec:
+      serviceAccountName: directory
       containers:
         - name: directory
           image: mmoexile/directory:dev
@@ -48,3 +49,14 @@ metadata:
 spec:
   selector: { app.kubernetes.io/name: directory }
   ports: [{ name: http, port: 3004, targetPort: http }]
+---
+# Its identity in the mesh (D32): Linkerd issues the pod a certificate for
+# directory.mmoexile.serviceaccount.identity.linkerd.cluster.local, which
+# the policies (policies.yaml) authorize. It doesn't call the Kubernetes
+# API, so it gets no API token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: directory
+  labels: { app.kubernetes.io/name: directory }
+automountServiceAccountToken: false

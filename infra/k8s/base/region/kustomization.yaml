@@ -13,6 +13,7 @@ resources:
   - instance-servers.yaml
   - gateway.yaml
   - monitoring.yaml
+  - policies.yaml
 configurations:
   - kustomizeconfig.yaml
 # Generated ConfigMaps/Secrets are applied with the data (scripts/apply.sh)

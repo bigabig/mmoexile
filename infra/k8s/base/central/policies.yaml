@@ -1,0 +1,253 @@
+# Who may call what in the central cluster (D32), enforced by the Linkerd
+# proxy in front of every pod. The namespace denies by default
+# (config.linkerd.io/default-inbound-policy: deny, cluster-up.sh): a
+# request is only let in if a policy here authorizes it.
+#
+# The pieces (Linkerd's policy API):
+#   Server                 a port of some pods ("the orchestrator's HTTP port")
+#   HTTPRoute              requests on it by path and method
+#   MeshTLSAuthentication  callers by their mesh identity (ServiceAccount,
+#                          proven by their mTLS certificate)
+#   NetworkAuthentication  callers by IP, without identity (outside the mesh)
+#   AuthorizationPolicy    route (or Server) + authentication = allowed
+#
+# Calls from the regions arrive through this cluster's multicluster
+# gateway, which forwards them with its own identity (linkerd-gateway): it
+# stands for "an instance server from a region". The gateway itself only
+# lets in the instance servers' identity (cluster-up.sh).
+#
+#   caller                       → account-api  social  orchestrator               directory
+#   client (browsers via nginx)    everything                                      everything
+#   account-api                                         /allocate
+#   instance servers (gateway)               /parties/*  register, heartbeat, /allocate
+#   anyone (probes, Prometheus,    health, ready, metrics; the orchestrator's
+#   the host's fleet view)         fleet view (GET /servers)
+#
+# Not callable at all: the orchestrator's drain (POST /servers/<id>/drain),
+# an operator action: pnpm cluster:reload calls it inside the pod
+# (kubectl exec, localhost doesn't pass the proxy).
+
+# --- Who is who ---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: client }
+spec:
+  identityRefs: [{ kind: ServiceAccount, name: client }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: account-api }
+spec:
+  identityRefs: [{ kind: ServiceAccount, name: account-api }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: from-regions }
+spec:
+  identityRefs: [{ kind: ServiceAccount, name: linkerd-gateway, namespace: linkerd-multicluster }]
+---
+# Callers outside the mesh, from anywhere: only for read-only routes
+apiVersion: policy.linkerd.io/v1alpha1
+kind: NetworkAuthentication
+metadata: { name: anyone }
+spec:
+  networks: [{ cidr: 0.0.0.0/0 }]
+
+# --- account-api: the client's API ---
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: account-api }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: account-api } }
+  port: http
+  proxyProtocol: HTTP/1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: account-api-ops }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: account-api }]
+  rules:
+    - matches:
+        - { path: { type: Exact, value: /health }, method: GET }
+        - { path: { type: Exact, value: /ready }, method: GET }
+        - { path: { type: Exact, value: /metrics }, method: GET }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: account-api-ops }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: account-api-ops }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: NetworkAuthentication, name: anyone }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: account-api-api }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: account-api }]
+  rules:
+    - matches: [{ path: { type: PathPrefix, value: / } }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: account-api-api }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: account-api-api }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: client }]
+
+# --- directory: the client's realm list ---
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: directory }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: directory } }
+  port: http
+  proxyProtocol: HTTP/1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: directory-ops }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: directory }]
+  rules:
+    - matches:
+        - { path: { type: Exact, value: /health }, method: GET }
+        - { path: { type: Exact, value: /ready }, method: GET }
+        - { path: { type: Exact, value: /metrics }, method: GET }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: directory-ops }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: directory-ops }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: NetworkAuthentication, name: anyone }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: directory-api }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: directory }]
+  rules:
+    - matches: [{ path: { type: PathPrefix, value: / } }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: directory-api }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: directory-api }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: client }]
+
+# --- social: parties, for the instance servers ---
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: social }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: social } }
+  port: http
+  proxyProtocol: HTTP/1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: social-ops }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: social }]
+  rules:
+    - matches:
+        - { path: { type: Exact, value: /health }, method: GET }
+        - { path: { type: Exact, value: /ready }, method: GET }
+        - { path: { type: Exact, value: /metrics }, method: GET }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: social-ops }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: social-ops }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: NetworkAuthentication, name: anyone }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: social-parties }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: social }]
+  rules:
+    - matches: [{ path: { type: PathPrefix, value: /parties/ }, method: POST }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: social-parties }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: social-parties }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: from-regions }]
+
+# --- orchestrator: the fleet registry and allocations ---
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: orchestrator }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: orchestrator } }
+  port: http
+  proxyProtocol: HTTP/1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: orchestrator-ops }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: orchestrator }]
+  rules:
+    - matches:
+        - { path: { type: Exact, value: /health }, method: GET }
+        - { path: { type: Exact, value: /ready }, method: GET }
+        - { path: { type: Exact, value: /metrics }, method: GET }
+        # The fleet view (read-only): pnpm cluster:status, the smoke test
+        - { path: { type: Exact, value: /servers }, method: GET }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: orchestrator-ops }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: orchestrator-ops }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: NetworkAuthentication, name: anyone }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: orchestrator-fleet }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: orchestrator }]
+  rules:
+    - matches:
+        - { path: { type: Exact, value: /servers/register }, method: POST }
+        - { path: { type: RegularExpression, value: "/servers/[^/]+/heartbeat" }, method: POST }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: orchestrator-fleet }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: orchestrator-fleet }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: from-regions }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: orchestrator-allocate }
+spec:
+  parentRefs: [{ group: policy.linkerd.io, kind: Server, name: orchestrator }]
+  rules:
+    - matches: [{ path: { type: Exact, value: /allocate }, method: POST }]
+---
+# Logins (account-api) and zone changes (instance servers)
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: orchestrator-allocate-logins }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: orchestrator-allocate }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: account-api }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: orchestrator-allocate-zone-changes }
+spec:
+  targetRef: { group: gateway.networking.k8s.io, kind: HTTPRoute, name: orchestrator-allocate }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: from-regions }]

@@ -40,7 +40,15 @@ if [[ "$app" != instance-server ]]; then
   exit 0
 fi
 
-ORCHESTRATOR=http://localhost:3013
+# Draining is an operator action that no other service may call (the mesh's
+# policies, base/central/policies.yaml): it is sent from inside the
+# orchestrator's pod (localhost doesn't pass its proxy), which takes access
+# to the cluster, not just to the network.
+drain() {
+  kc central -n "$NAMESPACE" exec deploy/orchestrator -c orchestrator -- node -e '
+    fetch(`http://localhost:3003/servers/${process.argv[1]}/drain`, { method: "POST" })
+      .then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1));' "$1"
+}
 stamp=$(date +%s)
 
 # set_limits <cluster> <fleet> <minCapacity> <maxCapacity>: the FleetAutoscaler's bounds
@@ -102,7 +110,7 @@ for cluster in "${REGIONS[@]}"; do
     # 2. Drain the old servers one at a time; each is replaced by a new one
     for server in $(old_servers); do
       echo "drain $server"
-      curl -fsS -X POST "$ORCHESTRATOR/servers/$server/drain" >/dev/null || echo "  (not known to the orchestrator)"
+      drain "$server" || echo "  (not known to the orchestrator)"
       gone() { ! k -n "$NAMESPACE" get gameserver "$server" >/dev/null 2>&1; }
       wait_until 240 "$server to drain and stop" gone
       wait_until 180 "its replacement" fleet_complete

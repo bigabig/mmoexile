@@ -78,13 +78,16 @@ install_linkerd() {
     --set-file identity.issuer.tls.keyPEM="$SECRETS/linkerd-issuer-$cluster.key" \
     --wait --timeout 5m >/dev/null
   linkerd_check "$cluster"
-  # The realm's namespace: every pod gets a proxy
+  # The realm's namespace: every pod gets a proxy, which lets in only
+  # what a policy authorizes (base/*/policies.yaml)
   kc "$cluster" apply -f - >/dev/null <<END
 apiVersion: v1
 kind: Namespace
 metadata:
   name: $NAMESPACE
-  annotations: { linkerd.io/inject: enabled }
+  annotations:
+    linkerd.io/inject: enabled
+    config.linkerd.io/default-inbound-policy: deny
 END
 }
 for_clusters install_linkerd "${CLUSTERS[@]}"
@@ -99,6 +102,18 @@ install_multicluster() {
   done
   hc "$cluster" upgrade --install linkerd-multicluster linkerd-multicluster --repo "$LINKERD_CHART_REPO" --version "$LINKERD_VERSION" \
     --namespace linkerd-multicluster --create-namespace --values "$K8S/linkerd/multicluster.yaml" "${controllers[@]}" >/dev/null
+  # Who may enter through the gateway (D32): the chart lets in any meshed
+  # identity of a cluster sharing our trust anchor; we narrow its
+  # MeshTLSAuthentication to the workloads that call across clusters.
+  # (Linkerd's identities don't name the cluster: an instance server's is
+  # the same in eu and us.)
+  local identities
+  case "$cluster" in
+    central) identities='["instance-server.mmoexile.serviceaccount.identity.linkerd.cluster.local"]' ;;
+    *) identities='["orchestrator.mmoexile.serviceaccount.identity.linkerd.cluster.local"]' ;;
+  esac
+  kc "$cluster" -n linkerd-multicluster patch meshtlsauthentication any-meshed --type merge \
+    -p "{\"spec\":{\"identities\":$identities}}" >/dev/null
   kc "$cluster" -n linkerd-multicluster rollout status deploy/linkerd-gateway --timeout=180s >/dev/null
   for _ in $(seq 60); do
     ip=$(kc "$cluster" -n linkerd-multicluster get svc linkerd-gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}')

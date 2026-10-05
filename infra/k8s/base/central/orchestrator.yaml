@@ -15,6 +15,7 @@ spec:
     metadata:
       labels: { app.kubernetes.io/name: orchestrator, app.kubernetes.io/component: central }
     spec:
+      serviceAccountName: orchestrator
       containers:
         - name: orchestrator
           image: mmoexile/orchestrator:dev
@@ -61,3 +62,14 @@ metadata:
 spec:
   selector: { app.kubernetes.io/name: orchestrator }
   ports: [{ name: http, port: 3003, targetPort: http }]
+---
+# Its identity in the mesh (D32): Linkerd issues the pod a certificate for
+# orchestrator.mmoexile.serviceaccount.identity.linkerd.cluster.local, which
+# the policies (policies.yaml) authorize. It doesn't call the Kubernetes
+# API, so it gets no API token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orchestrator
+  labels: { app.kubernetes.io/name: orchestrator }
+automountServiceAccountToken: false
