@@ -10,10 +10,10 @@ This is the task-level plan for moving from today's single-process server to the
 | **3** | Orchestrator & fleet | docker-compose, 1 machine | `orchestrator`, 3× generic `instance-server`, Prometheus, Grafana |
 | **4** | Regions | docker-compose, 2 simulated locations | `directory`, `gateway-eu`/`gateway-us`, `region-us` (netem) |
 | **5** | Kubernetes & Agones | local kind cluster (additional target) | none (manifests, Fleets per region, kube-prometheus-stack) |
-| 6 | Databases outside the cluster | kind + Postgres, PgBouncer, Redis as containers next to it | none (`cluster:init`, `cluster-db:up`; TLS, pooling, exporters) |
+| **6** | Databases outside the cluster | kind + Postgres, PgBouncer, Redis as containers next to it | none (`cluster:init`, `cluster-db:up`; TLS, pooling, exporters) |
 | 7 | One cluster per region | several kind clusters | none |
 
-Stages 0–5 are done (each with implementation notes and verified acceptance criteria below). Stage 6 is planned in detail; Stage 7 is outlined.
+Stages 0–6 are done (each with implementation notes and verified acceptance criteria below). Stage 7 is outlined.
 
 **Working agreements**
 
@@ -214,6 +214,8 @@ We scale by running **more instance-server processes** (Stage 2+), not threads i
 - `GET /health` includes instance count and player count.
 - `GET /debug/instances` (dev only): list of instances with zone, players, state, age.
 - Routes live in `src/http.ts`; `/debug/*` is enabled unless `NODE_ENV=production`.
+  - *Handoff timings (10 bots per region, nexus ↔ overworld): character write p50 eu 2.2 ms (databases 0 ms away) → 4.0 ms (2 ms away); zone change eu p50/p95 14/24 → 18/25 ms, us 261/296 → 276/299 ms; compose (Stage 4) eu 7/22, us 232/292 ms. Stage 5 recorded no cluster numbers; the difference to compose is the cluster's network (kube-proxy, other nodes), not the databases. Table in `infra/k8s/README.md`.*
+  - *`pnpm cluster:smoke` steps 7–9 (21 checks) and `--mode persistence` (character found after `cluster-db:down/up` and after `cluster:down/up`). Rotation exercised once by hand (`cluster:init --rotate`, `cluster-db:up`, `apply.sh`, `cluster:reload instance-server`).*
 
 ### Tests
 - Unit: `InstanceManager` rules per policy (fill-first, caps, party reuse, portal binding).
@@ -782,7 +784,7 @@ Host ports (all on `localhost`, chosen not to clash with compose):
 - [x] A rolling update of the instance-server image kicks nobody. *`pnpm cluster:reload instance-server` with 40 bots on every server (hubs and dungeons): 82 s including the build, 0 kicks, 0 failed hops; smoke: all servers replaced in 25 s, 0 kicks, autoscaler bounds restored.*
 - [x] Grafana in the cluster shows the Realm Overview dashboard plus the cluster dashboards. *The Realm Overview (home dashboard, same JSON as compose) shows both regions, the scale-up, the rollout and the crash (`docs/images/cluster-grafana.png`); kube-prometheus-stack's Kubernetes dashboards next to it; Agones' metrics in Prometheus.*
 - [x] `pnpm dev`, `pnpm realm:up` and the regular CI are unchanged; the on-demand `cluster-smoke` workflow passes on GitHub. *Compose realm re-checked after the changes (10 bots, 0 kicks, client proxy with the templated nginx config); `pnpm test` unchanged except for the new tests. GitHub: CI green (run 37288736075, incl. the Agones integration test via Testcontainers); `cluster-smoke` passed on a fresh runner in 8 min 20 s (run 37288758149, tag `cluster-smoke-s5`): all 14 checks, eu 2 → 3 → 2 servers, rollout in 28 s, crash detected in 5.5 s, 0 kicks.*
-## Stage 6: Databases Outside the Cluster
+## Stage 6: Databases Outside the Cluster ✅
 
 **Goal:** The cluster uses Postgres and Redis the way production systems use managed databases (RDS, Cloud SQL, ElastiCache, …): they run **outside** Kubernetes with their own lifecycle, are reached over TLS with generated credentials and least-privilege users, sit behind a connection pooler, and are a small network distance away. The realm survives a short database outage without kicking anyone. Deleting and recreating the cluster keeps every character. `pnpm dev`, `pnpm realm:up`, the tests and the regular CI stay unchanged.
 
@@ -792,7 +794,7 @@ Decisions taken on 2026-10-05 (D21–D27 below): database containers next to the
 
 | Command | Does |
 | :--- | :--- |
-| `pnpm cluster:init` | Once: a local CA, server certificates, random passwords, ticket keys and the session secret into `infra/k8s/.secrets/` (git-ignored). Refuses to overwrite; `-- --rotate` creates new passwords and keys on purpose |
+| `pnpm cluster:init` | Once: a local CA, server certificates, random passwords, ticket keys and the session secret into `infra/k8s/.secrets/` (git-ignored). Creates only what is missing; `-- --rotate` creates new passwords and keys on purpose |
 | `pnpm cluster-db:up` | Starts Postgres, PgBouncer and Redis (plus their metrics exporters) as Docker containers next to the kind cluster, with TLS, users and the simulated distance |
 | `pnpm cluster-db:down` | Stops and removes the database containers; data (volumes) and `.secrets/` stay |
 | `pnpm cluster-db:down -- --wipe` | Also deletes the data volumes and `.secrets/` |
@@ -820,6 +822,7 @@ Path of a query: pod → PgBouncer (TLS, app user) → Postgres (TLS). Migration
 - `infra/k8s/scripts/cluster-init.sh` (openssl only): a CA (`ca.crt`/`ca.key`), server certificates for Postgres, PgBouncer and Redis whose names (SANs) are the names clients use (the in-cluster Service names, e.g. `postgres.mmoexile.svc.cluster.local`, and the container names), random passwords for `mmoexile_migrate`, `mmoexile_app` and the Redis user, an Ed25519 ticket key pair and a session secret.
 - Everything lands in `infra/k8s/.secrets/` (git-ignored, files readable only by the user). The kind overlay's committed keys are removed; kustomize's `secretGenerator` reads the files instead (so a changed secret rolls out the pods that use it).
 - `--rotate`: new passwords and keys (the CA and certificates stay unless `--rotate-ca`); `cluster-db:up` applies new passwords to the running databases, `cluster:up` rolls them out. Documented as an exercise: what breaks in between, and how real systems rotate without downtime (two valid passwords at a time).
+  - *Done as planned. Idempotent: `cluster:up` (and so the CI) runs it every time; it creates only missing files, e.g. when a later stage adds a secret. Everything is generated with openssl (ECDSA P-256 certificates; the Ed25519 ticket keys as base64 DER, the format `@mmoexile/auth` reads). The kind overlay's `secretGenerator` reads the files, and `apply.sh` writes `connections.env` (the URLs with their passwords) from them.*
 
 ### S6.2 Databases Next to the Cluster: `cluster-db:up` / `cluster-db:down`
 - `infra/k8s/scripts/cluster-db-up.sh` starts the containers on the Docker network `kind` (created if the cluster doesn't exist yet), idempotent like `cluster:up`. Named volumes `mmoexile-db-postgres-data` (and none for Redis: short-lived state, as before).
@@ -828,18 +831,29 @@ Path of a query: pod → PgBouncer (TLS, app user) → Postgres (TLS). Migration
 - **Redis:** TLS only (`tls-port`, no plain port), an ACL user `mmoexile` allowed what our services use (keys, pub/sub, Lua scripts), but not `FLUSHALL`, `CONFIG`, `DEBUG`, …; the default user is disabled.
 - **Distance:** each database container delays what it sends by `DB_LATENCY_MS` (default 2: "another availability zone"), with the netem image from Stage 4.
 - Verify early: the containers are reachable from pods on every node (and the us node's +40 ms applies to that traffic too); kind reuses an existing `kind` network.
+  - *The superuser `postgres` only logs in from inside the container (`pg_hba.conf`: `local … trust`, `hostssl … postgres … reject`); there is no `host` line, so anything without TLS is refused ("no encryption"). Users and privileges are applied by `setup.sql` on every `cluster-db:up`, which also applies rotated passwords without recreating Postgres.*
+  - *PgBouncer runs in Postgres' network namespace (`--network container:…`): it reaches Postgres on localhost, with TLS (`verify-full`) but without the simulated distance, which therefore applies once per query (measured: 2.2 ms per `SELECT 1` through PgBouncer). Its certificate is valid for `pgbouncer`/`localhost`, not for the Postgres container's name.*
+  - *Key files belong to you and are readable only by you; the containers copy them into place for their server's user at start (`install -o postgres …`), PgBouncer then drops root with `su` (busybox `setpriv` can't switch users).*
+  - *A container is recreated when its arguments or any mounted file change (a hash in a label), e.g. after `--rotate`; Redis then restarts empty, which S6.5 handles.*
+  - *pnpm 12 passes a literal `--` to scripts (`pnpm cluster-db:down -- --wipe`); the scripts skip it.*
 
 ### S6.3 Connecting the Cluster
 - The in-cluster Postgres/Redis (`base/data.yaml`) leave the base. The base refers to `pgbouncer`, `postgres` (migrations only) and `redis` by Service name; the kind overlay provides those as **Services without a selector plus EndpointSlices** pointing at the containers' addresses (looked up by `cluster:up`). Pods use stable in-cluster names, and the certificates are issued for exactly those names. (`ExternalName` is the fallback if needed.)
 - `DATABASE_URL` for the apps: the app user through PgBouncer, `sslmode` with full verification against the mounted CA, `pgbouncer=true` (Prisma disables what transaction pooling can't do). The migrate Job: the migration user directly to Postgres, so no Prisma schema change is needed.
 - `REDIS_URL` becomes `rediss://mmoexile:<password>@redis:6380`; the services verify the server certificate against the CA. Small code change in `packages/messaging` (and wherever Redis clients are created): an optional CA file (`REDIS_CA_FILE`), unset in dev and compose.
 - The CA is mounted into every pod from a ConfigMap/Secret. Prisma's support for a CA file in the URL is verified first (fallback: `NODE_EXTRA_CA_CERTS`).
+  - *Verified first, with Prisma from a container on kind's network: Prisma checks the server certificate (CA and host name) **only with `sslaccept=strict`**; with the default it accepts a certificate from any CA. With `sslcert=<CA>&sslaccept=strict` a foreign CA ("unable to get local issuer certificate") and a wrong host name ("hostname mismatch") are refused. Prepared statements work through PgBouncer in transaction mode without `pgbouncer=true` (PgBouncer ≥ 1.21 tracks them, `max_prepared_statements`).*
+  - *Pods reach the containers from every node (kind's network; the us node's 40 ms apply to that traffic too). kind uses an existing `kind` network as it is.*
+  - *The base no longer contains any database (`base/data.yaml` is gone, the migrate Job is `base/migrate.yaml`); the overlay adds the Services and the CA (`databases.yaml`, ConfigMap `database-ca`, `REDIS_CA_FILE` merged into `realm`). Fleets needed one more kustomize name reference (volumes' ConfigMaps).*
 
 ### S6.4 Connection Pooling
 - Explicit Prisma pool sizes per service (`connection_limit` in the URL; e.g. account-api 5, instance servers 3), instead of the default 2 × CPU cores + 1 (129 per process on a 64-core machine, more than Postgres' 100).
 - PgBouncer: `max_client_conn` covers every pod at the fleets' maximum size × its pool, `default_pool_size` stays well below Postgres' `max_connections`. The arithmetic is written down next to the settings.
 - Check our SQL against transaction pooling: the raw statements in `CharacterOwnership` (`$queryRaw`, `$executeRawUnsafe`), no session state (`SET`, advisory locks, `LISTEN`) anywhere; PgBouncer's prepared-statement support (`max_prepared_statements`) on or Prisma's `pgbouncer=true`, whichever works and is simpler.
 - Measure: Postgres connections stay bounded while the eu fleet is at its maximum (S6.6 panel).
+  - *`packages/db`: `databaseUrl()` appends `connection_limit` from `DATABASE_POOL_SIZE` as text (re-serializing with `URL` would escape the other parameters). account-api 5 per pod, instance servers 3 per server.*
+  - *Our SQL fits transaction pooling: `CharacterOwnership` uses single statements (`UPDATE … RETURNING`, one fenced `UPDATE`), no `SET`, advisory locks or `LISTEN` anywhere.*
+  - *Measured with the eu fleet at its maximum (4 servers, 180 bots): 19 client connections to PgBouncer, 6 to Postgres. The 180 bots in one process overloaded the bot process itself (event loop lag 9 s); the servers' logs showed no database errors. They did show a Stage 5 bug: handoffs can overshoot a server's capacity (61–62 of 60) and Agones refuses a Counter above its capacity, so every update failed until the count dropped; fixed (the Counter is capped).*
 
 ### S6.5 Database Outages
 - Define and implement the behaviour for a short outage (no high availability, D24):
@@ -848,11 +862,18 @@ Path of a query: pod → PgBouncer (TLS, app user) → Postgres (TLS). Migration
   - Timeouts on every database call path that a player waits for, so nothing hangs indefinitely.
 - Find out what happens today first (pause the containers with bots online), then fix what's wrong.
 - Tests: unit tests with failing fakes for the retry/backoff and lease rules; an integration test that pauses the Testcontainers Postgres/Redis during saves and renewals; a smoke check (S6.7).
+  - *What happened before (10 bots per region with dungeons, `docker pause`): a 30 s Postgres pause kicked 2 players; worse, a zone change that ran into it left the player frozen (taken out of the simulation, neither moved nor kicked); deaths recorded during it were lost; logins hung for 30 s (PgBouncer's `query_wait_timeout`) and failed with 500, after which everything answered 502, because account-api's readiness depended on the database and Kubernetes took both pods out. A 10 s Redis pause was harmless (commands wait). A Redis restart dropped 15 players (leases gone: "someone else owns it"), and any unhandled Redis error could have crashed a server (Node exits on unhandled rejections).*
+  - *Prisma's timeouts (`socket_timeout`, `pool_timeout`, now 5 s by default) don't cover everything: preparing a new statement can hang while the database doesn't answer. `withDatabaseTimeout()` bounds the fenced writes, and PgBouncer's `query_wait_timeout` (now 5 s) bounds the rest in the cluster. Found with an "outage proxy" in the integration test, which freezes connections like `docker pause`.*
+  - *Implemented: retried saves with backoff (`PersistenceService`: deaths, final saves, snapshots; newest wins; `available`), the lease kept until the final save is written, zone changes refused while the database is known to be down (a failed zone-change save counts too) and waiting for their save otherwise (then a fresh ticket if it took long; after 60 s the new kick reason `service_unavailable`), 503 with a clear message from account-api, readiness of account-api/social/orchestrator independent of shared databases, lease renewal taking back vanished leases (safe thanks to the fencing epoch), `.catch` on background Redis calls plus `logUnhandledRejections` in every service.*
+  - *After (same experiment): Postgres 30 s: 0 kicks, logins get 503 after 5 s, every retried write landed; Redis 10 s: 0 kicks; Redis restarted: 0 kicks.*
 
 ### S6.6 Observability
 - `postgres_exporter`, `pgbouncer_exporter` and `redis_exporter` next to the databases, scraped by the cluster's Prometheus (Service + EndpointSlice + ServiceMonitor) and also added to compose, so the same dashboard works in both.
 - A "Databases" row in the Realm Overview: connections (Postgres total and per user, PgBouncer clients and server connections, clients waiting for a connection), transactions per second, Redis clients and commands per second, and the database round-trip time seen by the services.
 - Our own metric for failed and retried saves (from S6.5).
+  - *Exporters run in their database's network namespace and connect over TLS to localhost as monitoring users with minimal rights; passwords are files (libpq passfile, redis_exporter's password file, whose keys include the user). The monitoring user deliberately can't `CLIENT SETNAME` (`-set-client-name=false`).*
+  - *The Prometheus operator finds ServiceMonitor targets through `Endpoints` by default, which Kubernetes doesn't create for hand-made EndpointSlices (and which are deprecated); `serviceDiscoveryRole: EndpointSlice` in the monitoring values fixes it for all ServiceMonitors.*
+  - *`mmoexile_character_saves_pending` counts only writes waiting for the database, not snapshots queued for the next flush; `mmoexile_character_write_seconds` is one fenced `UPDATE` as the server sees it.*
 
 ### S6.7 Distance, Smoke Test, CI and Documentation
 - Re-measure the Stage 4 budget with the databases 2 ms away and behind PgBouncer: admission round trips and handoff p50/p95 within eu and us (Grafana), compared with Stage 5.
@@ -867,12 +888,12 @@ Path of a query: pod → PgBouncer (TLS, app user) → Postgres (TLS). Migration
 - Cluster: `pnpm cluster:smoke` with the new checks, locally and on GitHub; `cluster:init --rotate` once by hand.
 
 ### Acceptance Criteria
-- [ ] From nothing, `pnpm cluster:up` provisions secrets, starts the databases next to the cluster and brings up a playable realm; Postgres and Redis no longer run in the cluster.
-- [ ] `pnpm cluster:down` followed by `pnpm cluster:up` keeps every account and character; `pnpm cluster-db:down -- --wipe` removes the data and secrets.
-- [ ] No secret is committed; the cluster uses generated credentials; a plaintext connection is refused, a server certificate from another CA is rejected by the clients, and the app user can't change the schema.
-- [ ] Postgres connections stay bounded (PgBouncer pool) with the eu fleet at its maximum, visible in Grafana.
-- [ ] A 30 s Postgres outage and a 10 s Redis outage with players online kick nobody; saves catch up afterwards; logins during the outage get a clear error.
-- [ ] Handoff timings with the databases 2 ms away are measured and documented next to Stage 5's.
+- [x] From nothing, `pnpm cluster:up` provisions secrets, starts the databases next to the cluster and brings up a playable realm; Postgres and Redis no longer run in the cluster. *Locally from no secrets and no databases (first run of S6.3) and on GitHub from a fresh runner; the namespace has no Postgres or Redis pods, the services connect through PgBouncer (`pg_stat_ssl`: TLS 1.3, user `mmoexile_app`, from PgBouncer only); bots play in both regions.*
+- [x] `pnpm cluster:down` followed by `pnpm cluster:up` keeps every account and character; `pnpm cluster-db:down -- --wipe` removes the data and secrets. *`pnpm cluster:smoke --mode persistence`: the character is found after `cluster-db:down/up` (databases back in 7 s) and after `cluster:down/up` (cluster back in 6.4 min). `--wipe` removes the volume and `.secrets/` (cleanup after the stage).*
+- [x] No secret is committed; the cluster uses generated credentials; a plaintext connection is refused, a server certificate from another CA is rejected by the clients, and the app user can't change the schema. *The overlay's literal keys are gone, `.secrets/` is git-ignored. Smoke step 7: "no encryption" (Postgres), "SSL required" (PgBouncer), connection reset (Redis); another CA: "certificate verify failed" (psql, redis-cli) and, verified separately, Prisma with `sslaccept=strict`; `DROP TABLE` as `mmoexile_app`: "must be owner", also no `CREATE`/`TRUNCATE`; Redis' `mmoexile` gets `NOPERM` for `FLUSHALL`, `CONFIG`, `KEYS`.*
+- [x] Postgres connections stay bounded (PgBouncer pool) with the eu fleet at its maximum, visible in Grafana. *180 bots, eu at 4 servers: 19 client connections to PgBouncer, 6 to Postgres (of 100); the "Databases" row shows both (`docs/images/cluster-databases.png`).*
+- [x] A 30 s Postgres outage and a 10 s Redis outage with players online kick nobody; saves catch up afterwards; logins during the outage get a clear error. *Smoke steps 8–9: 0 kicks and 0 disconnects of the observers in both; the login got `503 The realm's database is unavailable right now. Please try again in a moment.` after 5.0 s; 50 failed writes retried, none waiting right after. Also a Redis restart (empty) with 20 bots: 0 kicks.*
+- [x] Handoff timings with the databases 2 ms away are measured and documented next to Stage 5's. *Stage 5 had no cluster numbers, so next to compose (Stage 4) and the cluster with the databases 0 ms away: eu zone change p50/p95 18/25 ms (0 ms away: 14/24, compose 7/22), us 276/299 ms (261/296, compose 232/292); one character write eu 4.0 ms (2.2). Table in `infra/k8s/README.md`.*
 - [ ] `pnpm dev`, `pnpm realm:up` and the regular CI are unchanged; the cluster smoke workflow passes on GitHub.
 
 ## Stage 7: One Cluster per Region (outline)

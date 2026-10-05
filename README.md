@@ -158,10 +158,11 @@ docker compose -f infra/compose/docker-compose.yml --profile realm restart orche
 
 ### 7. Run the Realm on Kubernetes with Agones (optional)
 
-The same realm on a local kind cluster: one node for the central services and one per region, with [Agones](https://agones.dev/) running the instance servers as Fleets that scale on free player slots. Needs kind, kubectl and Helm ([`docs/DEVELOPMENT_SETUP.md`](docs/DEVELOPMENT_SETUP.md)); everything else above works without them. Details and a short Kubernetes/Agones primer: [`infra/k8s/README.md`](infra/k8s/README.md).
+The same realm on a local kind cluster: one node for the central services and one per region, with [Agones](https://agones.dev/) running the instance servers as Fleets that scale on free player slots. Postgres (behind PgBouncer) and Redis run next to the cluster like a cloud's managed databases: their own lifecycle, TLS with a local CA, generated credentials and least-privilege users, 2 ms away. Needs kind, kubectl, Helm and openssl ([`docs/DEVELOPMENT_SETUP.md`](docs/DEVELOPMENT_SETUP.md)); everything else above works without them. Details and a short primer: [`infra/k8s/README.md`](infra/k8s/README.md).
 
 ```bash
-# Create the cluster, install Agones and monitoring, build and deploy everything
+# Generate the secrets (once), start the databases, create the cluster, install
+# Agones and monitoring, build and deploy everything
 # (game: http://localhost:8090, Grafana: http://localhost:3040)
 pnpm cluster:up
 
@@ -171,11 +172,18 @@ pnpm cluster:status
 # After changing code: rebuild one app and roll it out (instance servers: without kicking anyone)
 pnpm cluster:reload instance-server
 
-# Bots, scale up and down, a rolling update and a crash, with checks
+# Bots, scale up and down, a rolling update, a crash, TLS and database outages, with checks
 pnpm cluster:smoke
 
-# Delete the cluster and everything in it
+# Look into the database (as the user that owns the schema)
+pnpm cluster-db:psql
+
+# Delete the cluster; the databases keep running with all data
 pnpm cluster:down
+
+# Stop the databases (data and secrets stay); --wipe deletes both
+pnpm cluster-db:down
+pnpm cluster-db:down -- --wipe
 ```
 
 ---

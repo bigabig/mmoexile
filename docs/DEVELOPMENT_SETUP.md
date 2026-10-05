@@ -22,6 +22,7 @@ only needed to run the realm on a local Kubernetes cluster with Agones.
 | [kind](https://kind.sigs.k8s.io/) | v0.33.0 | Creates and deletes local Kubernetes clusters that run inside Docker containers; loads our images into them |
 | [kubectl](https://kubernetes.io/docs/reference/kubectl/) | v1.37.1 | The command-line client for any Kubernetes cluster: apply manifests, list pods, read logs, debug |
 | [Helm](https://helm.sh/) | v4.3.0 | Package manager for Kubernetes; installs Agones into the cluster |
+| [OpenSSL](https://www.openssl.org/) | 3.0 | `pnpm cluster:init` creates the local CA, the databases' certificates, passwords and keys with it; usually preinstalled (`openssl version`) |
 
 Agones itself is not installed on your machine: it is installed *into* the
 cluster and disappears with it. Agones 1.61 supports Kubernetes 1.34–1.36,

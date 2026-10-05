@@ -90,7 +90,7 @@ it("marks servers dead after three missed heartbeats", () => {
 
 **Purpose:** prove that the code works with the real infrastructure. A fake can't tell you whether a Redis Lua script or a Postgres `UPDATE … WHERE ownerEpoch = …` really does what you think.
 
-**Where:** in the same test folders; they use the database or Redis. Examples: `apps/instance-server/src/__tests__/handoff.integration.test.ts` (two game servers hand a character to each other), `ownership.test.ts`, `apps/account-api`, `apps/social`, and `agones.integration.test.ts` (an instance server with `LIFECYCLE=agones` against Agones' real SDK server, started in local mode as a container: Ready, Allocated while held, Shutdown; no cluster needed).
+**Where:** in the same test folders; they use the database or Redis. Examples: `apps/instance-server/src/__tests__/handoff.integration.test.ts` (two game servers hand a character to each other), `ownership.test.ts`, `apps/account-api`, `apps/social`, `agones.integration.test.ts` (an instance server with `LIFECYCLE=agones` against Agones' real SDK server, started in local mode as a container: Ready, Allocated while held, Shutdown; no cluster needed), and `outage.integration.test.ts` (an instance server whose Postgres and Redis are behind an "outage proxy" that can freeze every connection like `docker pause`: a zone change during a Postgres outage, zone changes refused while it is known to be down, the lease kept until the final save is written, a Redis outage shorter than the lease).
 
 **Run:** part of `pnpm test`. Docker must be running: [Testcontainers](https://testcontainers.com) starts a throwaway Postgres and Redis for the test run and removes them afterwards (see `test/globalSetup.ts` in each app).
 
@@ -301,13 +301,14 @@ docker inspect -f '{{.State.ExitCode}}' mmoexile-instance-server-1-1
 
 ## Cluster Smoke Test
 
-**Purpose:** check the realm on Kubernetes with Agones (Stage 5, [`infra/k8s/README.md`](infra/k8s/README.md)): what only exists there, i.e. autoscaling, rolling updates and Agones replacing a crashed server, with players online the whole time. `pnpm chaos` stays a compose tool; this is its counterpart for the cluster.
+**Purpose:** check the realm on Kubernetes with Agones and its databases next to the cluster (Stages 5 and 6, [`infra/k8s/README.md`](infra/k8s/README.md)): what only exists there, i.e. autoscaling, rolling updates, Agones replacing a crashed server, TLS and least privilege, and database outages, with players online the whole time. `pnpm chaos` stays a compose tool; this is its counterpart for the cluster.
 
 **Run:**
 
 ```bash
-pnpm cluster:up      # ~5 min the first time
-pnpm cluster:smoke   # ~8 min
+pnpm cluster:up                          # ~7 min the first time
+pnpm cluster:smoke                       # ~11 min
+pnpm cluster:smoke --mode persistence    # ~8 min: restarts the databases and the cluster
 ```
 
 `tools/bots/src/clusterSmoke.ts` prints one line per check and exits with 1 if any failed:
@@ -318,10 +319,15 @@ pnpm cluster:smoke   # ~8 min
 4. **Scale down:** the 70 leave; the Fleet shrinks back; the remaining players stay connected.
 5. **Rolling update:** `pnpm cluster:reload instance-server` replaces every instance server; players move without a kick; the autoscalers are back to their usual bounds.
 6. **Crash:** `kill -9` inside the busiest eu server: the orchestrator marks it dead within 10 s, its players log in again, Agones replaces the GameServer.
+7. **TLS and least privilege:** from a container on kind's network (where the pods' connections come from): connections without TLS are refused by Postgres, PgBouncer and Redis; a certificate check against another CA fails; the services' database user can read but not `DROP TABLE`.
+8. **Postgres outage:** `docker pause` for 30 s: a login during it gets a clear 503; afterwards no save is waiting any more; no observer is kicked.
+9. **Redis outage:** `docker pause` for 10 s: no observer is kicked.
 
-10 "observer" bots play in eu from step 3 to the end; steps 3–5 check that none of them is kicked or disconnected. Step 3 also prints the load bots' failed hops: a burst bigger than the autoscaler's buffer (60 free slots) fills the region for the ~13 s until the new server is up.
+10 "observer" bots play in eu from step 3 to the end; steps 3–5, 8 and 9 check that none of them is kicked or disconnected. Step 3 also prints the load bots' failed hops: a burst bigger than the autoscaler's buffer (60 free slots) fills the region for the ~13 s until the new server is up.
 
-Options: `--load 70`, `--observers 10`, `--api http://localhost:8090/api`, `--orchestrator http://localhost:3013`, `--context kind-mmoexile`.
+**Persistence mode** (`--mode persistence`): creates a character, then `pnpm cluster-db:down` + `cluster-db:up` and `pnpm cluster:down` + `cluster:up`; after each, logs in with the account's refresh secret and finds the character again.
+
+Options: `--load 70`, `--observers 10`, `--api http://localhost:8090/api`, `--orchestrator http://localhost:3013`, `--prometheus http://localhost:9091`, `--context kind-mmoexile`, `--mode realm|persistence`.
 
 The same runs on GitHub on demand (`.github/workflows/cluster-smoke.yml`, see CI below).
 
@@ -344,6 +350,12 @@ The same runs on GitHub on demand (`.github/workflows/cluster-smoke.yml`, see CI
 | (Stage 5) The autoscaler could remove an empty server the orchestrator had just sent a player to | `agones.test.ts` / `agones.integration.test.ts`: "is Allocated before it answers the orchestrator's create-instance call", "is Allocated while the orchestrator says players are on their way"; `registry.test.ts`: "tells a server to hold once a player was placed on it" |
 | (Stage 5) A rolling update never started the new version while every old server had players (Agones counts Allocated servers toward the Fleet's size) | `pnpm cluster:smoke` step 5: `cluster:reload` adds room for one server, drains the old ones one by one, restores the autoscaler |
 | (Stage 5) Draining servers stopped pinging Health, so Agones killed them mid-drain | `agones.test.ts`: "keeps its state and health pings while draining, then shuts down" |
+| (Stage 6) Handoffs can overshoot a server's capacity, and Agones refused the players Counter above it | `agones.test.ts`: "caps the players Counter at the capacity" |
+| (Stage 6) A zone change during a Postgres outage left the player frozen, neither moved nor kicked | `outage.integration.test.ts`: "a zone change waits for its save, then continues with the saved state" |
+| (Stage 6) Saves and deaths that failed during an outage were lost | `persistence.test.ts`: retries with backoff, deaths before final saves; `outage.integration.test.ts`: "leaving: the server keeps the lease until the final save is written" |
+| (Stage 6) A new statement could hang forever while Postgres didn't answer (Prisma's timeout doesn't cover preparing it) | `isDatabaseUnavailable.test.ts`: `withDatabaseTimeout`; `outage.integration.test.ts` |
+| (Stage 6) account-api answered 500 after 30 s, then 502 for everything (readiness tied to the database) | `accountApi.test.ts`: "answers 503 with a clear message, and stays ready" |
+| (Stage 6) A Redis restart (empty) dropped every player | `ownership.test.ts`: "takes back a lease that vanished" |
 
 ---
 
@@ -357,7 +369,7 @@ The same runs on GitHub on demand (`.github/workflows/cluster-smoke.yml`, see CI
 
 Every push to GitHub runs `.github/workflows/ci.yml`: install, dependency rules (`pnpm lint:deps`), build, `pnpm test` (unit, integration and multi-service tests) and `pnpm bench`. Smoke, load, soak and chaos tests need the Docker realm and a lot of time, so they are run by hand before finishing a stage (`pnpm chaos` at least once per stage that touches the fleet).
 
-The cluster smoke test runs on demand only (`.github/workflows/cluster-smoke.yml`, ~15 min): it installs kind, kubectl and Helm, then runs `pnpm cluster:up`, `pnpm cluster:smoke` and `pnpm cluster:down`. Start it from the Actions tab ("Run workflow", once the workflow is on the default branch) or for any commit by pushing a tag:
+The cluster smoke test runs on demand only (`.github/workflows/cluster-smoke.yml`, ~30 min): it installs kind, kubectl and Helm, then runs `pnpm cluster:up`, `pnpm cluster:smoke`, `pnpm cluster:smoke --mode persistence`, `pnpm cluster:down` and `pnpm cluster-db:down -- --wipe`. Start it from the Actions tab ("Run workflow", once the workflow is on the default branch) or for any commit by pushing a tag:
 
 ```bash
 git tag cluster-smoke-$(git rev-parse --short HEAD) && git push origin cluster-smoke-$(git rev-parse --short HEAD)
@@ -376,7 +388,9 @@ pnpm install --frozen-lockfile && pnpm lint:deps && pnpm build && pnpm test && p
 # Stop the realm and delete its data
 docker compose -f infra/compose/docker-compose.yml --profile realm down -v
 
-# Delete the Kubernetes cluster (the images built for it stay: mmoexile/*:dev)
+# Delete the Kubernetes cluster (the images built for it stay: mmoexile/*:dev),
+# then its databases with their data and the generated secrets
 pnpm cluster:down
+pnpm cluster-db:down -- --wipe
 docker rmi $(docker images 'mmoexile/*' -q)
 ```

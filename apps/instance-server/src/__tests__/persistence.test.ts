@@ -135,6 +135,20 @@ describe("PersistenceService while the database is unavailable", () => {
     await persistence.stop();
   });
 
+  it("hears about writes made elsewhere (a zone change's save)", async () => {
+    const clock = { now: 0 };
+    const { writer } = flakyWriter();
+    const { persistence, failures } = service(writer, clock);
+    expect(persistence.recordFailure("handoff", UNAVAILABLE)).toBe(true);
+    expect(persistence.available).toBe(false);
+    persistence.recordSuccess();
+    expect(persistence.available).toBe(true);
+    expect(persistence.recordFailure("handoff", new Error("bug"))).toBe(false);
+    expect(persistence.available).toBe(true);
+    expect(failures).toEqual(["handoff retrying", "handoff"]);
+    await persistence.stop();
+  });
+
   it("drops writes that fail for good, instead of retrying forever", async () => {
     const clock = { now: 0 };
     const writer: CharacterWriter = {

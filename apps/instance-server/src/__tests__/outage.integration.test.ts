@@ -128,6 +128,7 @@ describe("Postgres outage", { timeout: 60_000 }, () => {
     usePortal(player);
     await sleep(2500); // the save times out and is retried meanwhile
     expect(player.client.packets.some((p) => p.type === "s2c_reconnect" || p.type === "s2c_kicked")).toBe(false);
+    expect(serverA.persistence.available).toBe(false); // other zone changes are refused meanwhile
     dbProxy.resume();
 
     const reconnect = await player.client.next("s2c_reconnect", 15_000);

@@ -1,10 +1,14 @@
 /**
- * Smoke test of the realm on the local Kubernetes cluster (Stage 5): plays
- * with bots while it scales, rolls out and loses a pod, and checks the
- * acceptance criteria. See TESTS.md ("Cluster Smoke Test").
+ * Smoke test of the realm on the local Kubernetes cluster (Stages 5 and 6):
+ * plays with bots while it scales, rolls out, loses a pod and its
+ * databases, and checks the acceptance criteria. See TESTS.md ("Cluster
+ * Smoke Test").
  *
  *   pnpm cluster:up
  *   pnpm cluster:smoke
+ *   pnpm cluster:smoke --mode persistence   (the data outlives the
+ *                                            databases' and the cluster's
+ *                                            restart, ~8 min)
  *
  * Checks, in order:
  *   1. The realm is reachable and both regions answer pings (us farther).
@@ -15,16 +19,25 @@
  *      instance-server) moves players without a kick.
  *   6. A crashed instance server: the orchestrator marks it dead, Agones
  *      replaces it, and its players log in again.
- * Steps 3-6 run with "observer" bots playing in eu the whole time.
+ *   7. The databases: TLS only, certificates from another CA rejected, the
+ *      services' database user can't change the schema.
+ *   8. Postgres unavailable for 30 s: nobody is kicked, logins get a clear
+ *      503, every save is written afterwards.
+ *   9. Redis unavailable for 10 s: nobody is kicked.
+ * Steps 3-9 run with "observer" bots playing in eu the whole time.
  * Prints one line per check and exits with 1 if any failed.
  */
 import { execFile } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  accountApi,
   createHttpClient,
   directoryApi,
+  HttpError,
   measureRegions,
   orchestratorApi,
   type ServerView,
@@ -43,10 +56,11 @@ const orchestratorUrl = arg("orchestrator", "http://localhost:3013");
 const context = arg("context", "kind-mmoexile");
 const loadBots = Number(arg("load", "70"));
 const observerBots = Number(arg("observers", "10"));
-const reloadScript = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../../infra/k8s/scripts/reload.sh",
-);
+const prometheusUrl = arg("prometheus", "http://localhost:9091");
+const mode = arg("mode", "realm");
+const k8sDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../infra/k8s");
+const reloadScript = path.join(k8sDir, "scripts/reload.sh");
+const secret = (name: string) => readFileSync(path.join(k8sDir, ".secrets", name), "utf8").trim();
 
 // --- Helpers ---
 
@@ -86,6 +100,46 @@ async function gameServerNames(fleet: string): Promise<string[]> {
   const out = await kubectl("get", "gameservers", "-l", `agones.dev/fleet=${fleet}`, "-o", "jsonpath={.items[*].metadata.name}");
   return out.split(/\s+/).filter(Boolean);
 }
+
+// --- The databases next to the cluster (cluster-db-up.sh) ---
+
+const dbContainer = (service: string) => `mmoexile-db-${service}`;
+const paused = new Set<string>();
+async function pause(service: string): Promise<void> {
+  await run("docker", ["pause", dbContainer(service)]);
+  paused.add(service);
+}
+async function unpause(service: string): Promise<void> {
+  await run("docker", ["unpause", dbContainer(service)]);
+  paused.delete(service);
+}
+
+/**
+ * Runs a client in a throwaway container on kind's network, like a pod
+ * would connect; returns its output (also when it fails). Passwords go
+ * through the environment.
+ */
+async function client(image: string, command: string[], env: Record<string, string> = {}, mounts: string[] = []) {
+  const args = ["run", "--rm", "--network", "kind", ...Object.keys(env).flatMap((name) => ["-e", name]),
+    ...mounts.flatMap((m) => ["-v", m]), image, ...command];
+  try {
+    const { stdout, stderr } = await run("docker", args, { env: { ...process.env, ...env } });
+    return `${stdout}${stderr}`;
+  } catch (err) {
+    const { stdout = "", stderr = "" } = err as { stdout?: string; stderr?: string };
+    return `${stdout}${stderr}`;
+  }
+}
+const psql = (conninfo: string, sql: string, password: string, mounts: string[] = []) =>
+  client("postgres:16", ["psql", conninfo, "-tAc", sql], { PGPASSWORD: password }, mounts);
+
+async function prometheus(query: string): Promise<number | undefined> {
+  const res = await fetch(`${prometheusUrl}/api/v1/query?${new URLSearchParams({ query })}`);
+  const { data } = (await res.json()) as { data: { result: { value: [number, string] }[] } };
+  return data.result[0] ? Number(data.result[0].value[1]) : undefined;
+}
+
+const firstLine = (text: string) => text.trim().split("\n").find((l) => l.trim())?.trim().slice(0, 110) ?? "";
 
 const orchestrator = createHttpClient({ baseUrl: orchestratorUrl });
 
@@ -134,6 +188,58 @@ function disruptions(swarm: Swarm, since: ReturnType<Swarm["totals"]>) {
 
 let observers: Swarm | undefined;
 let load: Swarm | undefined;
+
+/** A fresh guest with a character; returns what is needed to find it again. */
+async function newCharacter() {
+  let token: string | undefined;
+  const api = createHttpClient({ baseUrl: apiUrl, token: () => token });
+  const login = await api(accountApi.guestLogin, { nickname: "Keeper" });
+  token = login.sessionToken;
+  const { character } = await api(accountApi.createCharacter, { classId: "knight" });
+  return { refreshSecret: login.refreshSecret, characterId: character.id };
+}
+
+/** Logs in again with the refresh secret: is the character still there? */
+async function stillThere(saved: { refreshSecret: string; characterId: string }): Promise<string> {
+  let token: string | undefined;
+  const api = createHttpClient({ baseUrl: apiUrl, token: () => token });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      token = (await api(accountApi.refresh, { refreshSecret: saved.refreshSecret })).sessionToken;
+      const { characters } = await api(accountApi.listCharacters, undefined);
+      return characters.some((c) => c.id === saved.characterId) ? "found" : "character missing";
+    } catch (err) {
+      if (attempt >= 30) return `login failed: ${(err as Error).message}`;
+      await sleep(2000); // the realm is still starting
+    }
+  }
+}
+
+async function script(name: string, ...args: string[]): Promise<number> {
+  const started = Date.now();
+  await run("bash", [path.join(k8sDir, "scripts", name), ...args], { maxBuffer: 256 * 1024 * 1024 });
+  return Date.now() - started;
+}
+
+if (mode === "persistence") {
+  try {
+    console.log("Data outlives the databases' and the cluster's restart");
+    const saved = await newCharacter();
+    console.log(`  character ${saved.characterId}; pnpm cluster-db:down, cluster-db:up`);
+    const dbMs = (await script("cluster-db-down.sh")) + (await script("cluster-db-up.sh"));
+    const afterDb = await stillThere(saved);
+    record("still there after the databases restarted", afterDb === "found", `${afterDb} (databases back after ${seconds(dbMs)})`);
+    console.log("  pnpm cluster:down, cluster:up");
+    const clusterMs = (await script("cluster-down.sh")) + (await script("cluster-up.sh"));
+    const afterCluster = await stillThere(saved);
+    record("still there after the cluster was deleted and created again", afterCluster === "found",
+      `${afterCluster} (cluster back after ${seconds(clusterMs)})`);
+  } catch (err) {
+    record("persistence check completed", false, (err as Error).message);
+  }
+  console.log(failed === 0 ? "\nAll checks passed" : `\n${failed} check(s) failed`);
+  process.exit(failed === 0 ? 0 : 1);
+}
 
 try {
   // 1. Reachability
@@ -266,9 +372,88 @@ try {
     );
     record("Agones replaced the GameServer", true, `fleet complete again ${seconds(Date.now() - killedAt)} after the crash (${seconds(replacedMs)} of waiting)`);
   }
+
+  // 7. TLS and least privilege
+  {
+    console.log("7. The databases: TLS, certificates, least privilege");
+    const app = secret("postgres-app-password");
+    const migrate = secret("postgres-migrate-password");
+    const refused = [
+      await psql("host=mmoexile-db-postgres dbname=mmoexile user=mmoexile_migrate sslmode=disable", "select 1", migrate),
+      await psql("host=mmoexile-db-postgres port=6432 dbname=mmoexile user=mmoexile_app sslmode=disable", "select 1", app),
+      await client("redis:7", ["redis-cli", "-h", dbContainer("redis"), "-p", "6380", "ping"]),
+    ];
+    record("connections without TLS are refused (Postgres, PgBouncer, Redis)",
+      /no encryption/.test(refused[0]) && /SSL required/.test(refused[1]) && !/PONG/.test(refused[2]),
+      refused.map(firstLine).join(" | "));
+
+    // A CA of our own: the servers' certificates aren't signed by it
+    const dir = mkdtempSync(path.join(os.tmpdir(), "other-ca-"));
+    try {
+      await run("openssl", ["req", "-x509", "-new", "-nodes", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+        "-keyout", path.join(dir, "ca.key"), "-out", path.join(dir, "ca.crt"), "-days", "1", "-subj", "/CN=another CA"]);
+      const mount = [`${dir}/ca.crt:/other/ca.crt:ro`];
+      const pg = await psql("host=mmoexile-db-postgres dbname=mmoexile user=mmoexile_migrate sslmode=verify-full sslrootcert=/other/ca.crt",
+        "select 1", migrate, mount);
+      const redis = await client("redis:7", ["redis-cli", "-h", dbContainer("redis"), "-p", "6380", "--tls", "--cacert", "/other/ca.crt", "ping"], {}, mount);
+      record("a server certificate from another CA is rejected", /certificate verify failed/.test(pg) && !/PONG/.test(redis),
+        `${firstLine(pg)} | ${firstLine(redis)}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    // The services' user, through PgBouncer like the pods
+    const conninfo = "host=mmoexile-db-postgres port=6432 dbname=mmoexile user=mmoexile_app sslmode=require";
+    const reads = await psql(conninfo, `select count(*) from "Character"`, app);
+    const drop = await psql(conninfo, `drop table "Character"`, app);
+    record("the services' database user reads data but can't change the schema",
+      /^\d+$/.test(reads.trim()) && /must be owner/.test(drop), `${reads.trim()} characters | ${firstLine(drop)}`);
+  }
+
+  // 8. Postgres outage
+  {
+    const outageMs = 30_000;
+    console.log(`8. Postgres unavailable for ${outageMs / 1000} s (docker pause)`);
+    await waitFor("observers online", () => observers!.online() === observerBots, 90_000);
+    const since = observers.totals();
+    const failuresBefore = (await prometheus("sum(mmoexile_character_save_failures_total)")) ?? 0;
+    await pause("postgres");
+    const pausedAt = Date.now();
+    await sleep(3000);
+    const loginStarted = Date.now();
+    const login = await createHttpClient({ baseUrl: apiUrl })(accountApi.guestLogin, { nickname: "Outage" }).then(
+      () => "login succeeded",
+      (err: unknown) => (err instanceof HttpError ? `${err.status} ${err.message}` : String(err)),
+    );
+    const loginMs = Date.now() - loginStarted;
+    await sleep(Math.max(0, outageMs - (Date.now() - pausedAt)));
+    await unpause("postgres");
+    record("logins during the outage get a clear error", /^503 .*unavailable/.test(login), `${login} after ${seconds(loginMs)}`);
+    const caughtUpMs = await waitFor("saves written", async () => (await prometheus("sum(mmoexile_character_saves_pending)")) === 0, 60_000, 1000);
+    const failures = ((await prometheus("sum(mmoexile_character_save_failures_total)")) ?? 0) - failuresBefore;
+    record("every save waiting for the database was written afterwards", true,
+      `${failures} failed writes retried, none waiting ${seconds(caughtUpMs)} after the outage`);
+    await sleep(5000);
+    const observed = disruptions(observers, since);
+    record("nobody kicked during the Postgres outage", observed.ok, observed.text);
+  }
+
+  // 9. Redis outage
+  {
+    const outageMs = 10_000;
+    console.log(`9. Redis unavailable for ${outageMs / 1000} s (docker pause)`);
+    const since = observers.totals();
+    await pause("redis");
+    await sleep(outageMs);
+    await unpause("redis");
+    await sleep(10_000);
+    const observed = disruptions(observers, since);
+    record("nobody kicked during the Redis outage", observed.ok, observed.text);
+  }
 } catch (err) {
   record("smoke test completed", false, (err as Error).message);
 } finally {
+  for (const service of paused) await unpause(service).catch(() => {});
   await load?.stop();
   const report = await observers?.stop();
   if (report) console.log(`Observers: ${report.welcomes} welcomes, ${report.kicks} kicks, ${report.disconnects} disconnects, ${report.errors} errors`);

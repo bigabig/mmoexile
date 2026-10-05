@@ -77,9 +77,19 @@ Every instance server runs in one region (`REGION`, e.g. `eu`, `us`); its instan
 | :--- | :--- | :--- |
 | Local processes | `pnpm dev` | pnpm, one of each service, region `local` |
 | Docker Compose | `pnpm realm:up` | Docker: three instance servers in two regions, gateways, Prometheus/Grafana |
-| Kubernetes + Agones | `pnpm cluster:up` | a kind cluster: Deployments for the central services, an Agones Fleet per region with autoscaling, kube-prometheus-stack |
+| Kubernetes + Agones | `pnpm cluster:up` | a kind cluster: Deployments for the central services, an Agones Fleet per region with autoscaling, kube-prometheus-stack; Postgres (behind PgBouncer) and Redis next to the cluster like managed databases (`pnpm cluster-db:up`) |
 
-Compose and Kubernetes use the same images and environment variables; only the plumbing differs (see `infra/compose` and `infra/k8s`).
+Compose and Kubernetes use the same images and environment variables; only the plumbing differs (see `infra/compose` and `infra/k8s`). In the cluster the connections are TLS-verified against a local CA (`DATABASE_URL` with `sslaccept=strict`, `REDIS_URL=rediss://…` with `REDIS_CA_FILE`), the services use a database user that can't change the schema (migrations run as another), and each process has an explicit pool size (`DATABASE_POOL_SIZE`).
+
+### Database outages
+
+There is one Postgres and one Redis per realm (no high availability). A short outage must not kick anyone:
+- **Every database call times out** (`DATABASE_TIMEOUT_SEC`, 5 s: Prisma's `socket_timeout`/`pool_timeout`, plus `withDatabaseTimeout` for what those don't cover); `isDatabaseUnavailable()` tells "try again later" from real errors.
+- **Saves are kept and retried** (`PersistenceService`): with backoff (1 s doubling to 10 s); deaths first, then final saves, then snapshots, newest state wins. `available` is false from the first failed write until one succeeds.
+- **Leaving keeps the lease** until the final save is written, so no other server can load an older state meanwhile.
+- **Zone changes** are refused with a chat message while the database is known to be down (the player stays). One that runs into the outage waits, frozen, for its save (up to 60 s) and gets a fresh ticket if that took long; only after 60 s is the player asked to join again (`service_unavailable`).
+- **Logins** get `503` with a clear message from account-api. Readiness doesn't depend on shared databases: an outage would otherwise take every pod out of the load balancer at once.
+- **Redis**: a pause shorter than the lease (30 s) only delays commands. If Redis restarts empty, lease renewal takes vanished leases back (safe: the fencing epoch protects the data); presence, parties and pub/sub messages in flight are lost. Background calls can't crash a server (every service logs unhandled rejections instead of exiting).
 
 **Draining** (`fleet/Drainer.ts`) starts on SIGTERM (`docker compose stop`, Kubernetes deleting the pod: scale-down, rolling update) or `POST /servers/:id/drain` at the orchestrator:
 1. The server reports `draining`; the orchestrator places nobody there any more.
@@ -263,7 +273,7 @@ Asynchronous persistence, out of band from the game loop, backed by PostgreSQL (
 
 - **`@mmoexile/db`**: Prisma schema, migrations, and the client (generated into `packages/db/generated/` so it ships with the package in Docker images).
 - **`mappers/characterMapper`**: converts between Prisma records and the domain `CharacterData`.
-- **`persistenceService`**: batched background saves, immediate saves, death records, and a draining `stop()` for shutdown. Writes go through a `CharacterWriter`; the instance server uses the `FencedCharacterWriter`, so only the lease holder can write.
+- **`persistenceService`**: batched background saves, immediate saves, death records, final saves, and a draining `stop()` for shutdown. While the database is unavailable it keeps failed writes and retries them with backoff (see "Database outages"). Writes go through a `CharacterWriter`; the instance server uses the `FencedCharacterWriter`, so only the lease holder can write.
 - Accounts and character creation live in `account-api`, not here.
 
 ---
@@ -279,7 +289,7 @@ Internal port (`src/internalApi.ts`, `INTERNAL_PORT`, never published): see Flee
 
 ### Metrics
 
-Every service serves Prometheus metrics on `/metrics` (`service-kit`'s `createMetrics`: process metrics plus service metrics). Instance servers: `mmoexile_players`, `mmoexile_instances{zone}`, `mmoexile_tick_duration_seconds`, `mmoexile_tick_interval_seconds` (time between two ticks of one instance: 33 ms while the server keeps up), `mmoexile_event_loop_utilization`, `mmoexile_handoff_duration_seconds{kind,from_region,to_region}` (ticket issue to admission, including the client's reconnect), `mmoexile_lease_conflicts_total`, `mmoexile_fenced_writes_total`, `mmoexile_ticket_rejections_total{reason}`. Every instance-server metric also carries `server` and `region`. Orchestrator: `mmoexile_allocation_duration_seconds{created}`, `mmoexile_allocation_failures_total{status,reason,region}`, and per-server gauges from the heartbeats (`mmoexile_fleet_server_players`, `…_instances`, `…_tick_p95_seconds`, `mmoexile_fleet_servers{state,region}`). account-api: `mmoexile_play_requests_total{result,region}`. The dashboard has a region filter and a "Regions" row. The Docker realm provisions Prometheus and a Grafana "Realm Overview" dashboard (`infra/observability/`).
+Every service serves Prometheus metrics on `/metrics` (`service-kit`'s `createMetrics`: process metrics plus service metrics). Instance servers: `mmoexile_players`, `mmoexile_instances{zone}`, `mmoexile_tick_duration_seconds`, `mmoexile_tick_interval_seconds` (time between two ticks of one instance: 33 ms while the server keeps up), `mmoexile_event_loop_utilization`, `mmoexile_handoff_duration_seconds{kind,from_region,to_region}` (ticket issue to admission, including the client's reconnect), `mmoexile_lease_conflicts_total`, `mmoexile_fenced_writes_total`, `mmoexile_ticket_rejections_total{reason}`, `mmoexile_character_write_seconds` (one fenced `UPDATE`: the database as the server sees it), `mmoexile_character_save_failures_total{kind,retrying}`, `mmoexile_character_saves_pending` (waiting for the database). Every instance-server metric also carries `server` and `region`. Orchestrator: `mmoexile_allocation_duration_seconds{created}`, `mmoexile_allocation_failures_total{status,reason,region}`, and per-server gauges from the heartbeats (`mmoexile_fleet_server_players`, `…_instances`, `…_tick_p95_seconds`, `mmoexile_fleet_servers{state,region}`). account-api: `mmoexile_play_requests_total{result,region}`. The dashboard has a region filter, a "Regions" row and a "Databases" row (Postgres, PgBouncer and Redis exporters: connections, pool, transactions, commands, write latency, saves waiting). The Docker realm provisions Prometheus and a Grafana "Realm Overview" dashboard (`infra/observability/`).
 
 ---
 

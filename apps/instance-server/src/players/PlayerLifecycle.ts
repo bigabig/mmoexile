@@ -1,4 +1,4 @@
-import { isDatabaseUnavailable, type Character, type PrismaClient } from "@mmoexile/db";
+import type { Character, PrismaClient } from "@mmoexile/db";
 import type { Redis, Broker } from "@mmoexile/messaging";
 import { channels, redisKeys, RegionId } from "@mmoexile/contracts";
 import {
@@ -59,9 +59,7 @@ export interface PlayerLifecycleDeps {
   ownership: CharacterOwnership;
   leases: LeaseKeeper;
   /** Final saves, retried while the database is unavailable. */
-  persistence: Pick<PersistenceService, "available" | "saveFinal">;
-  /** True if a database error may go away (default: Prisma's "unavailable" errors). */
-  isTransient?: (err: unknown) => boolean;
+  persistence: Pick<PersistenceService, "available" | "saveFinal" | "recordSuccess" | "recordFailure">;
   /**
    * How long a zone change waits (the character frozen) for its final save
    * while the database is unavailable, before giving up and asking the
@@ -107,14 +105,12 @@ export class PlayerLifecycle {
   private players = new Map<string, AdmittedPlayer>();
   private handingOff = new Set<string>();
   private readonly takeoverWaitMs: number;
-  private readonly isTransient: (err: unknown) => boolean;
   private readonly handoffSaveWaitMs: number;
   private readonly ticketRefreshMs: number;
   private readonly log: NonNullable<PlayerLifecycleDeps["log"]>;
 
   constructor(private readonly deps: PlayerLifecycleDeps) {
     this.takeoverWaitMs = deps.takeoverWaitMs ?? 5000;
-    this.isTransient = deps.isTransient ?? isDatabaseUnavailable;
     this.handoffSaveWaitMs = deps.handoffSaveWaitMs ?? 60_000;
     this.ticketRefreshMs = deps.ticketRefreshMs ?? 10_000;
     this.log = deps.log ?? (() => {});
@@ -436,9 +432,13 @@ export class PlayerLifecycle {
     const deadline = Date.now() + this.handoffSaveWaitMs;
     for (let attempt = 0; ; attempt++) {
       try {
-        return (await this.deps.ownership.writeFenced(ownership, update)) ? "saved" : "fenced";
+        const written = await this.deps.ownership.writeFenced(ownership, update);
+        this.deps.persistence.recordSuccess();
+        return written ? "saved" : "fenced";
       } catch (err) {
-        if (!this.isTransient(err)) throw err;
+        // Also tells everyone else that the database is unavailable: further
+        // zone changes are refused instead of waiting like this one
+        if (!this.deps.persistence.recordFailure("handoff", err)) throw err;
         const waitMs = Math.min(500 * 2 ** attempt, 5000);
         if (Date.now() + waitMs > deadline) {
           this.log("Zone change save gave up: database unavailable", { characterId: ownership.characterId });

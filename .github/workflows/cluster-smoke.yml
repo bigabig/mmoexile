@@ -1,8 +1,11 @@
 name: Cluster smoke test
 
-# The realm on a kind cluster with Agones (Stage 5): pnpm cluster:up, then
-# pnpm cluster:smoke (scaling, rolling update, crash). Takes ~15 min, so it
-# runs on demand only; the regular CI on every push doesn't need Kubernetes.
+# The realm on a kind cluster with Agones and the databases next to it
+# (Stages 5 and 6): pnpm cluster:up, then pnpm cluster:smoke (scaling,
+# rolling update, crash, TLS, database outages) and its persistence mode
+# (the data outlives the databases' and the cluster's restart). Takes
+# ~30 min, so it runs on demand only; the regular CI on every push doesn't
+# need Kubernetes.
 #   - Actions → "Cluster smoke test" → Run workflow (GitHub offers this once
 #     the workflow is on the default branch), or
 #   - for any commit: git tag cluster-smoke-<name> && git push origin cluster-smoke-<name>
@@ -14,7 +17,7 @@ on:
 jobs:
   cluster-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       KIND_VERSION: v0.33.0
       KUBECTL_VERSION: v1.37.1
@@ -48,8 +51,10 @@ jobs:
       # kind's nodes share root's inotify instances (DEVELOPMENT_SETUP.md)
       - run: sudo sysctl fs.inotify.max_user_instances=512
 
+      # Also creates the secrets (cluster:init) and starts the databases
       - run: pnpm cluster:up
       - run: pnpm cluster:smoke
+      - run: pnpm cluster:smoke --mode persistence
 
       - name: Cluster state (on failure)
         if: failure()
@@ -57,6 +62,10 @@ jobs:
           pnpm cluster:status || true
           kubectl --context kind-mmoexile -n mmoexile get events --sort-by=.lastTimestamp | tail -50 || true
           kubectl --context kind-mmoexile -n mmoexile logs deploy/orchestrator --tail=200 || true
+          docker ps -a --filter label=mmoexile.dev/database || true
+          for c in postgres pgbouncer redis; do docker logs --tail=50 "mmoexile-db-$c" || true; done
 
       - if: always()
         run: pnpm cluster:down
+      - if: always()
+        run: pnpm cluster-db:down -- --wipe

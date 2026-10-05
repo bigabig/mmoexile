@@ -7,8 +7,8 @@ export interface CharacterWriter {
   markDead(charId: string): Promise<void>;
 }
 
-/** periodic: snapshots while playing; final: when leaving the server; death: permadeath */
-export type SaveKind = "periodic" | "final" | "death";
+/** periodic: snapshots while playing; final: when leaving the server; handoff: before a zone change; death: permadeath */
+export type SaveKind = "periodic" | "final" | "handoff" | "death";
 
 export interface PersistenceOptions {
   flushIntervalMs?: number;
@@ -177,19 +177,33 @@ export class PersistenceService implements CharacterPersistence {
     this.inFlightWrites++;
     try {
       await write();
-      this.failures = 0;
-      this.retryAt = 0;
+      this.recordSuccess();
       return true;
     } catch (err) {
-      const retrying = this.isTransient(err);
-      this.onWriteFailed(kind, err, retrying);
-      if (!retrying) return true;
-      this.failures++;
-      this.retryAt = this.now() + Math.min(this.retryBaseMs * 2 ** (this.failures - 1), this.retryMaxMs);
-      return false;
+      return !this.recordFailure(kind, err);
     } finally {
       this.inFlightWrites--;
     }
+  }
+
+  /** A character write elsewhere (a zone change's save) succeeded. */
+  public recordSuccess(): void {
+    this.failures = 0;
+    this.retryAt = 0;
+  }
+
+  /**
+   * A character write failed (also one made elsewhere, e.g. a zone
+   * change's save). Returns true if the database is unavailable: then
+   * `available` turns false and queued writes wait for the backoff.
+   */
+  public recordFailure(kind: SaveKind, err: unknown): boolean {
+    const retrying = this.isTransient(err);
+    this.onWriteFailed(kind, err, retrying);
+    if (!retrying) return false;
+    this.failures++;
+    this.retryAt = this.now() + Math.min(this.retryBaseMs * 2 ** (this.failures - 1), this.retryMaxMs);
+    return true;
   }
 
   /**
