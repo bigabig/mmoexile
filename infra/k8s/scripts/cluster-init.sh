@@ -7,7 +7,9 @@
 #                                      the names clients use (SANs)
 #   postgres-migrate-password          owns the schema, runs migrations
 #   postgres-app-password              the services: read and write data only
+#   postgres-monitor-password          the metrics exporters (Postgres, PgBouncer)
 #   redis-password                     Redis' ACL user "mmoexile"
+#   redis-monitor-password             Redis' ACL user "monitor" (exporter)
 #   ticket-private-key / -public-key   Ed25519, signs/verifies transfer tickets
 #   session-secret                     signs session tokens (account-api)
 #
@@ -80,7 +82,7 @@ rm -f "$SECRETS/ca.srl"
 step "Passwords and keys"
 # Letters and digits only: they go into URLs unescaped
 password() { openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32; }
-for name in postgres-migrate-password postgres-app-password redis-password; do
+for name in postgres-migrate-password postgres-app-password postgres-monitor-password redis-password redis-monitor-password; do
   if new "$name" "$rotate"; then
     password >"$SECRETS/$name"
     created+=("$name")

@@ -80,9 +80,15 @@ export class PersistenceService implements CharacterPersistence {
     return this.failures === 0;
   }
 
-  /** Writes waiting for the database (gauge). */
+  /** Everything not yet written, including snapshots queued for the next flush. */
   get pending(): number {
     return this.pendingSaves.size + this.pendingDeaths.size + this.pendingFinal.size;
+  }
+
+  /** Writes kept because the database was unavailable (gauge). */
+  get waitingForDatabase(): number {
+    // Deaths and final saves are only queued after a failed attempt
+    return this.pendingDeaths.size + this.pendingFinal.size + (this.available ? 0 : this.pendingSaves.size);
   }
 
   public queueSave(charId: string, state: CharacterUpdateState): void {

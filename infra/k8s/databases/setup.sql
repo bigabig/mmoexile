@@ -1,23 +1,31 @@
 -- The realm's database users, least privilege (run by cluster-db-up.sh as
 -- the superuser on every start, so it is idempotent and applies rotated
--- passwords). psql variables: migrate_password, app_password.
+-- passwords). psql variables: migrate_password, app_password,
+-- monitor_password.
 --
 --   mmoexile_migrate  owns the database and its schema: runs the migrations
 --                     (the migrate Job), may change tables
 --   mmoexile_app      the services: reads and writes rows, nothing else
 --                     (no CREATE/ALTER/DROP/TRUNCATE)
+--   mmoexile_monitor  the metrics exporters: Postgres' statistics
+--                     (pg_monitor), no data
 
 SELECT 'CREATE ROLE mmoexile_migrate LOGIN'
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mmoexile_migrate') \gexec
 SELECT 'CREATE ROLE mmoexile_app LOGIN'
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mmoexile_app') \gexec
+SELECT 'CREATE ROLE mmoexile_monitor LOGIN'
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mmoexile_monitor') \gexec
 ALTER ROLE mmoexile_migrate PASSWORD :'migrate_password';
 ALTER ROLE mmoexile_app PASSWORD :'app_password';
+ALTER ROLE mmoexile_monitor PASSWORD :'monitor_password' CONNECTION LIMIT 3;
+GRANT pg_monitor TO mmoexile_monitor;
 
 SELECT 'CREATE DATABASE mmoexile OWNER mmoexile_migrate'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'mmoexile') \gexec
 REVOKE ALL ON DATABASE mmoexile FROM PUBLIC;
 GRANT CONNECT, TEMPORARY ON DATABASE mmoexile TO mmoexile_app;
+GRANT CONNECT ON DATABASE mmoexile TO mmoexile_monitor;
 
 \connect mmoexile
 -- The schema belongs to the migration user; nobody else may create in it

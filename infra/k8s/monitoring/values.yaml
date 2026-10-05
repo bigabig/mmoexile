@@ -35,6 +35,10 @@ prometheus:
     podMonitorSelectorNilUsesHelmValues: false
     serviceMonitorSelectorNilUsesHelmValues: false
     ruleSelectorNilUsesHelmValues: false
+    # Find a ServiceMonitor's targets through EndpointSlices (not the
+    # deprecated Endpoints): the databases outside the cluster only have
+    # EndpointSlices (overlays/kind/databases.yaml)
+    serviceDiscoveryRole: EndpointSlice
 
 kube-state-metrics:
   nodeSelector: { mmoexile.dev/role: central }

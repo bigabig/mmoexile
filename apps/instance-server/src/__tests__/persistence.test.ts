@@ -43,6 +43,11 @@ describe("PersistenceService while the database is unavailable", () => {
     const clock = { now: 0 };
     const { writes, db, writer } = flakyWriter();
     const { persistence, failures } = service(writer, clock);
+    persistence.queueSave("x", state(0));
+    expect(persistence.waitingForDatabase).toBe(0); // queued, not waiting
+    await persistence.flush();
+    writes.length = 0;
+    db.attempts = 0;
 
     db.down = true;
     persistence.queueSave("a", state(1));
@@ -52,6 +57,7 @@ describe("PersistenceService while the database is unavailable", () => {
     expect(db.attempts).toBe(1);
     expect(persistence.available).toBe(false);
     expect(persistence.pending).toBe(2);
+    expect(persistence.waitingForDatabase).toBe(2);
 
     persistence.queueSave("a", state(2)); // newer state while down
     db.down = false;
@@ -63,6 +69,7 @@ describe("PersistenceService while the database is unavailable", () => {
     expect(writes.sort()).toEqual(["a xp=2", "b xp=1"]);
     expect(persistence.available).toBe(true);
     expect(persistence.pending).toBe(0);
+    expect(persistence.waitingForDatabase).toBe(0);
     expect(failures).toEqual(["periodic retrying"]);
     await persistence.stop();
   });

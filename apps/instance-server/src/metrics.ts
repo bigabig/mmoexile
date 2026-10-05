@@ -19,12 +19,13 @@ export class InstanceServerMetrics {
   readonly leaseConflicts: Counter;
   readonly fencedWrites: Counter;
   readonly saveFailures: Counter<"kind" | "retrying">;
+  readonly writeDuration: Histogram;
 
   constructor(
     serverId: string,
     region: string,
     host: InstanceHost,
-    persistence?: { readonly pending: number },
+    persistence?: { readonly waitingForDatabase: number },
   ) {
     this.registry = createMetrics("instance-server");
     this.registry.setDefaultLabels({ service: "instance-server", server: serverId, region });
@@ -106,12 +107,18 @@ export class InstanceServerMetrics {
       labelNames: ["kind", "retrying"],
       registers,
     });
+    this.writeDuration = new Histogram({
+      name: "mmoexile_character_write_seconds",
+      help: "Duration of a character write (one fenced UPDATE): the database round trip as this server sees it",
+      buckets: [0.001, 0.002, 0.003, 0.005, 0.0075, 0.01, 0.025, 0.05, 0.1, 0.25, 1, 5],
+      registers,
+    });
     new Gauge({
       name: "mmoexile_character_saves_pending",
       help: "Character writes waiting for the database",
       registers,
       collect() {
-        this.set(persistence?.pending ?? 0);
+        this.set(persistence?.waitingForDatabase ?? 0);
       },
     });
   }

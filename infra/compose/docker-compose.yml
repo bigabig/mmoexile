@@ -259,6 +259,26 @@ services:
 
   # --- Observability: http://localhost:3030 (Grafana, "Realm Overview") ---
 
+  # The databases' metrics (the "Databases" row of the Realm Overview), as
+  # in the cluster; compose has no PgBouncer, so its panels stay empty here
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    profiles: [realm]
+    environment:
+      DATA_SOURCE_NAME: postgresql://mmoexile:mmoexile@postgres:5432/mmoexile?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.93.0
+    profiles: [realm]
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
   prometheus:
     image: prom/prometheus:v3.5.0
     profiles: [realm]

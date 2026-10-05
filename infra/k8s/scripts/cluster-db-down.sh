@@ -14,8 +14,8 @@ case "${1:-}" in
   *) fail "Usage: pnpm cluster-db:down [-- --wipe]" ;;
 esac
 
-# PgBouncer first: it lives in Postgres' network namespace
-for service in pgbouncer postgres redis; do
+# The ones in Postgres' or Redis' network namespace first
+for service in postgres-exporter pgbouncer-exporter redis-exporter pgbouncer postgres redis; do
   docker rm -f "$(db_container "$service")" >/dev/null 2>&1 && echo "Removed $(db_container "$service")" || true
 done
 

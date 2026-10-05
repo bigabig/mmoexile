@@ -20,6 +20,9 @@ db_container() { echo "mmoexile-db-$1"; }
 POSTGRES_IMAGE=postgres:16
 PGBOUNCER_IMAGE=edoburu/pgbouncer:v1.26.0-p0
 REDIS_IMAGE=redis:7
+POSTGRES_EXPORTER_IMAGE=prometheuscommunity/postgres-exporter:v0.20.1
+PGBOUNCER_EXPORTER_IMAGE=prometheuscommunity/pgbouncer-exporter:v0.12.1
+REDIS_EXPORTER_IMAGE=oliver006/redis_exporter:v1.93.0
 
 # A database container's address on kind's network (PgBouncer: Postgres')
 db_address() {
@@ -33,11 +36,16 @@ apply_db_endpoints() {
   ip_postgres=$(db_address postgres)
   ip_redis=$(db_address redis)
   {
-    endpoint_slice pgbouncer "$ip_postgres" 6432  # in Postgres' network namespace
-    endpoint_slice postgres "$ip_postgres" 5432
-    endpoint_slice redis "$ip_redis" 6380
+    # PgBouncer and the Postgres/PgBouncer exporters share Postgres' network
+    # namespace (and address), the Redis exporter Redis'
+    endpoint_slice pgbouncer "$ip_postgres" postgres 6432
+    endpoint_slice postgres "$ip_postgres" postgres 5432
+    endpoint_slice redis "$ip_redis" redis 6380
+    endpoint_slice postgres-exporter "$ip_postgres" metrics 9187
+    endpoint_slice pgbouncer-exporter "$ip_postgres" metrics 9127
+    endpoint_slice redis-exporter "$ip_redis" metrics 9121
   } | k apply -f - >/dev/null
-  echo "pgbouncer → $ip_postgres:6432, postgres → $ip_postgres:5432, redis → $ip_redis:6380"
+  echo "pgbouncer → $ip_postgres:6432, postgres → $ip_postgres:5432, redis → $ip_redis:6380 (exporters: 9187, 9127, 9121)"
 }
 endpoint_slice() {
   cat <<END
@@ -51,7 +59,7 @@ metadata:
     endpointslice.kubernetes.io/managed-by: cluster-db.mmoexile.dev
     app.kubernetes.io/part-of: mmoexile
 addressType: IPv4
-ports: [{ name: $( [[ $1 == redis ]] && echo redis || echo postgres ), port: $3, protocol: TCP }]
+ports: [{ name: $3, port: $4, protocol: TCP }]
 endpoints: [{ addresses: ["$2"], conditions: { ready: true } }]
 ---
 END

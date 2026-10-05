@@ -102,6 +102,7 @@ export async function createInstanceServer({
     dbTimeoutMs: (config.DATABASE_TIMEOUT_SEC + 1) * 1000,
     onLeaseConflict: () => metrics.leaseConflicts.inc(),
     onFencedWrite: () => metrics.fencedWrites.inc(),
+    onWriteDuration: (ms) => metrics?.writeDuration.observe(ms / 1000),
   });
 
   // Late-bound: the lifecycle and gateway need each other.

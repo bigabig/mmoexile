@@ -68,6 +68,8 @@ export interface CharacterOwnershipOptions {
   /** For metrics: someone else held the lease / a write was fenced. */
   onLeaseConflict?: () => void;
   onFencedWrite?: () => void;
+  /** Every character write's duration (metrics: the database as servers see it). */
+  onWriteDuration?: (ms: number) => void;
 }
 
 // Claims the optional one-time key (KEYS[2]), then the lease (KEYS[1]).
@@ -110,6 +112,7 @@ export class CharacterOwnership {
   private readonly dbTimeoutMs: number;
   private readonly onLeaseConflict: () => void;
   private readonly onFencedWrite: () => void;
+  private readonly onWriteDuration: (ms: number) => void;
 
   constructor(options: CharacterOwnershipOptions) {
     this.redis = options.redis;
@@ -118,6 +121,7 @@ export class CharacterOwnership {
     this.dbTimeoutMs = options.dbTimeoutMs ?? 6000;
     this.onLeaseConflict = options.onLeaseConflict ?? (() => {});
     this.onFencedWrite = options.onFencedWrite ?? (() => {});
+    this.onWriteDuration = options.onWriteDuration ?? (() => {});
   }
 
   /**
@@ -217,6 +221,7 @@ export class CharacterOwnership {
       assignments.push(`"${column}" = $${values.length}${JSON_COLUMNS.has(column) ? "::jsonb" : ""}`);
     }
     values.push(ownership.characterId, ownership.epoch);
+    const started = performance.now();
     const count = await withDatabaseTimeout(
       this.db.$executeRawUnsafe(
         `UPDATE "Character" SET ${[...assignments, `"updatedAt" = NOW()`].join(", ")}
@@ -225,6 +230,7 @@ export class CharacterOwnership {
       ),
       this.dbTimeoutMs,
     );
+    this.onWriteDuration(performance.now() - started);
     if (count !== 1) this.onFencedWrite();
     return count === 1;
   }
