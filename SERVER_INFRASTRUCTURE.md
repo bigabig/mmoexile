@@ -342,6 +342,8 @@ This is the point where it becomes a real distributed system.
 - Generated credentials (`cluster:init`), least-privilege users, TLS with certificate verification, connection pooling, a small network distance, and short database outages without kicks.
 
 ### Stage 7: One Cluster per Region
-- A central cluster plus one cluster per region, each with its own Agones; service-to-service authentication across clusters.
+- A central cluster plus one cluster per region (three single-node kind clusters), each region with its own Agones; LoadBalancer IPs from cloud-provider-kind.
+- Linkerd across the clusters: mTLS and service identities for every call between services (trust anchor: the Stage 6 CA), service mirroring through gateways, authorization policies instead of a trusted internal network; a regional entry point for calls from central to a region's servers.
+- Monitoring in one place (Prometheus agents with remote write); a region cluster lost or cut off from central without kicking anyone who is still playing.
 
 Build the pieces by hand first; Kubernetes and Agones make much more sense afterwards.

@@ -11,9 +11,9 @@ This is the task-level plan for moving from today's single-process server to the
 | **4** | Regions | docker-compose, 2 simulated locations | `directory`, `gateway-eu`/`gateway-us`, `region-us` (netem) |
 | **5** | Kubernetes & Agones | local kind cluster (additional target) | none (manifests, Fleets per region, kube-prometheus-stack) |
 | **6** | Databases outside the cluster | kind + Postgres, PgBouncer, Redis as containers next to it | none (`cluster:init`, `cluster-db:up`; TLS, pooling, exporters) |
-| 7 | One cluster per region | several kind clusters | none |
+| 7 | One cluster per region | three kind clusters (central, eu, us) + the databases next to them | none (cloud-provider-kind, Linkerd, regional entry points) |
 
-Stages 0–6 are done (each with implementation notes and verified acceptance criteria below). Stage 7 is outlined.
+Stages 0–6 are done (each with implementation notes and verified acceptance criteria below). Stage 7 is planned in detail.
 
 **Working agreements**
 
@@ -896,14 +896,107 @@ Path of a query: pod → PgBouncer (TLS, app user) → Postgres (TLS). Migration
 - [x] Handoff timings with the databases 2 ms away are measured and documented next to Stage 5's. *Stage 5 had no cluster numbers, so next to compose (Stage 4) and the cluster with the databases 0 ms away: eu zone change p50/p95 18/25 ms (0 ms away: 14/24, compose 7/22), us 276/299 ms (261/296, compose 232/292); one character write eu 4.0 ms (2.2). Table in `infra/k8s/README.md`.*
 - [x] `pnpm dev`, `pnpm realm:up` and the regular CI are unchanged; the cluster smoke workflow passes on GitHub. *Without `REDIS_CA_FILE` and with plain URLs everything behaves as before (Prisma only gains default timeouts); `pnpm realm:up` with bots: 0 kicks, both new exporters scraped. CI run 37309269144 green; cluster smoke run 37309277657 (tag `cluster-smoke-s6`) green in 12.6 min, from a fresh runner: 21/21 checks plus the persistence mode (cluster back after 3.3 min), then `cluster:down` and `cluster-db:down -- --wipe`.*
 
-## Stage 7: One Cluster per Region (outline)
+## Stage 7: One Cluster per Region
 
-- A `central` cluster (account-api, social, orchestrator, directory, monitoring) and one cluster per region (`eu`, `us`), each with its own Agones, as in a real multi-region deployment. The US cluster sits behind the simulated distance as a whole.
-- Instance servers reach the orchestrator, social and the databases across clusters. Internal APIs leave the cluster, so **service-to-service authentication** (an open item since Stage 3) becomes a must, e.g. signed service tokens or mTLS.
-- The orchestrator stays the brain for all regions; each region's Agones scales its own fleet.
-- Monitoring across clusters: Prometheus per cluster with federation or remote write into the central one.
-- Failure scenarios: a whole regional cluster lost; the central cluster unreachable from one region.
-- Builds on Stage 6: every cluster uses the same databases and PgBouncer outside the clusters, and the CA from `cluster:init` can issue the certificates for mutual TLS between services.
+**Goal:** The realm runs the way a real multi-region deployment does: a `central` cluster (account-api, social, orchestrator, directory, client, monitoring) and one cluster per region (`eu`, `us`), each with its own Agones, all using the databases next to them (Stage 6). Services find and call each other across clusters through a **service mesh** (Linkerd) that encrypts and authenticates every call between services (mTLS) and only allows the calls that are meant to happen: the "internal network is trusted" assumption, open since Stage 3, is gone. A region that loses its cluster or its connection to central degrades predictably, without kicking anyone who is still playing. `pnpm dev`, `pnpm realm:up`, the tests and the regular CI stay unchanged.
+
+Decisions taken on 2026-10-05 (D28–D35 below): three single-node kind clusters replace the single cluster; LoadBalancer IPs from cloud-provider-kind; Linkerd for mTLS, service identities, authorization and multicluster, with our CA as its trust anchor; a regional entry point for calls from central to a region's instance servers; Prometheus in agent mode with remote write into central; failure scenarios "region cluster lost" and "region cut off from central"; a cut-off region keeps playing and waits for central.
+
+### Commands
+
+Same commands as before; they now handle three clusters:
+
+| Command | Does |
+| :--- | :--- |
+| `pnpm cluster:init` | As in Stage 6, plus Linkerd's certificates: the trust anchor is our CA, and an issuer certificate per cluster signed by it |
+| `pnpm cluster-db:up` / `cluster-db:down` / `cluster-db:psql` | Unchanged: the databases next to the clusters, shared by all three |
+| `pnpm cluster:up` | Creates the clusters `mmoexile-central`, `mmoexile-eu`, `mmoexile-us` (contexts `kind-mmoexile-<name>`), starts cloud-provider-kind, installs Linkerd and links the clusters, then monitoring, Agones in the regions, and the realm |
+| `pnpm cluster:status` | All three clusters, the links between them (`linkerd multicluster check/gateways`), the orchestrator's view |
+| `pnpm cluster:reload <app>` | Builds once, loads the image into the cluster(s) that run the app, rolls out there |
+| `pnpm cluster:smoke` | Today's checks across clusters, plus the mesh (mTLS, refused calls) and the two failure scenarios |
+| `pnpm cluster:down` | Deletes the three clusters and cloud-provider-kind; the databases keep running |
+
+### Target Topology
+
+```
+Docker network "kind"
+├── cluster "mmoexile-central" (one node)       localhost: 8090 game, 3040 Grafana, 9091 Prometheus, 3013 orchestrator
+│     account-api, social, orchestrator, directory, client, migrate Job,
+│     Prometheus (receives remote write) + Grafana, Linkerd + its multicluster gateway
+├── cluster "mmoexile-eu" (one node)            localhost: 7300–7319 game servers, 7350 ping
+│     Agones + Fleet instance-server-eu, gateway-eu (ping + regional entry point),
+│     Prometheus agent, Linkerd + gateway
+├── cluster "mmoexile-us" (one node, +40 ms)    localhost: 7400–7419 game servers, 7450 ping
+│     the same for us
+├── cloud-provider-kind                         LoadBalancer IPs on the Docker network
+└── the databases (Stage 6)                     reached by every cluster over TLS
+```
+
+Calls across clusters, all through the Linkerd gateways with mTLS (a mirrored Service is named `<service>-<cluster>`):
+
+| From | To | What |
+| :--- | :--- | :--- |
+| instance servers (eu, us) | `orchestrator-central` | register, heartbeat, allocate |
+| instance servers (eu, us) | `social-central` | parties |
+| orchestrator (central) | `region-gateway-eu` / `-us` | create an instance on a server (the regional entry point forwards by server id) |
+| Prometheus agents (eu, us) | `prometheus-central` | remote write |
+
+Players still connect directly: the client and the APIs on central, the game servers and pings on their region's node. That traffic stays outside the mesh.
+
+### S7.1 Three Clusters and LoadBalancers
+- `kind-central.yaml`, `kind-eu.yaml`, `kind-us.yaml` (one node each, port mappings as today), the `us` node delayed with netem as before. The scripts loop over the clusters; `lib.sh` gets a helper per cluster context.
+- Manifests split by where they run: the base becomes `base/central` and `base/region`; overlays `central`, `eu`, `us`. Images are loaded only where they are needed (instance servers into eu/us, the rest into central).
+- cloud-provider-kind (pinned version) runs as a container on the Docker network, started by `cluster:up` and removed by `cluster:down`; check that a Service of `type: LoadBalancer` gets an IP that the other clusters reach.
+- The database Services and EndpointSlices (Stage 6) exist in every cluster that uses them.
+- Verify early: memory and CPU of three clusters with Agones, monitoring and Linkerd (also on a GitHub runner, 4 CPUs / 16 GB), and the inotify limit.
+
+### S7.2 Linkerd in Every Cluster
+- Linkerd (a pinned edge release, CLI in `~/.local/bin` like kind, checked in `cluster:up`) installed with Helm in each cluster: CRDs, control plane; the **trust anchor is our CA** (ECDSA P-256, as Linkerd requires), each cluster gets its own **issuer** certificate signed by it (`cluster:init`). Shared trust is what lets the clusters' proxies authenticate each other.
+- The realm's namespace is meshed (proxy injection), with exceptions: the game port and the Agones SDK port of instance servers, the client's and gateways' public ports (players aren't in the mesh), Postgres/Redis (TLS already, outside).
+- Verify: `linkerd check` per cluster; calls between services in one cluster are mTLS (`linkerd viz edges` or the proxies' metrics show the identities); the Agones sidecar and health pings still work.
+
+### S7.3 Multicluster: Mirroring and the Regional Entry Point
+- `linkerd multicluster install` (gateway as a LoadBalancer Service) in every cluster; links eu → central and us → central (regions see central's services) and central → eu, central → us (central sees each region's entry point). Only Services labelled for export are mirrored.
+- Regions use `ORCHESTRATOR_URL=http://orchestrator-central:3003`, `SOCIAL_URL=http://social-central:3002`.
+- **Regional entry point:** the region's gateway (nginx, today only the ping) gets an internal port, reachable only through the mesh, that forwards `/servers/<id>/…` to that server's internal API. The instance servers get a headless Service so that every pod has a DNS name (`<pod>.instance-servers.mmoexile.svc.cluster.local`); an instance server registers `internalUrl = http://region-gateway-<region>:9000/servers/<id>`. Small code change: the internal API accepts that path prefix (or nginx strips it).
+- Verify: allocation across clusters (orchestrator → entry point → server) and its latency compared with Stage 6 (Grafana's allocation latency and handoff panels).
+
+### S7.4 Authorization: Only the Intended Calls
+- Linkerd's policy resources (`Server`, `HTTPRoute`, `AuthorizationPolicy`, `MeshTLSAuthentication`) per service: e.g. only instance servers' identities may call the orchestrator's `/servers/*`, only account-api may call `/allocate`, only the orchestrator may call the regional entry point, only the region Prometheus agents may remote-write. Everything else in the namespace is denied by default.
+- Identities are ServiceAccounts (one per service instead of `default`), across clusters via the shared trust anchor.
+- Verify: an allowed call works, a forbidden one (e.g. a pod in eu calling `/allocate`, or a non-meshed pod calling the orchestrator) gets 403 or is refused; the smoke test checks it.
+
+### S7.5 Monitoring Across Clusters
+- central: kube-prometheus-stack as today, Prometheus with the remote-write receiver enabled. eu/us: Prometheus in **agent mode** (no local storage or queries) scraping their cluster and writing to `prometheus-central` through the mesh; every series gets a `cluster` label.
+- The Realm Overview works unchanged (it already filters by region); a few panels for the clusters and the mesh: requests and success rate between clusters, gateway latency (Linkerd's proxy metrics), remote-write lag.
+- Verify: instance-server metrics from eu and us arrive in central's Grafana within seconds.
+
+### S7.6 Failure Scenarios
+Find out what happens first (as in S6.5), then fix what's wrong:
+- **A region cluster lost** (e.g. `docker stop` of the us node): the orchestrator marks its servers dead within ~6 s; logins choosing us get `region_unavailable`; eu plays on undisturbed; when the cluster comes back, Agones restarts its fleet and the servers register again. Players who were in us log in again (they lost their connection with the cluster).
+- **A region cut off from central** (the link between the us cluster and central is blocked, e.g. iptables on the us node towards central's gateway): players in us keep playing; zone changes are refused with a message (allocation needs central), logins into us fail clearly; the orchestrator sees the us servers as dead meanwhile and places nobody there; afterwards the servers' heartbeats bring them back (registry rebuilt from heartbeats) and nobody was kicked. The databases stay reachable (they are outside both), so saves continue.
+- **Central lost** is explained in the docs (it is "every region cut off from central", plus no logins at all), not built as its own test.
+- Verify in particular: an instance server whose orchestrator is unreachable keeps its players and its leases; a server marked dead that comes back isn't sent conflicting instructions; party features fail softly while social is unreachable.
+
+### S7.7 Smoke Test, CI, Measurements and Documentation
+- `pnpm cluster:smoke` runs its checks across the clusters, plus: calls between services are mTLS and a forbidden call is refused (S7.4); "region cluster lost" and "region cut off from central" with observer bots (0 kicks in the unaffected region; in the cut-off region, 0 kicks while it is cut off).
+- Measure: allocation latency and zone-change handoff times compared with Stage 6 (the extra hops: mesh proxies and gateways).
+- CI: the cluster smoke workflow on three clusters (check that it fits the runner; otherwise a larger runner or fewer components in CI).
+- Docs: `infra/k8s/README.md` (three clusters, a primer on service meshes, mTLS and identities, multicluster mirroring, authorization, the failure scenarios), DEVELOPMENT_SETUP (Linkerd CLI), ARCHITECTURE, TESTS, README, SERVER_INFRASTRUCTURE.md.
+
+### Tests
+- Unit: the internal API under the entry point's path; whatever S7.6 changes in the orchestrator or instance server (e.g. behaviour while the orchestrator is unreachable).
+- Unchanged: all existing tests, compose and `pnpm dev` (no mesh, plain HTTP between services).
+- Cluster: `pnpm cluster:smoke` with the new checks, locally and on GitHub.
+
+### Acceptance Criteria
+- [ ] From nothing, `pnpm cluster:up` creates the central, eu and us clusters with Linkerd linked between them, and a playable realm: bots play in both regions, zone changes and dungeons work across clusters.
+- [ ] Every call between services goes through the mesh with mTLS and service identities; a forbidden call is refused; players' connections stay outside the mesh.
+- [ ] Losing the us cluster: eu is undisturbed, us logins get a clear error, and us recovers on its own when the cluster is back.
+- [ ] Cutting us off from central: nobody in us is kicked, zone changes there are refused with a message, and everything recovers when the link is back.
+- [ ] Metrics from all three clusters are in central's Grafana; the mesh traffic between clusters is visible.
+- [ ] Allocation and handoff times with the mesh are measured and documented next to Stage 6's.
+- [ ] `pnpm dev`, `pnpm realm:up` and the regular CI are unchanged; the cluster smoke workflow passes on GitHub.
 
 ---
 
@@ -938,7 +1031,7 @@ Path of a query: pod → PgBouncer (TLS, app user) → Postgres (TLS). Migration
 
 ## Decisions
 
-D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10-02 before Stage 2; D8–D11 on 2026-10-03 before Stage 4; D12–D20 on 2026-10-04 before Stage 5; D21–D27 on 2026-10-05 before Stage 6. D5 stays open.
+D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10-02 before Stage 2; D8–D11 on 2026-10-03 before Stage 4; D12–D20 on 2026-10-04 before Stage 5; D21–D27 on 2026-10-05 before Stage 6; D28–D35 on 2026-10-05 before Stage 7. D5 stays open.
 
 | # | Decision | Outcome | Why |
 | :--- | :--- | :--- | :--- |
@@ -969,3 +1062,11 @@ D1 and D7 were settled during Stage 1; D2, D3, D4 and D6 were decided on 2026-10
 | D25 | Credentials | ✅ **Generated by `pnpm cluster:init`** into git-ignored `infra/k8s/.secrets/`, least-privilege users, `--rotate`; `cluster:up` runs it if missing | Nothing secret committed; provisioning is a separate step from deploying, as in real setups |
 | D26 | Encryption | ✅ **TLS with a local CA, clients verify the server certificate** (Postgres, PgBouncer, Redis) | What managed databases expect; verification is what protects against impersonation |
 | D27 | Backups | ✅ **Not in this stage** | Focus on connectivity, security, pooling and outages |
+| D28 | Cluster topology | ✅ **Three single-node kind clusters** (central, eu, us) **replace** the single cluster; same commands | One topology to maintain and test; one node per cluster is enough to learn multicluster |
+| D29 | Reaching another cluster | ✅ **LoadBalancer Services with IPs from cloud-provider-kind** | What a cloud does; what the mesh gateways expect |
+| D30 | Service-to-service security | ✅ **Linkerd** (pinned edge release): mTLS, ServiceAccount identities, multicluster gateways and service mirroring; **trust anchor = the CA from `cluster:init`**; game traffic and the Agones SDK outside the mesh | Lean, mTLS by default, multicluster fits kind's separate networks; Istio would add power we don't need |
+| D31 | Calls from central to a region | ✅ **A regional entry point** (the region's gateway, internal port) that forwards to a server by id | One address per region, mirrored to central; instance servers' pods stay unreachable from outside their cluster |
+| D32 | Who may call what | ✅ **Linkerd authorization policies**, deny by default, one ServiceAccount per service | Replaces "the internal network is trusted" (open since Stage 3) |
+| D33 | Monitoring across clusters | ✅ **Prometheus agent mode in the regions, remote write into central** | Today's standard; one place to query, dashboards unchanged |
+| D34 | Failure scenarios | ✅ **A region cluster lost; a region cut off from central** (tested); central lost explained | The most common and the trickiest case; central lost behaves like every region cut off |
+| D35 | A region without central | ✅ **Keep playing, wait for central**: zone changes refused with a message, logins fail clearly, nobody kicked | Consistent with Stage 6's database outages; no second placement path |
