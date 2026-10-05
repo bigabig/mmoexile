@@ -9,7 +9,7 @@ source "$(dirname "$0")/lib.sh"
 US_LATENCY_MS=${US_LATENCY_MS:-40}
 
 step "Tools"
-for tool in docker kind kubectl helm; do
+for tool in docker kind kubectl helm openssl; do
   command -v "$tool" >/dev/null || fail "$tool not found (see docs/DEVELOPMENT_SETUP.md)"
 done
 echo "kind $(kind version | cut -d' ' -f2), kubectl $(kubectl version --client -o json | sed -n 's/.*"gitVersion": "\(v[^"]*\)".*/\1/p' | head -1), helm $(helm version --short)"
@@ -18,6 +18,8 @@ echo "kind $(kind version | cut -d' ' -f2), kubectl $(kubectl version --client -
 # "too many open files". See docs/DEVELOPMENT_SETUP.md.
 inotify=$(cat /proc/sys/fs/inotify/max_user_instances)
 (( inotify >= 512 )) || fail "fs.inotify.max_user_instances is $inotify, kind needs 512 (see docs/DEVELOPMENT_SETUP.md)"
+
+"$K8S/scripts/cluster-init.sh"
 
 step "Cluster $CLUSTER"
 if cluster_exists; then

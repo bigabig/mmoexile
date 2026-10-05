@@ -4,6 +4,14 @@
 source "$(dirname "$0")/lib.sh"
 
 step "Manifests"
+[[ -s "$SECRETS/session-secret" ]] || fail "No secrets in $SECRETS (pnpm cluster:init)"
+# The connection URLs, with the generated passwords
+cat >"$SECRETS/connections.env" <<END
+POSTGRES_PASSWORD=$(secret postgres-migrate-password)
+DATABASE_URL=postgresql://mmoexile:$(secret postgres-migrate-password)@postgres:5432/mmoexile
+END
+chmod 600 "$SECRETS/connections.env"
+
 # The base shares files with compose (nginx config, Grafana dashboard)
 # outside its directory, which kustomize only reads when allowed to.
 rendered=$(mktemp)

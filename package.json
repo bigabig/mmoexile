@@ -22,6 +22,7 @@
     "dev:orchestrator": "pnpm --filter @mmoexile/orchestrator dev",
     "dev:directory": "pnpm --filter @mmoexile/directory dev",
     "chaos": "pnpm --filter @mmoexile/bots chaos",
+    "cluster:init": "bash infra/k8s/scripts/cluster-init.sh",
     "cluster:up": "bash infra/k8s/scripts/cluster-up.sh",
     "cluster:down": "bash infra/k8s/scripts/cluster-down.sh",
     "cluster:reload": "bash infra/k8s/scripts/reload.sh",

@@ -27,3 +27,6 @@ coverage/
 !.vscode/extensions.json
 .idea/
 .DS_Store
+
+# Generated secrets of the local cluster (pnpm cluster:init)
+infra/k8s/.secrets/
