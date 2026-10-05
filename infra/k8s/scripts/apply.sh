@@ -23,3 +23,15 @@ k apply -f "$rendered"
 for deployment in $(k -n "$NAMESPACE" get deployments -o name); do
   k -n "$NAMESPACE" rollout status "$deployment" --timeout=300s
 done
+
+# 3. Instance servers: every GameServer of each Fleet Ready or Allocated
+for fleet in $(k -n "$NAMESPACE" get fleets -o name); do
+  for _ in $(seq 120); do
+    status=$(k -n "$NAMESPACE" get "$fleet" -o jsonpath='{.spec.replicas} {.status.readyReplicas} {.status.allocatedReplicas}')
+    read -r want ready allocated <<<"$status"
+    (( ${ready:-0} + ${allocated:-0} >= want && want > 0 )) && break
+    sleep 2
+  done
+  echo "$fleet: ${ready:-0} ready, ${allocated:-0} allocated (of $want)"
+  (( ${ready:-0} + ${allocated:-0} >= want )) || fail "$fleet not ready"
+done

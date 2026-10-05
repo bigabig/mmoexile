@@ -15,6 +15,9 @@ resources:
   - directory.yaml
   - client.yaml
   - gateways.yaml
+  - instance-servers.yaml
+configurations:
+  - kustomizeconfig.yaml
 # Generated ConfigMaps/Secrets are applied with the data (scripts/apply.sh)
 generatorOptions:
   labels: { app.kubernetes.io/component: config }

@@ -1,0 +1,10 @@
+# Teaches kustomize where Agones Fleets reference ConfigMaps and Secrets,
+# so generated names (with their content hash) are filled in there too.
+nameReference:
+  - kind: ConfigMap
+    fieldSpecs:
+      - { kind: Fleet, path: spec/template/spec/template/spec/containers/envFrom/configMapRef/name }
+      - { kind: Fleet, path: spec/template/spec/template/spec/containers/env/valueFrom/configMapKeyRef/name }
+  - kind: Secret
+    fieldSpecs:
+      - { kind: Fleet, path: spec/template/spec/template/spec/containers/env/valueFrom/secretKeyRef/name }

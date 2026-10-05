@@ -61,3 +61,40 @@ patches:
     patch: |
       - { op: add, path: /spec/type, value: NodePort }
       - { op: add, path: /spec/ports/0/nodePort, value: 30013 }
+  # Instance servers on their region's node. Players reach them on
+  # localhost (the node's port mappings). A small capacity, so a few bots
+  # make the fleets scale.
+  - target: { kind: Fleet, name: instance-server-eu }
+    patch: |
+      - op: add
+        path: /spec/template/spec/template/spec/nodeSelector
+        value: { mmoexile.dev/region: eu }
+      - { op: replace, path: /spec/template/spec/counters/players/capacity, value: 60 }
+      - op: add
+        path: /spec/template/spec/template/spec/containers/0/env/-
+        value: { name: CAPACITY, value: "60" }
+      - op: add
+        path: /spec/template/spec/template/spec/containers/0/env/-
+        value: { name: PUBLIC_HOST, value: localhost }
+  - target: { kind: Fleet, name: instance-server-us }
+    patch: |
+      - op: add
+        path: /spec/template/spec/template/spec/nodeSelector
+        value: { mmoexile.dev/region: us }
+      - { op: replace, path: /spec/template/spec/counters/players/capacity, value: 60 }
+      - op: add
+        path: /spec/template/spec/template/spec/containers/0/env/-
+        value: { name: CAPACITY, value: "60" }
+      - op: add
+        path: /spec/template/spec/template/spec/containers/0/env/-
+        value: { name: PUBLIC_HOST, value: localhost }
+  - target: { kind: FleetAutoscaler, name: instance-server-eu }
+    patch: |
+      - op: replace
+        path: /spec/policy/counter
+        value: { key: players, bufferSize: 60, minCapacity: 120, maxCapacity: 240 }  # 2-4 servers
+  - target: { kind: FleetAutoscaler, name: instance-server-us }
+    patch: |
+      - op: replace
+        path: /spec/policy/counter
+        value: { key: players, bufferSize: 60, minCapacity: 60, maxCapacity: 180 }  # 1-3 servers
