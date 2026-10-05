@@ -27,7 +27,10 @@
     "cluster:down": "bash infra/k8s/scripts/cluster-down.sh",
     "cluster:reload": "bash infra/k8s/scripts/reload.sh",
     "cluster:status": "bash infra/k8s/scripts/status.sh",
-    "cluster:smoke": "pnpm --filter @mmoexile/bots cluster-smoke"
+    "cluster:smoke": "pnpm --filter @mmoexile/bots cluster-smoke",
+    "cluster-db:up": "bash infra/k8s/scripts/cluster-db-up.sh",
+    "cluster-db:down": "bash infra/k8s/scripts/cluster-db-down.sh",
+    "cluster-db:psql": "bash infra/k8s/scripts/cluster-db-psql.sh"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.4.0",

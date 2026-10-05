@@ -19,6 +19,7 @@
 #                                     pnpm cluster-db:up && pnpm cluster:up
 #   pnpm cluster:init -- --rotate-ca  also a new CA and new certificates
 source "$(dirname "$0")/lib.sh"
+[[ "${1:-}" == -- ]] && shift  # pnpm passes "--" on
 
 rotate=false
 rotate_ca=false

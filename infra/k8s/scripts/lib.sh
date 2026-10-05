@@ -17,6 +17,33 @@ secret() { cat "$SECRETS/$1"; }
 # on kind's network, e.g. db_container postgres → mmoexile-db-postgres
 DB_NETWORK=kind
 db_container() { echo "mmoexile-db-$1"; }
+POSTGRES_IMAGE=postgres:16
+PGBOUNCER_IMAGE=edoburu/pgbouncer:v1.26.0-p0
+REDIS_IMAGE=redis:7
+
+# A database container's address on kind's network (PgBouncer: Postgres')
+db_address() {
+  docker inspect -f "{{(index .NetworkSettings.Networks \"$DB_NETWORK\").IPAddress}}" "$(db_container "$1")"
+}
+
+# Removes kind's Docker network once neither a kind cluster nor a database
+# container uses it
+remove_unused_network() {
+  docker network inspect "$DB_NETWORK" >/dev/null 2>&1 || return 0
+  [[ -z "$(kind get clusters 2>/dev/null)" ]] || return 0
+  [[ "$(docker network inspect -f '{{len .Containers}}' "$DB_NETWORK")" == 0 ]] || return 0
+  docker network rm "$DB_NETWORK" >/dev/null && echo "Removed Docker network $DB_NETWORK"
+}
+
+# True if PgBouncer (as mmoexile_app) and Redis (as mmoexile) answer over
+# verified TLS. Passwords go through the environment, not the arguments.
+db_ready() {
+  PGPASSWORD=$(secret postgres-app-password) docker exec -e PGPASSWORD "$(db_container postgres)" \
+    psql "host=localhost port=6432 dbname=mmoexile user=mmoexile_app sslmode=verify-full sslrootcert=/tls/ca.crt" \
+    -tAc "select 1" >/dev/null 2>&1 &&
+    REDISCLI_AUTH=$(secret redis-password) docker exec -e REDISCLI_AUTH "$(db_container redis)" \
+      redis-cli --tls --cacert /tls/ca.crt -p 6380 --user mmoexile ping 2>/dev/null | grep -q PONG
+}
 
 AGONES_CHART_REPO=https://agones.dev/chart/stable
 AGONES_VERSION=1.61.0
