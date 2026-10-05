@@ -77,6 +77,11 @@ async function fleetStatus(name: string): Promise<FleetStatus> {
   };
 }
 
+/** The FleetAutoscaler's bounds, e.g. "120-240". */
+async function autoscalerBounds(name: string): Promise<string> {
+  return kubectl("get", "fleetautoscaler", name, "-o", "jsonpath={.spec.policy.counter.minCapacity}-{.spec.policy.counter.maxCapacity}");
+}
+
 async function gameServerNames(fleet: string): Promise<string[]> {
   const out = await kubectl("get", "gameservers", "-l", `agones.dev/fleet=${fleet}`, "-o", "jsonpath={.items[*].metadata.name}");
   return out.split(/\s+/).filter(Boolean);
@@ -195,8 +200,11 @@ try {
   // 4. Scale down
   {
     console.log("4. Scale down: the load leaves");
-    await load.stop();
+    const loadReport = await load.stop();
     load = undefined;
+    // Not a failure: a burst bigger than the autoscaler's buffer fills the
+    // region until the new server is up ("region_unavailable" meanwhile)
+    console.log(`  (info) load bots: ${loadReport.failedHops} failed hops while eu was full, ${loadReport.kicks} kicks`);
     const since = observers.totals();
     const ms = await waitFor(
       "eu fleet back to its size",
@@ -215,11 +223,14 @@ try {
     console.log("5. Rolling update (pnpm cluster:reload instance-server)");
     const since = observers.totals();
     const before = new Set([...(await gameServerNames("instance-server-eu")), ...(await gameServerNames("instance-server-us"))]);
+    const bounds = [await autoscalerBounds("instance-server-eu"), await autoscalerBounds("instance-server-us")];
     const started = Date.now();
     await run("bash", [reloadScript, "instance-server"], { maxBuffer: 64 * 1024 * 1024 });
     const after = [...(await gameServerNames("instance-server-eu")), ...(await gameServerNames("instance-server-us"))];
     record("every instance server replaced", after.length > 0 && after.every((name) => !before.has(name)),
       `${before.size} old → ${after.length} new in ${seconds(Date.now() - started)}`);
+    const boundsAfter = [await autoscalerBounds("instance-server-eu"), await autoscalerBounds("instance-server-us")];
+    record("the autoscalers' bounds are back", boundsAfter.join() === bounds.join(), `eu ${boundsAfter[0]}, us ${boundsAfter[1]} slots`);
     await sleep(5_000);
     const observed = disruptions(observers, since);
     record("players moved without a kick", observed.ok, observed.text);

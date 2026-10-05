@@ -142,10 +142,10 @@ describe("AgonesLifecycle", () => {
     agones.freeze();
   });
 
-  it("keeps its state while draining, then shuts down", async () => {
+  it("keeps its state and health pings while draining, then shuts down", async () => {
     const { calls, sdk } = recordingSdk();
     let players = 1;
-    const agones = new AgonesLifecycle({ sdk, players: () => players, capacity: 60, healthIntervalMs: 60_000 });
+    const agones = new AgonesLifecycle({ sdk, players: () => players, capacity: 60, healthIntervalMs: 20 });
     await agones.start();
     expect(agones.currentState).toBe("Allocated");
 
@@ -153,9 +153,16 @@ describe("AgonesLifecycle", () => {
     players = 0; // players leave during the drain: not Ready (could be scaled down mid-drain)
     await agones.sync();
     expect(agones.currentState).toBe("Allocated");
+    // Still healthy: otherwise Agones would kill the server mid-drain
+    const pings = calls.filter((c) => c === "health").length;
+    await new Promise((r) => setTimeout(r, 70));
+    expect(calls.filter((c) => c === "health").length).toBeGreaterThan(pings);
 
     await agones.shutdown();
     expect(calls.at(-1)).toBe("shutdown");
+    const afterShutdown = calls.length;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls.length).toBe(afterShutdown); // no more pings
   });
 
   it("pings health regularly", async () => {

@@ -89,17 +89,18 @@ export class AgonesLifecycle {
   }
 
   /**
-   * Stops switching states (draining: the server stays as it is until it
-   * shuts down) and stops health pings.
+   * Stops switching states: while draining, the server stays as it is until
+   * it shuts down. Health pings go on (without them Agones would declare the
+   * server Unhealthy and kill it mid-drain).
    */
   freeze(): void {
     this.stopped = true;
-    clearInterval(this.healthTimer);
   }
 
   /** Done: Agones deletes this GameServer. */
   async shutdown(): Promise<void> {
     this.freeze();
+    clearInterval(this.healthTimer);
     await this.syncing;
     await this.deps.sdk.shutdown();
   }
