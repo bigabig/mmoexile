@@ -1,0 +1,82 @@
+# Scraping the mesh (every cluster, applied by cluster-up.sh after the
+# monitoring chart): the Linkerd proxies' metrics (requests per route and
+# their status, authorizations; port linkerd-admin, 4191) and the service
+# mirrors' (whether a linked cluster's gateway is alive, its latency).
+# Only the families the dashboard uses are kept.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: linkerd-proxies
+  namespace: monitoring
+spec:
+  namespaceSelector: { matchNames: [mmoexile, linkerd-multicluster] }
+  selector:
+    matchExpressions: [{ key: linkerd.io/control-plane-ns, operator: Exists }]
+  podMetricsEndpoints:
+    - port: linkerd-admin
+      path: /metrics
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: "outbound_http_route_(request_statuses_total|request_duration_seconds_.*)|inbound_http_authz_.*"
+          action: keep
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: linkerd-service-mirrors
+  namespace: monitoring
+spec:
+  namespaceSelector: { matchNames: [linkerd-multicluster] }
+  selector:
+    matchLabels: { component: controller }
+  podMetricsEndpoints:
+    - port: ctrl-admin
+      path: /metrics
+      metricRelabelings:
+        - { sourceLabels: [__name__], regex: "gateway_.*", action: keep }
+---
+# Prometheus is meshed: these ports deny everyone else by default (the
+# namespace mmoexile, D32; the multicluster extension's own policies),
+# so its identity is let in explicitly.
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: prometheus, namespace: mmoexile }
+spec:
+  identityRefs: [{ kind: ServiceAccount, name: monitoring-kube-prometheus-prometheus, namespace: monitoring }]
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: linkerd-admin, namespace: mmoexile }
+spec:
+  podSelector: {}  # every meshed pod's proxy
+  port: linkerd-admin
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: linkerd-admin-prometheus, namespace: mmoexile }
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: linkerd-admin }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: prometheus }]
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: prometheus, namespace: linkerd-multicluster }
+spec:
+  identityRefs: [{ kind: ServiceAccount, name: monitoring-kube-prometheus-prometheus, namespace: monitoring }]
+---
+# The service mirrors' metrics (the chart's Server "controller")
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: controller-prometheus, namespace: linkerd-multicluster }
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: controller }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: prometheus }]
+---
+# The proxies' metrics, e.g. the gateway's (the chart's Server "linkerd-admin")
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: linkerd-admin-prometheus, namespace: linkerd-multicluster }
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: linkerd-admin }
+  requiredAuthenticationRefs: [{ group: policy.linkerd.io, kind: MeshTLSAuthentication, name: prometheus }]

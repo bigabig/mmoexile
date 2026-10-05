@@ -19,7 +19,16 @@ prometheus:
   service:
     type: NodePort
     nodePort: 30091  # localhost:9091 (kind-central.yaml)
+    # Exported to the regions (Linkerd multicluster): their Prometheus
+    # agents write into it as monitoring-kube-prometheus-prometheus-central
+    labels: { mirror.linkerd.io/exported: "true" }
   prometheusSpec:
+    # Accepts the regions' metrics (remote write, /api/v1/write); who may
+    # write is limited by the mesh (monitoring/remote-write-policy.yaml)
+    enableRemoteWriteReceiver: true
+    # Meshed: receives the regions' writes through the mesh, and scrapes
+    # the meshed pods with its own identity
+    podMetadata: { annotations: { linkerd.io/inject: enabled } }
     scrapeInterval: 5s  # as in compose
     evaluationInterval: 5s
     retention: 2d

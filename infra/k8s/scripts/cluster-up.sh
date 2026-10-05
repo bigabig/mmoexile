@@ -101,18 +101,21 @@ install_multicluster() {
     i=$((i + 1))
   done
   hc "$cluster" upgrade --install linkerd-multicluster linkerd-multicluster --repo "$LINKERD_CHART_REPO" --version "$LINKERD_VERSION" \
-    --namespace linkerd-multicluster --create-namespace --values "$K8S/linkerd/multicluster.yaml" "${controllers[@]}" >/dev/null
+    --namespace linkerd-multicluster --create-namespace --values "$K8S/linkerd/multicluster.yaml" "${controllers[@]}" \
+    --force-conflicts >/dev/null  # takes back the identities patched below, which are patched again right after
   # Who may enter through the gateway (D32): the chart lets in any meshed
   # identity of a cluster sharing our trust anchor; we narrow its
-  # MeshTLSAuthentication to the workloads that call across clusters.
+  # MeshTLSAuthentication to the workloads that call across clusters
+  # (central: instance servers and the regions' Prometheus agents;
+  # regions: the orchestrator).
   # (Linkerd's identities don't name the cluster: an instance server's is
   # the same in eu and us.)
   local identities
   case "$cluster" in
-    central) identities='["instance-server.mmoexile.serviceaccount.identity.linkerd.cluster.local"]' ;;
+    central) identities='["instance-server.mmoexile.serviceaccount.identity.linkerd.cluster.local","monitoring-kube-prometheus-prometheus.monitoring.serviceaccount.identity.linkerd.cluster.local"]' ;;
     *) identities='["orchestrator.mmoexile.serviceaccount.identity.linkerd.cluster.local"]' ;;
   esac
-  kc "$cluster" -n linkerd-multicluster patch meshtlsauthentication any-meshed --type merge \
+  kc "$cluster" -n linkerd-multicluster patch meshtlsauthentication any-meshed --type merge --field-manager mmoexile \
     -p "{\"spec\":{\"identities\":$identities}}" >/dev/null
   kc "$cluster" -n linkerd-multicluster rollout status deploy/linkerd-gateway --timeout=180s >/dev/null
   for _ in $(seq 60); do
@@ -128,10 +131,18 @@ for_clusters install_multicluster "${CLUSTERS[@]}"
 # generates a Link (its gateway's address, its API server, credentials of a
 # ServiceAccount that may only read Services) that is applied in the
 # source. The API server is addressed by the node's name on kind's network.
+# Mirrors don't get the Helm release's label: otherwise the monitoring
+# chart's ServiceMonitors would also select the mirror of central's
+# Prometheus and try to scrape it from the region.
 for source in "${CLUSTERS[@]}"; do
   for target in $(linked_clusters "$source"); do
-    linkerd --context "$(context "$target")" multicluster link-gen --cluster-name "$target" \
-      --api-server-address "https://$(node_container "$target"):6443" | kc "$source" apply -f - >/dev/null
+    applied=$(linkerd --context "$(context "$target")" multicluster link-gen --cluster-name "$target" \
+      --api-server-address "https://$(node_container "$target"):6443" --excluded-labels release |
+      kc "$source" apply -f -)
+    # A service mirror reads its Link when it starts: restart it on changes
+    if grep -q "^link.multicluster.linkerd.io/$target configured" <<<"$applied"; then
+      kc "$source" -n linkerd-multicluster rollout restart "deploy/controller-$target" >/dev/null
+    fi
     echo "$source mirrors $target"
   done
 done
@@ -155,12 +166,15 @@ for_clusters wait_for_gateways "${CLUSTERS[@]}"
 step "Monitoring: kube-prometheus-stack $MONITORING_VERSION"
 # First, so that Agones' ServiceMonitor (its controller metrics) has its CRD
 install_monitoring() {
-  local values=values-region.yaml
-  [[ "$1" == central ]] && values=values.yaml
-  hc "$1" upgrade --install monitoring kube-prometheus-stack --repo "$MONITORING_CHART_REPO" --version "$MONITORING_VERSION" \
-    --namespace monitoring --create-namespace \
-    --values "$K8S/monitoring/$values" --wait --timeout 10m >/dev/null
-  kc "$1" -n monitoring get deploy,statefulset
+  local cluster=$1 values=(--values "$K8S/monitoring/values-region.yaml" --set "prometheus.prometheusSpec.externalLabels.cluster=$1")
+  [[ "$cluster" == central ]] && values=(--values "$K8S/monitoring/values.yaml")
+  hc "$cluster" upgrade --install monitoring kube-prometheus-stack --repo "$MONITORING_CHART_REPO" --version "$MONITORING_VERSION" \
+    --namespace monitoring --create-namespace "${values[@]}" --wait --timeout 10m >/dev/null
+  # Scraping the mesh (proxies, the links' gateways), and who may write
+  # into central's Prometheus
+  kc "$cluster" apply -f "$K8S/monitoring/mesh.yaml" >/dev/null
+  [[ "$cluster" == central ]] && kc "$cluster" apply -f "$K8S/monitoring/remote-write-policy.yaml" >/dev/null
+  kc "$cluster" -n monitoring get deploy,statefulset
 }
 for_clusters install_monitoring "${CLUSTERS[@]}"
 

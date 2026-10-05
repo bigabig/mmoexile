@@ -2,7 +2,7 @@
   "title": "Realm Overview",
   "uid": "realm-overview",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "time": {
     "from": "now-15m",
     "to": "now"
@@ -1448,6 +1448,370 @@
         }
       ],
       "id": 28
+    },
+    {
+      "type": "row",
+      "title": "Clusters and mesh",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 86,
+        "w": 24,
+        "h": 1
+      },
+      "id": 29,
+      "panels": [],
+      "description": "Kubernetes only (Stage 7): the links between the clusters (Linkerd multicluster) and the calls through them"
+    },
+    {
+      "type": "timeseries",
+      "title": "Links between clusters",
+      "description": "1 while a cluster's service mirror reaches the linked cluster's gateway (probes every few seconds), 0 when it doesn't.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 87,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, target_cluster_name) (label_replace(gateway_alive, \"cluster\", \"central\", \"cluster\", \"\"))",
+          "legendFormat": "{{cluster}} \u2192 {{target_cluster_name}}"
+        }
+      ],
+      "id": 30
+    },
+    {
+      "type": "timeseries",
+      "title": "Gateway round trip",
+      "description": "The service mirrors' probe of each linked cluster's gateway: the distance between the clusters.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 87,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, target_cluster_name) (label_replace(gateway_latency, \"cluster\", \"central\", \"cluster\", \"\"))",
+          "legendFormat": "{{cluster}} \u2192 {{target_cluster_name}}"
+        }
+      ],
+      "id": 31
+    },
+    {
+      "type": "timeseries",
+      "title": "Remote write: age of the newest sample",
+      "description": "How far behind central's Prometheus is with each region's metrics (Prometheus agents writing through the mesh).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 87,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "time() - max by (cluster) (timestamp(up{cluster=~\".+\"}))",
+          "legendFormat": "{{cluster}}"
+        }
+      ],
+      "id": 32
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests between clusters",
+      "description": "Calls to mirrored Services (another cluster's, through the gateways) per second, by calling cluster.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 95,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, parent_name) (label_replace(rate(outbound_http_route_request_statuses_total{parent_name=~\"(orchestrator|social|region-gateway|monitoring-kube-prometheus-prometheus)-(central|eu|us)\"}[1m]), \"cluster\", \"central\", \"cluster\", \"\"))",
+          "legendFormat": "{{cluster}} \u2192 {{parent_name}}"
+        }
+      ],
+      "id": 33
+    },
+    {
+      "type": "timeseries",
+      "title": "Success rate between clusters",
+      "description": "Share of calls to another cluster's Services that didn't fail with a 5xx or a connection error.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 95,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, parent_name) (label_replace(rate(outbound_http_route_request_statuses_total{parent_name=~\"(orchestrator|social|region-gateway|monitoring-kube-prometheus-prometheus)-(central|eu|us)\", http_status!~\"5..\", error=\"\"}[1m]), \"cluster\", \"central\", \"cluster\", \"\")) / sum by (cluster, parent_name) (label_replace(rate(outbound_http_route_request_statuses_total{parent_name=~\"(orchestrator|social|region-gateway|monitoring-kube-prometheus-prometheus)-(central|eu|us)\"}[1m]), \"cluster\", \"central\", \"cluster\", \"\"))",
+          "legendFormat": "{{cluster}} \u2192 {{parent_name}}"
+        }
+      ],
+      "id": 34
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency between clusters p95",
+      "description": "Calls to another cluster's Services as the calling proxy sees them: the distance plus both gateways plus the service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 103,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, cluster, parent_name) (label_replace(rate(outbound_http_route_request_duration_seconds_bucket{parent_name=~\"(orchestrator|social|region-gateway|monitoring-kube-prometheus-prometheus)-(central|eu|us)\"}[1m]), \"cluster\", \"central\", \"cluster\", \"\")))",
+          "legendFormat": "{{cluster}} \u2192 {{parent_name}}"
+        }
+      ],
+      "id": 35
+    },
+    {
+      "type": "timeseries",
+      "title": "Refused by the mesh's policies",
+      "description": "Requests the proxies refused (403) because no policy authorizes the caller for that route (D32), by server and route.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 103,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, srv_name, route_name) (label_replace(rate(inbound_http_authz_deny_total[1m]), \"cluster\", \"central\", \"cluster\", \"\"))",
+          "legendFormat": "{{cluster}}: {{srv_name}} {{route_name}}"
+        }
+      ],
+      "id": 36
     }
   ],
   "annotations": {

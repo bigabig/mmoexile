@@ -39,6 +39,7 @@ patches:
   - target: { kind: Fleet, name: instance-server }
     patch: |
       - { op: replace, path: /metadata/name, value: instance-server-eu }
+      - { op: replace, path: /spec/replicas, value: 2 }  # the autoscaler's minimum
       - { op: replace, path: /spec/template/spec/ports/0/range, value: eu }
       - op: add
         path: /spec/template/metadata/labels/mmoexile.dev~1region
