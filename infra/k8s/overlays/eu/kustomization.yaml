@@ -1,0 +1,64 @@
+# The region "eu" on its local cluster (infra/k8s/kind-eu.yaml):
+# names the region-neutral base after it, gives the gateway its host port
+# and adds the databases and the generated secrets.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mmoexile
+resources:
+  - ../../base/region
+components:
+  - ../kind-common
+
+secretGenerator:
+  # Only what a region needs (from pnpm cluster:init, git-ignored): the
+  # public key that verifies play tickets, and the connection URLs of the
+  # services' database users (connections-region.env, written by
+  # scripts/apply.sh). The keys that sign sessions and tickets and the
+  # migration user stay in the central cluster.
+  - name: realm-secrets
+    files:
+      - TICKET_PUBLIC_KEY=../../.secrets/ticket-public-key
+    envs:
+      - ../../.secrets/connections-region.env
+
+labels:
+  - pairs: { mmoexile.dev/region: eu }
+    includeTemplates: true
+
+patches:
+  # The region's gateway: a host port, so a ping takes the same network
+  # path as the region's game traffic
+  - target: { kind: Deployment, name: region-gateway }
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/ports/0/hostPort
+        value: 7350
+  # The Fleet and its autoscaler named after the region; its port range
+  # (kind-eu.yaml publishes it on localhost) and REGION. A small
+  # capacity, so a few bots make the fleet scale.
+  - target: { kind: Fleet, name: instance-server }
+    patch: |
+      - { op: replace, path: /metadata/name, value: instance-server-eu }
+      - { op: replace, path: /spec/template/spec/ports/0/range, value: eu }
+      - op: add
+        path: /spec/template/metadata/labels/mmoexile.dev~1region
+        value: eu
+      - op: add
+        path: /spec/template/spec/template/metadata/labels/mmoexile.dev~1region
+        value: eu
+      - op: replace
+        path: /spec/template/spec/template/spec/containers/0/env/1
+        value: { name: REGION, value: eu }
+      - { op: replace, path: /spec/template/spec/counters/players/capacity, value: 60 }
+      - op: add
+        path: /spec/template/spec/template/spec/containers/0/env/-
+        value: { name: CAPACITY, value: "60" }
+      - op: add
+        path: /spec/template/spec/template/spec/containers/0/env/-
+        value: { name: PUBLIC_HOST, value: localhost }
+  - target: { kind: FleetAutoscaler, name: instance-server }
+    patch: |
+      - { op: replace, path: /metadata/name, value: instance-server-eu }
+      - op: replace
+        path: /spec/policy/counter
+        value: { key: players, bufferSize: 60, minCapacity: 120, maxCapacity: 240 }  # 2-4 servers

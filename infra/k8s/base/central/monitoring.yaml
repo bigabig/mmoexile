@@ -1,0 +1,18 @@
+# What Prometheus scrapes (Prometheus Operator, see
+# infra/k8s/monitoring/values.yaml): the same /metrics endpoints as in
+# compose. PodMonitors select pods by label, so new and replaced pods are
+# scraped without any change. The regions' instance servers are scraped
+# in their clusters (base/region/monitoring.yaml).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: central-services
+spec:
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [account-api, social, orchestrator, directory]
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics

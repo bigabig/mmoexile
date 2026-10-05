@@ -1,0 +1,28 @@
+# The databases outside the cluster (pnpm cluster-db:up: Docker containers
+# on kind's network), under stable in-cluster names, like a cloud's managed
+# databases: Services without a selector, so Kubernetes doesn't look for
+# pods; their addresses (EndpointSlices) are set by the scripts
+# (apply_db_endpoints in scripts/lib.sh) from the containers' addresses.
+# The servers' certificates are issued for these names (cluster:init).
+#
+#   pgbouncer:6432  the services (mmoexile_app), pooled
+#   redis:6380      leases, presence, parties, pub/sub (TLS only)
+#
+# In every cluster (the services there use both). The central cluster adds
+# Postgres itself (for the migrate Job) and the databases' metrics
+# exporters (overlays/central/databases.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  labels: { app.kubernetes.io/name: pgbouncer, app.kubernetes.io/component: data }
+spec:
+  ports: [{ name: postgres, port: 6432 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels: { app.kubernetes.io/name: redis, app.kubernetes.io/component: data }
+spec:
+  ports: [{ name: redis, port: 6380 }]

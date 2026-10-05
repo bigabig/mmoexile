@@ -39,7 +39,7 @@ mkdir -p "$SECRETS"
 chmod 700 "$SECRETS"
 
 # The names each server's certificate is valid for: what clients connect to
-# inside the cluster (the Services in overlays/kind), the container's name
+# inside the cluster (the Services in overlays/kind-common), the container's name
 # on the Docker network, and localhost (cluster-db:psql, the host)
 sans() {
   local service=$1

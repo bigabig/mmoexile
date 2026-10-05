@@ -188,7 +188,9 @@ echo "Postgres, PgBouncer (as mmoexile_app, TLS) and Redis (as mmoexile, TLS) an
 for service in postgres redis; do
   echo "$(db_container "$service"): $(db_address "$service")"
 done
-if cluster_exists && k get namespace "$NAMESPACE" >/dev/null 2>&1; then
-  echo "cluster $CLUSTER:"
-  apply_db_endpoints
-fi
+# Clusters that already run: their database Services follow the new addresses
+for cluster in "${CLUSTERS[@]}"; do
+  if cluster_exists "$cluster" && kc "$cluster" get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    apply_db_endpoints "$cluster"
+  fi
+done

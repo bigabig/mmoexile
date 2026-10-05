@@ -1,0 +1,24 @@
+# Helm values for kube-prometheus-stack in a region's cluster (eu, us):
+# the same chart as central (values.yaml), but only what collects metrics:
+# Prometheus scraping the region's instance servers, Agones and the
+# cluster itself. No Grafana: dashboards are central's.
+
+alertmanager: { enabled: false }
+grafana: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeEtcd: { enabled: false }
+kubeProxy: { enabled: false }
+
+prometheus:
+  prometheusSpec:
+    scrapeInterval: 5s
+    evaluationInterval: 5s
+    retention: 1d
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    serviceDiscoveryRole: EndpointSlice
+
+prometheus-node-exporter:
+  hostRootFsMount: { enabled: false }

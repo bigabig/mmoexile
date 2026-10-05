@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# pnpm cluster:up — the realm on a local Kubernetes cluster with Agones.
-# Idempotent: creates what is missing, updates the rest, and can be re-run
-# at any time (e.g. after changing manifests or code).
+# pnpm cluster:up — the realm on three local Kubernetes clusters: "central"
+# (the central services and monitoring) and one per region ("eu", "us",
+# each with Agones and its instance servers). Idempotent: creates what is
+# missing, updates the rest, and can be re-run at any time (e.g. after
+# changing manifests or code).
 #
-#   US_LATENCY_MS=120 pnpm cluster:up   → the simulated distance to the us node
+#   US_LATENCY_MS=120 pnpm cluster:up   → the simulated distance to the us cluster
 source "$(dirname "$0")/lib.sh"
 
 US_LATENCY_MS=${US_LATENCY_MS:-40}
@@ -22,47 +24,75 @@ inotify=$(cat /proc/sys/fs/inotify/max_user_instances)
 "$K8S/scripts/cluster-init.sh"
 "$K8S/scripts/cluster-db-up.sh"
 
-step "Cluster $CLUSTER"
-if cluster_exists; then
-  echo "exists"
+step "Clusters"
+# The single cluster of Stages 5 and 6 holds the same host ports
+! kind get clusters 2>/dev/null | grep -qx mmoexile || fail "The single cluster \"mmoexile\" of Stage 6 still exists: pnpm cluster:down removes it"
+for cluster in "${CLUSTERS[@]}"; do
+  if cluster_exists "$cluster"; then
+    echo "$(cluster_name "$cluster") exists"
+  else
+    kind create cluster --config "$K8S/kind-$cluster.yaml" --wait 120s
+  fi
+  # The node is control plane and worker at once; kubeadm marks control
+  # plane nodes as unsuitable for load balancers, which would leave our
+  # LoadBalancer Services without a backend
+  kc "$cluster" label node "$(node "$cluster")" node.kubernetes.io/exclude-from-external-load-balancers- >/dev/null 2>&1 || true
+  kc "$cluster" create namespace "$NAMESPACE" --dry-run=client -o yaml | kc "$cluster" apply -f - >/dev/null
+done
+
+step "Load balancers: cloud-provider-kind"
+if [[ "$(docker inspect -f '{{.State.Running}}' "$CLOUD_PROVIDER_KIND" 2>/dev/null)" == true ]]; then
+  echo "running"
 else
-  kind create cluster --config "$K8S/kind.yaml" --wait 120s
+  docker rm -f "$CLOUD_PROVIDER_KIND" >/dev/null 2>&1 || true
+  # Talks to Docker to start a load balancer container per LoadBalancer
+  # Service; Gateway API and the default Ingress are not needed
+  docker run -d --name "$CLOUD_PROVIDER_KIND" --network "$DB_NETWORK" --restart unless-stopped \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    "$CLOUD_PROVIDER_KIND_IMAGE" --gateway-channel disabled --enable-default-ingress=false >/dev/null
+  echo "started $CLOUD_PROVIDER_KIND"
 fi
-k create namespace "$NAMESPACE" --dry-run=client -o yaml | k apply -f - >/dev/null
+
+step "Simulated distance: us cluster +${US_LATENCY_MS} ms"
+# Everything the us node sends (to players on the host, to the other
+# clusters, to the databases) leaves through its container's eth0, so one
+# netem qdisc there delays the whole region, like region-us does in compose.
+docker exec "$(node us)" tc qdisc replace dev eth0 root netem delay "${US_LATENCY_MS}ms"
+docker exec "$(node us)" tc qdisc show dev eth0
 
 step "Monitoring: kube-prometheus-stack $MONITORING_VERSION"
 # First, so that Agones' ServiceMonitor (its controller metrics) has its CRD
-h upgrade --install monitoring kube-prometheus-stack --repo "$MONITORING_CHART_REPO" --version "$MONITORING_VERSION" \
-  --namespace monitoring --create-namespace \
-  --values "$K8S/monitoring/values.yaml" --wait --timeout 10m >/dev/null
-k -n monitoring get deploy,statefulset
+install_monitoring() {
+  local values=values-region.yaml
+  [[ "$1" == central ]] && values=values.yaml
+  hc "$1" upgrade --install monitoring kube-prometheus-stack --repo "$MONITORING_CHART_REPO" --version "$MONITORING_VERSION" \
+    --namespace monitoring --create-namespace \
+    --values "$K8S/monitoring/$values" --wait --timeout 10m >/dev/null
+  kc "$1" -n monitoring get deploy,statefulset
+}
+for_clusters install_monitoring "${CLUSTERS[@]}"
 
-step "Agones $AGONES_VERSION"
-h upgrade --install agones agones --repo "$AGONES_CHART_REPO" --version "$AGONES_VERSION" \
-  --namespace agones-system --create-namespace \
-  --values "$K8S/agones/values.yaml" --wait --timeout 5m >/dev/null
-k -n agones-system get deploy
-
-step "Simulated distance: us node +${US_LATENCY_MS} ms"
-# Everything the us node sends (its pods' traffic to other nodes and to the
-# host) leaves through the node container's eth0, so one netem qdisc there
-# delays the whole region, like region-us does in compose.
-us_node=$(node_with mmoexile.dev/region=us)
-docker exec "$us_node" tc qdisc replace dev eth0 root netem delay "${US_LATENCY_MS}ms"
-docker exec "$us_node" tc qdisc show dev eth0
+step "Agones $AGONES_VERSION (regions)"
+install_agones() {
+  hc "$1" upgrade --install agones agones --repo "$AGONES_CHART_REPO" --version "$AGONES_VERSION" \
+    --namespace agones-system --create-namespace \
+    --values "$K8S/agones/values.yaml" --wait --timeout 5m \
+    >/dev/null 2> >(grep -v 'unrecognized format "int-or-string"' >&2)  # noise from Agones' CRD schemas
+  kc "$1" -n agones-system get deploy
+}
+for_clusters install_agones "${REGIONS[@]}"
 
 step "Images"
 for name in migrate "${APPS[@]}" client; do
   echo "build $(image "$name")"
   build_image "$name"
 done
-echo "load into the nodes"
-load_images mmoexile.dev/role=central $(for name in migrate account-api social orchestrator directory client; do image "$name"; done)
-load_images mmoexile.dev/region $(image instance-server)
+for cluster in "${CLUSTERS[@]}"; do
+  echo "load into $cluster"
+  load_images "$cluster" $(cluster_images "$cluster")
+done
 
-if [[ -d "$K8S/overlays/kind" ]]; then
-  "$K8S/scripts/apply.sh"
-fi
+"$K8S/scripts/apply.sh"
 
 step "Ready"
 cat <<EOF

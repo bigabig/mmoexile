@@ -1,5 +1,6 @@
-# Teaches kustomize where Agones Fleets reference ConfigMaps and Secrets,
-# so generated names (with their content hash) are filled in there too.
+# Teaches kustomize where Agones resources reference others, so generated
+# names (ConfigMaps and Secrets with their content hash) and renamed ones
+# are filled in there too.
 nameReference:
   - kind: ConfigMap
     fieldSpecs:
@@ -9,3 +10,7 @@ nameReference:
   - kind: Secret
     fieldSpecs:
       - { kind: Fleet, path: spec/template/spec/template/spec/containers/env/valueFrom/secretKeyRef/name }
+  # A FleetAutoscaler names its Fleet, which the overlay renames per region
+  - kind: Fleet
+    fieldSpecs:
+      - { kind: FleetAutoscaler, path: spec/fleetName }

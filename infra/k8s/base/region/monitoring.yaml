@@ -1,0 +1,12 @@
+# What the region's Prometheus scrapes (see base/central/monitoring.yaml).
+# Instance servers: metrics on their internal port, never the public one.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: instance-servers
+spec:
+  selector:
+    matchLabels: { app.kubernetes.io/name: instance-server }
+  podMetricsEndpoints:
+    - port: internal
+      path: /metrics

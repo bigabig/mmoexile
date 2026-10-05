@@ -1,0 +1,30 @@
+# A region's part of the realm (the clusters "eu" and "us"): its instance
+# servers and its gateway, region-neutral and without anything
+# environment-specific. An overlay per region (overlays/eu, overlays/us)
+# names the region and adds host ports, secrets and databases. Files are
+# shared with compose (../../../docker), so builds need
+# `--load-restrictor LoadRestrictionsNone` (scripts/apply.sh).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mmoexile
+labels:
+  - pairs: { app.kubernetes.io/part-of: mmoexile }
+resources:
+  - instance-servers.yaml
+  - gateway.yaml
+  - monitoring.yaml
+configurations:
+  - kustomizeconfig.yaml
+# Generated ConfigMaps/Secrets are applied with the data (scripts/apply.sh)
+generatorOptions:
+  labels: { app.kubernetes.io/component: config }
+configMapGenerator:
+  # The central services, in the cluster "central": mirrored into this
+  # cluster by the mesh as <service>-central (Linkerd multicluster)
+  - name: realm
+    literals:
+      - SOCIAL_URL=http://social-central:3002
+      - ORCHESTRATOR_URL=http://orchestrator-central:3003
+  - name: gateway-nginx
+    files:
+      - default.conf=../../../docker/gateway.nginx.conf  # the same file as compose

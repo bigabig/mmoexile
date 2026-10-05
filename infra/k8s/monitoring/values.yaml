@@ -2,10 +2,10 @@
 # scripts/lib.sh): Prometheus (run by the Prometheus Operator), Grafana,
 # kube-state-metrics and node-exporter, plus their Kubernetes dashboards.
 #
-# Our services are scraped through PodMonitors (base/monitoring.yaml), the
-# Realm Overview dashboard is the same file as in compose, loaded from a
-# ConfigMap by Grafana's sidecar. Everything runs on the central node
-# (node-exporter on every node).
+# Our services are scraped through PodMonitors
+# (base/central/monitoring.yaml), the Realm Overview dashboard is the same
+# file as in compose, loaded from a ConfigMap by Grafana's sidecar. This is the central cluster's
+# monitoring; the regions run a smaller one (values-region.yaml).
 
 # Local cluster: no alerting, and kind's control-plane components only
 # listen on localhost, so they can't be scraped
@@ -15,18 +15,11 @@ kubeScheduler: { enabled: false }
 kubeEtcd: { enabled: false }
 kubeProxy: { enabled: false }
 
-prometheusOperator:
-  nodeSelector: { mmoexile.dev/role: central }
-  admissionWebhooks:
-    patch:
-      nodeSelector: { mmoexile.dev/role: central }
-
 prometheus:
   service:
     type: NodePort
-    nodePort: 30091  # localhost:9091 (kind.yaml)
+    nodePort: 30091  # localhost:9091 (kind-central.yaml)
   prometheusSpec:
-    nodeSelector: { mmoexile.dev/role: central }
     scrapeInterval: 5s  # as in compose
     evaluationInterval: 5s
     retention: 2d
@@ -37,21 +30,17 @@ prometheus:
     ruleSelectorNilUsesHelmValues: false
     # Find a ServiceMonitor's targets through EndpointSlices (not the
     # deprecated Endpoints): the databases outside the cluster only have
-    # EndpointSlices (overlays/kind/databases.yaml)
+    # EndpointSlices (overlays/central/databases.yaml)
     serviceDiscoveryRole: EndpointSlice
-
-kube-state-metrics:
-  nodeSelector: { mmoexile.dev/role: central }
 
 prometheus-node-exporter:
   # kind nodes are containers: no host root filesystem to mount
   hostRootFsMount: { enabled: false }
 
 grafana:
-  nodeSelector: { mmoexile.dev/role: central }
   service:
     type: NodePort
-    nodePort: 30040  # localhost:3040 (kind.yaml)
+    nodePort: 30040  # localhost:3040 (kind-central.yaml)
   adminPassword: admin  # local only; viewers need no login
   grafana.ini:
     auth.anonymous: { enabled: true, org_role: Viewer }

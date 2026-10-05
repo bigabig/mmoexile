@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
-# pnpm cluster:status — what runs where: nodes, pods, fleets and their
-# GameServers, and the fleet as the orchestrator sees it.
+# pnpm cluster:status — what runs where: the clusters and their pods, the
+# fleets and their GameServers, and the fleet as the orchestrator sees it.
 source "$(dirname "$0")/lib.sh"
-cluster_exists || fail "No cluster $CLUSTER (pnpm cluster:up)"
+require_clusters
 
-step "Nodes"
-k get nodes -L mmoexile.dev/role,mmoexile.dev/region
+step "Clusters"
+for cluster in "${CLUSTERS[@]}"; do
+  kc "$cluster" get nodes --no-headers -o custom-columns="NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,IP:.status.addresses[0].address"
+done
+kc central get svc -A --field-selector spec.type=LoadBalancer -o wide 2>/dev/null | tail -n +2 | sed 's/^/central /' || true
+for cluster in "${REGIONS[@]}"; do
+  kc "$cluster" get svc -A --field-selector spec.type=LoadBalancer -o wide 2>/dev/null | tail -n +2 | sed "s/^/$cluster /" || true
+done
 
-step "Pods ($NAMESPACE)"
-k -n "$NAMESPACE" get pods -o wide
+for cluster in "${CLUSTERS[@]}"; do
+  step "Pods in $cluster ($NAMESPACE)"
+  kc "$cluster" -n "$NAMESPACE" get pods -o wide
+done
 
-step "Fleets and autoscalers"
-k -n "$NAMESPACE" get fleets
-k -n "$NAMESPACE" get fleetautoscalers
-
-step "GameServers"
-k -n "$NAMESPACE" get gameservers \
-  -o custom-columns='NAME:.metadata.name,STATE:.status.state,PORT:.status.ports[0].port,PLAYERS:.status.counters.players.count,CAPACITY:.status.counters.players.capacity,NODE:.status.nodeName'
+for cluster in "${REGIONS[@]}"; do
+  step "Fleet, autoscaler and GameServers in $cluster"
+  kc "$cluster" -n "$NAMESPACE" get fleets,fleetautoscalers
+  kc "$cluster" -n "$NAMESPACE" get gameservers \
+    -o custom-columns='NAME:.metadata.name,STATE:.status.state,PORT:.status.ports[0].port,PLAYERS:.status.counters.players.count,CAPACITY:.status.counters.players.capacity'
+done
 
 step "Orchestrator (localhost:3013/servers)"
 curl -fsS http://localhost:3013/servers | node -e '

@@ -1,0 +1,40 @@
+# The cluster "mmoexile-central" (Stage 7): `pnpm cluster:up` creates it,
+# `pnpm cluster:down` deletes it. One of three: central (the realm's
+# central services and monitoring), eu and us (a region each: Agones and
+# its instance servers).
+#
+# One node, a Docker container that is control plane and worker at once.
+# extraPortMappings publish its ports on the host (localhost), the way a
+# cloud node has a public IP; ports differ from compose's, so both can run.
+#
+# Runs account-api, social, orchestrator, directory, client, the migrate
+# Job and monitoring (Prometheus, Grafana).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: mmoexile-central
+networking:
+  # Separate address ranges per cluster: an address in logs or metrics
+  # tells which cluster it belongs to (the mesh doesn't need it, it goes
+  # through gateways)
+  podSubnet: 10.10.0.0/16
+  serviceSubnet: 10.110.0.0/16
+kubeadmConfigPatches:
+  # The kubelet can't read disk stats when Docker stores its data on ZFS
+  # (or btrfs) and then refuses to start. We don't use ephemeral-storage
+  # requests or limits, so the feature that needs those stats is turned off.
+  - |
+    kind: KubeletConfiguration
+    localStorageCapacityIsolation: false
+nodes:
+  - role: control-plane
+    # Kubernetes 1.36: the newest version Agones 1.61 supports
+    image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+    labels:
+      mmoexile.dev/cluster: central
+    extraPortMappings:
+      # NodePort Services: game client, Grafana, Prometheus, orchestrator
+      # (the last three on localhost only)
+      - { containerPort: 30090, hostPort: 8090 }
+      - { containerPort: 30040, hostPort: 3040, listenAddress: 127.0.0.1 }
+      - { containerPort: 30091, hostPort: 9091, listenAddress: 127.0.0.1 }
+      - { containerPort: 30013, hostPort: 3013, listenAddress: 127.0.0.1 }
