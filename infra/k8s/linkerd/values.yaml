@@ -20,3 +20,10 @@ proxyInit:
   # certificates (Stage 6), and the mesh has nothing to add there.
   # 4567/4568 are Linkerd's defaults (Galera).
   ignoreOutboundPorts: "4567,4568,5432,6432,6380"
+
+# A pod created while the proxy injector isn't running (e.g. right after a
+# node restart) is refused instead of started without a proxy: outside
+# the mesh it could reach nothing in the other clusters and nobody could
+# authorize it. Kubernetes (Agones, Deployments) retries until the
+# injector is up. Linkerd's HA mode does the same.
+webhookFailurePolicy: Fail

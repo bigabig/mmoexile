@@ -52,6 +52,14 @@ export class FleetAgent {
     return this.state;
   }
 
+  /**
+   * False since a heartbeat failed, until one succeeds: the orchestrator
+   * (the central cluster) can't be reached, so nothing new can be placed.
+   */
+  get reachable(): boolean {
+    return this.orchestratorReachable;
+  }
+
   get intervalMs(): number {
     return this.deps.intervalMs ?? 2000;
   }

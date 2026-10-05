@@ -72,6 +72,12 @@ export interface PlayerLifecycleDeps {
   ticketKey: TicketKey;
   /** Where zone changes are placed (the orchestrator). */
   allocator: ZoneAllocator;
+  /**
+   * False while the orchestrator can't be reached (e.g. this region is cut
+   * off from the central cluster): zone changes are refused right away and
+   * players keep playing where they are (D35). Default: reachable.
+   */
+  centralReachable?: () => boolean;
   /** Party lookup for tickets (the party travels with the player). */
   getPartyId: (characterId: string) => string | undefined;
   /**
@@ -104,6 +110,8 @@ export interface PlayerLifecycleDeps {
 export class PlayerLifecycle {
   private players = new Map<string, AdmittedPlayer>();
   private handingOff = new Set<string>();
+  /** When a player was last told that zone changes are paused (one notice per few seconds). */
+  private pausedNoticeAt = new Map<string, number>();
   private readonly takeoverWaitMs: number;
   private readonly handoffSaveWaitMs: number;
   private readonly ticketRefreshMs: number;
@@ -139,6 +147,7 @@ export class PlayerLifecycle {
   private depart(characterId: string): void {
     const player = this.players.get(characterId);
     this.players.delete(characterId);
+    this.pausedNoticeAt.delete(characterId);
     if (player) this.deps.onDeparted?.(characterId, player.name);
   }
 
@@ -281,12 +290,27 @@ export class PlayerLifecycle {
     this.handingOff.add(characterId);
     const notify = (text: string) =>
       this.deps.host.messageBus.publishChat({ sender: "System", text, kind: "system", targetPlayerIds: [characterId] });
+    // While zone changes are paused, a player who keeps trying is told once every few seconds
+    const notifyPaused = (text: string) => {
+      const now = Date.now();
+      if (now - (this.pausedNoticeAt.get(characterId) ?? 0) < 3000) return;
+      this.pausedNoticeAt.set(characterId, now);
+      notify(text);
+    };
     try {
       // 0. The final save needs the database: while it is known to be
       // unavailable, the player stays where they are
       if (!this.deps.persistence.available) {
         if (options.notifyOnFailure !== false) {
-          notify("The realm can't save right now, so zone changes are paused. Try again in a moment.");
+          notifyPaused("The realm can't save right now, so zone changes are paused. Try again in a moment.");
+        }
+        return false;
+      }
+      // Placement needs the orchestrator: while it is known to be
+      // unreachable, don't make the player wait for a failing allocation
+      if (this.deps.centralReachable?.() === false) {
+        if (options.notifyOnFailure !== false) {
+          notifyPaused("The realm's central services can't be reached right now, so zone changes are paused. You can keep playing here.");
         }
         return false;
       }

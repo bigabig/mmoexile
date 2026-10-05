@@ -44,6 +44,8 @@ export interface InstanceServerDeps {
   presence?: Presence;
   /** Defaults to the orchestrator at config.ORCHESTRATOR_URL. */
   allocator?: ZoneAllocator;
+  /** Defaults to the fleet link's: did the last heartbeat reach the orchestrator? */
+  centralReachable?: () => boolean;
   /** LIFECYCLE=agones: defaults to the SDK sidecar on localhost. */
   agonesSdk?: AgonesSdk;
   /**
@@ -88,6 +90,7 @@ export async function createInstanceServer({
     : NO_ALLOCATOR,
   agonesSdk,
   onDrainRequested,
+  centralReachable,
 }: InstanceServerDeps): Promise<InstanceServer> {
   const ticketKey = await ticketVerificationKey(config.TICKET_PUBLIC_KEY);
 
@@ -176,6 +179,7 @@ export async function createInstanceServer({
     persistence,
     ticketKey,
     allocator,
+    centralReachable: centralReachable ?? (() => fleet?.reachable ?? true),
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
     getLeaderRegion: async (characterId) => {
       const party = partyCache.getParty(characterId);

@@ -32,6 +32,8 @@ let serverB: InstanceServer;
 let dbProxy: OutageProxy;
 let redisProxy: OutageProxy;
 let dbA: PrismaClient;
+/** Whether server a reaches the orchestrator (a region cut off from central) */
+let centralReachableA = true;
 let redis: Redis;
 const closers: (() => Promise<unknown>)[] = [];
 
@@ -56,6 +58,7 @@ async function startServer(serverId: "a" | "b", port: number, db: PrismaClient, 
     broker,
     parties,
     allocator,
+    centralReachable: serverId === "a" ? () => centralReachableA : undefined,
   });
   await server.listen(port);
   return server;
@@ -114,10 +117,11 @@ const hpInDatabase = async (characterId: string) =>
   (await prisma.character.findUnique({ where: { id: characterId } }))?.hp;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Every test ends with the databases back, also when it fails
+// Every test ends with the databases and central back, also when it fails
 afterEach(() => {
   dbProxy.resume();
   redisProxy.resume();
+  centralReachableA = true;
 });
 
 describe("Postgres outage", { timeout: 60_000 }, () => {
@@ -183,6 +187,23 @@ describe("Redis outage", { timeout: 60_000 }, () => {
     expect(serverA.lifecycle.get(player.characterId)).toBeDefined();
     expect(await leaseHolder(player.characterId)).toBe("a");
     expect(player.client.packets.some((p) => p.type === "s2c_kicked")).toBe(false);
+    player.client.close();
+  });
+});
+
+describe("Central unreachable", { timeout: 60_000 }, () => {
+  it("zone changes are refused right away, the player stays and plays on", async () => {
+    const player = await login();
+    centralReachableA = false; // heartbeats to the orchestrator fail
+    usePortal(player);
+    await until(() => player.client.packets.some((p) => p.type === "s2c_chat" && /central services can't be reached/.test(p.text)));
+    expect(serverA.lifecycle.get(player.characterId)).toBeDefined();
+    expect(player.client.packets.some((p) => p.type === "s2c_reconnect" || p.type === "s2c_kicked")).toBe(false);
+
+    centralReachableA = true;
+    usePortal(player);
+    const reconnect = await player.client.next("s2c_reconnect", 10_000);
+    expect(reconnect.zoneId).toBe("overworld");
     player.client.close();
   });
 });

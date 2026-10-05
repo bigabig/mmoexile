@@ -96,4 +96,23 @@ describe("FleetAgent", () => {
     agent.halt();
     host.stop();
   });
+
+  it("knows whether the orchestrator is reachable", async () => {
+    const host = new InstanceHost({ sweepIntervalMs: 0 });
+    const answer = { desiredState: "ready", down: false };
+    const orchestrator = fakeOrchestrator(answer);
+    const agent = new FleetAgent({ identity, orchestratorUrl: "http://o", host, fetch: orchestrator.fetch, intervalMs: 20 });
+    await agent.start();
+    expect(agent.reachable).toBe(true);
+
+    answer.down = true; // e.g. the region is cut off from the central cluster
+    await new Promise((r) => setTimeout(r, 60));
+    expect(agent.reachable).toBe(false);
+
+    answer.down = false;
+    await new Promise((r) => setTimeout(r, 60));
+    expect(agent.reachable).toBe(true);
+    agent.halt();
+    host.stop();
+  });
 });

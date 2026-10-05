@@ -40,7 +40,6 @@ export class Swarm {
   private readonly startedAt = Date.now();
   private readonly runId = Math.floor(Math.random() * 1e4);
   private readonly failures: string[] = [];
-  private hops = 0;
   private deaths = 0;
   private readonly lagSamples: number[] = [];
   private lagTimer: NodeJS.Timeout | undefined;
@@ -76,8 +75,10 @@ export class Swarm {
         kicks: t.kicks + b.stats.kicks,
         errors: t.errors + b.stats.errors,
         disconnects: t.disconnects + b.stats.disconnects,
+        notices: t.notices + b.stats.notices,
+        hops: t.hops + b.stats.hops,
       }),
-      { welcomes: 0, reconnects: 0, kicks: 0, errors: 0, disconnects: 0 },
+      { welcomes: 0, reconnects: 0, kicks: 0, errors: 0, disconnects: 0, notices: 0, hops: 0 },
     );
   }
 
@@ -95,7 +96,6 @@ export class Swarm {
     }
     return {
       seconds: Math.round((Date.now() - this.startedAt) / 1000),
-      hops: this.hops,
       deaths: this.deaths,
       ...this.totals(),
       welcomesPerServer,
@@ -128,7 +128,7 @@ export class Swarm {
       const target = route[(here + 1) % route.length];
       try {
         await bot.travelTo(target);
-        this.hops++;
+        bot.stats.hops++;
       } catch (err) {
         if (bot.hp <= 0) this.deaths++;
         else this.failures.push((err as Error).message);
