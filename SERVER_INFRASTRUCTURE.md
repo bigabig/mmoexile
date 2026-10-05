@@ -338,7 +338,8 @@ This is the point where it becomes a real distributed system.
 - The orchestrator stays the brain (placement, tickets); Agones manages the server processes and never removes a busy one.
 
 ### Stage 6: Databases Outside the Cluster
-- Postgres and Redis outside the cluster, like managed databases; connection pooling, credentials, backups.
+- Postgres, PgBouncer and Redis as "managed databases" next to the cluster, with their own lifecycle (`cluster-db:up/down`); the data outlives the cluster.
+- Generated credentials (`cluster:init`), least-privilege users, TLS with certificate verification, connection pooling, a small network distance, and short database outages without kicks.
 
 ### Stage 7: One Cluster per Region
 - A central cluster plus one cluster per region, each with its own Agones; service-to-service authentication across clusters.
