@@ -21,7 +21,9 @@
     "bench": "pnpm --filter @mmoexile/simulation bench",
     "dev:orchestrator": "pnpm --filter @mmoexile/orchestrator dev",
     "dev:directory": "pnpm --filter @mmoexile/directory dev",
-    "chaos": "pnpm --filter @mmoexile/bots chaos"
+    "chaos": "pnpm --filter @mmoexile/bots chaos",
+    "cluster:up": "bash infra/k8s/scripts/cluster-up.sh",
+    "cluster:down": "bash infra/k8s/scripts/cluster-down.sh"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.4.0",

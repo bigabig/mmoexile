@@ -676,14 +676,14 @@ Host ports (all on `localhost`, chosen not to clash with compose):
 | What | Port |
 | :--- | :--- |
 | Game (client, proxies `/api` and `/directory`) | 8090 |
-| Game servers eu / us (Agones port ranges) | 7300–7329 / 7400–7429 |
+| Game servers eu / us (Agones port ranges) | 7300–7319 / 7400–7419 |
 | Gateway pings eu / us | 7350 / 7450 |
 | Grafana / Prometheus | 3040 / 9091 |
 | Orchestrator (fleet view, drain) | 3013 |
 
 ### S5.1 Cluster Bootstrap
 - `infra/k8s/kind.yaml`: control-plane plus three workers with the labels above, the node image pinned to Kubernetes 1.36, and `extraPortMappings` that forward each host port to the node that serves it.
-- `pnpm cluster:up` (`infra/k8s/scripts/cluster-up.sh`), idempotent: check the tools and their versions → create the cluster if missing → install Agones with Helm (chart pinned to 1.61.x; port ranges `eu` 7300–7329 and `us` 7400–7429) → apply netem on the `us` node → build the images and `kind load` them → apply the manifests (S5.2–S5.5) → wait until everything is ready → print the URLs.
+- `pnpm cluster:up` (`infra/k8s/scripts/cluster-up.sh`), idempotent: check the tools and their versions → create the cluster if missing → install Agones with Helm (chart pinned to 1.61.x; port ranges `eu` 7300–7319 and `us` 7400–7419) → apply netem on the `us` node → build the images and `kind load` them → apply the manifests (S5.2–S5.5) → wait until everything is ready → print the URLs.
 - `pnpm cluster:down` deletes the cluster; nothing else is left behind (images loaded into kind live inside it).
 - Verify early: `tc` is available in the kind node image, and netem on the node delays pod traffic to other nodes and to the host.
 
@@ -783,7 +783,7 @@ Host ports (all on `localhost`, chosen not to clash with compose):
 | directory | 3004 | `DIRECTORY_` |
 | gateway-eu / gateway-us (compose) | 7100 / 7200 | |
 | kind cluster: game / Grafana / Prometheus / orchestrator | 8090 / 3040 / 9091 / 3013 | |
-| kind cluster: game servers eu / us, pings eu / us | 7300–7329 / 7400–7429, 7350 / 7450 | |
+| kind cluster: game servers eu / us, pings eu / us | 7300–7319 / 7400–7419, 7350 / 7450 | |
 | instance-server | 7001+ | `INSTANCE_SERVER_` |
 | postgres / redis | 5432 / 6379 | `DATABASE_URL` / `REDIS_URL` |
 

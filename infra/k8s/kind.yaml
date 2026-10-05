@@ -1,0 +1,98 @@
+# The local Kubernetes cluster (Stage 5): `pnpm cluster:up` creates it,
+# `pnpm cluster:down` deletes it.
+#
+# Each node is a Docker container. One worker per role:
+#   central  account-api, social, orchestrator, directory, client,
+#            Postgres, Redis, monitoring, Agones' controller
+#   eu       Fleet instance-server-eu, gateway-eu
+#   us       Fleet instance-server-us, gateway-us; cluster-up.sh delays
+#            everything this node sends with tc netem (US_LATENCY_MS)
+#
+# extraPortMappings publish a node's ports on the host (localhost), the way
+# a cloud node has a public IP: the client and dashboards on the central
+# node, each region's game server ports (its Agones port range) and ping
+# port on that region's node. Ports differ from compose's, so both can run.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: mmoexile
+kubeadmConfigPatches:
+  # The kubelet can't read disk stats when Docker stores its data on ZFS
+  # (or btrfs) and then refuses to start. We don't use ephemeral-storage
+  # requests or limits, so the feature that needs those stats is turned off.
+  - |
+    kind: KubeletConfiguration
+    localStorageCapacityIsolation: false
+nodes:
+  - role: control-plane
+    # Kubernetes 1.36: the newest version Agones 1.61 supports
+    image: &node kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+
+  - role: worker
+    image: *node
+    labels:
+      mmoexile.dev/role: central
+    extraPortMappings:
+      # NodePort Services (infra/k8s/base): game client, Grafana,
+      # Prometheus, orchestrator (the last three on localhost only)
+      - { containerPort: 30090, hostPort: 8090 }
+      - { containerPort: 30040, hostPort: 3040, listenAddress: 127.0.0.1 }
+      - { containerPort: 30091, hostPort: 9091, listenAddress: 127.0.0.1 }
+      - { containerPort: 30013, hostPort: 3013, listenAddress: 127.0.0.1 }
+
+  - role: worker
+    image: *node
+    labels:
+      mmoexile.dev/region: eu
+    extraPortMappings:
+      # gateway-eu (hostPort): the region's ping endpoint
+      - { containerPort: 7350, hostPort: 7350 }
+      # Agones port range "eu" (infra/k8s/agones/values.yaml)
+      - { containerPort: 7300, hostPort: 7300 }
+      - { containerPort: 7301, hostPort: 7301 }
+      - { containerPort: 7302, hostPort: 7302 }
+      - { containerPort: 7303, hostPort: 7303 }
+      - { containerPort: 7304, hostPort: 7304 }
+      - { containerPort: 7305, hostPort: 7305 }
+      - { containerPort: 7306, hostPort: 7306 }
+      - { containerPort: 7307, hostPort: 7307 }
+      - { containerPort: 7308, hostPort: 7308 }
+      - { containerPort: 7309, hostPort: 7309 }
+      - { containerPort: 7310, hostPort: 7310 }
+      - { containerPort: 7311, hostPort: 7311 }
+      - { containerPort: 7312, hostPort: 7312 }
+      - { containerPort: 7313, hostPort: 7313 }
+      - { containerPort: 7314, hostPort: 7314 }
+      - { containerPort: 7315, hostPort: 7315 }
+      - { containerPort: 7316, hostPort: 7316 }
+      - { containerPort: 7317, hostPort: 7317 }
+      - { containerPort: 7318, hostPort: 7318 }
+      - { containerPort: 7319, hostPort: 7319 }
+
+  - role: worker
+    image: *node
+    labels:
+      mmoexile.dev/region: us
+    extraPortMappings:
+      # gateway-us (hostPort): the region's ping endpoint
+      - { containerPort: 7450, hostPort: 7450 }
+      # Agones port range "us" (infra/k8s/agones/values.yaml)
+      - { containerPort: 7400, hostPort: 7400 }
+      - { containerPort: 7401, hostPort: 7401 }
+      - { containerPort: 7402, hostPort: 7402 }
+      - { containerPort: 7403, hostPort: 7403 }
+      - { containerPort: 7404, hostPort: 7404 }
+      - { containerPort: 7405, hostPort: 7405 }
+      - { containerPort: 7406, hostPort: 7406 }
+      - { containerPort: 7407, hostPort: 7407 }
+      - { containerPort: 7408, hostPort: 7408 }
+      - { containerPort: 7409, hostPort: 7409 }
+      - { containerPort: 7410, hostPort: 7410 }
+      - { containerPort: 7411, hostPort: 7411 }
+      - { containerPort: 7412, hostPort: 7412 }
+      - { containerPort: 7413, hostPort: 7413 }
+      - { containerPort: 7414, hostPort: 7414 }
+      - { containerPort: 7415, hostPort: 7415 }
+      - { containerPort: 7416, hostPort: 7416 }
+      - { containerPort: 7417, hostPort: 7417 }
+      - { containerPort: 7418, hostPort: 7418 }
+      - { containerPort: 7419, hostPort: 7419 }

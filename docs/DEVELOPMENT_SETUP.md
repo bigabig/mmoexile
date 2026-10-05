@@ -58,9 +58,26 @@ kubectl version --client && kind version && helm version
 For macOS or ARM machines, replace `linux/amd64` / `linux-amd64` with your
 platform (e.g. `darwin/arm64`), or use a package manager (`brew install kind kubectl helm`).
 
+### One system setting: inotify instances (needs sudo once)
+
+Every kind node is a container running systemd, containerd and the kubelet
+as root, and they all draw on root's budget of inotify instances. At the
+Linux default of 128, kube-proxy fails with "too many open files" and pods
+can't reach anything. kind's documentation recommends 512 (see its
+[known issues](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files));
+`pnpm cluster:up` checks it.
+
+```bash
+echo 'fs.inotify.max_user_instances = 512' | sudo tee /etc/sysctl.d/99-kind.conf && sudo sysctl --system
+```
+
+The kubelet also can't read disk statistics when Docker stores its data on
+ZFS or btrfs; `infra/k8s/kind.yaml` works around that itself, nothing to do.
+
 ### Uninstalling
 
 ```bash
 rm ~/.local/bin/{kubectl,kind,helm}
 rm -rf ~/.kube ~/.cache/helm ~/.config/helm   # created once the tools were used
+sudo rm /etc/sysctl.d/99-kind.conf            # the inotify setting (back to the default after a reboot)
 ```

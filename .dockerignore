@@ -7,3 +7,11 @@
 **/.env
 **/.env.*
 !.env.example
+
+# Not needed inside images; keeping them out means that editing them
+# doesn't invalidate the image builds (compose and the kind cluster)
+infra
+!infra/docker/client.nginx.conf
+docs
+**/*.md
+**/__tests__
