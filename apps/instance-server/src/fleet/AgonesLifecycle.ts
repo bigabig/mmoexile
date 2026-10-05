@@ -116,9 +116,12 @@ export class AgonesLifecycle {
       this.log("info", `Agones state ${target}`, { players, held });
       this.state = target;
     }
-    if (players !== this.count) {
-      await this.deps.sdk.setCounter("players", { count: players });
-      this.count = players;
+    // Capacity is enforced on admission, but handoffs and rejoins can
+    // briefly overshoot it; Agones refuses a count above the capacity
+    const count = Math.min(players, this.deps.capacity);
+    if (count !== this.count) {
+      await this.deps.sdk.setCounter("players", { count });
+      this.count = count;
     }
   }
 }

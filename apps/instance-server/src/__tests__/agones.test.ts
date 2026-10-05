@@ -117,6 +117,22 @@ describe("AgonesLifecycle", () => {
     agones.freeze();
   });
 
+  it("caps the players Counter at the capacity (Agones refuses more)", async () => {
+    const { calls, sdk } = recordingSdk();
+    let players = 60;
+    const agones = new AgonesLifecycle({ sdk, players: () => players, capacity: 60, healthIntervalMs: 60_000 });
+    await agones.start();
+    players = 62; // a handoff overshoots the capacity
+    await agones.sync();
+    players = 59;
+    await agones.sync();
+    expect(calls.filter((c) => c.startsWith("counter players {\"count\""))).toEqual([
+      "counter players {\"count\":60}",
+      "counter players {\"count\":59}",
+    ]);
+    agones.freeze();
+  });
+
   it("stays Allocated while held, by the orchestrator or for a created instance", async () => {
     const { calls, sdk } = recordingSdk();
     let now = 0;
