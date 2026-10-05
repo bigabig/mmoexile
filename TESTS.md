@@ -377,7 +377,7 @@ The same runs on GitHub on demand (`.github/workflows/cluster-smoke.yml`, see CI
 
 Every push to GitHub runs `.github/workflows/ci.yml`: install, dependency rules (`pnpm lint:deps`), build, `pnpm test` (unit, integration and multi-service tests) and `pnpm bench`. Smoke, load, soak and chaos tests need the Docker realm and a lot of time, so they are run by hand before finishing a stage (`pnpm chaos` at least once per stage that touches the fleet).
 
-The cluster smoke test runs on demand only (`.github/workflows/cluster-smoke.yml`, ~30 min): it installs kind, kubectl, Helm and the Linkerd CLI, then runs `pnpm cluster:up`, `pnpm cluster:smoke`, `pnpm cluster:smoke --mode persistence`, `pnpm cluster:down` and `pnpm cluster-db:down -- --wipe`. Start it from the Actions tab ("Run workflow", once the workflow is on the default branch) or for any commit by pushing a tag:
+The cluster smoke test runs on demand only (`.github/workflows/cluster-smoke.yml`, ~22 min): it installs kind, kubectl, Helm and the Linkerd CLI, then runs `pnpm cluster:up`, `pnpm cluster:smoke`, `pnpm cluster:smoke --mode persistence`, `pnpm cluster:down` and `pnpm cluster-db:down -- --wipe`. Start it from the Actions tab ("Run workflow", once the workflow is on the default branch) or for any commit by pushing a tag:
 
 ```bash
 git tag cluster-smoke-$(git rev-parse --short HEAD) && git push origin cluster-smoke-$(git rev-parse --short HEAD)
