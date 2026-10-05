@@ -1,6 +1,6 @@
 # The realm without anything environment-specific: no node placement, no
-# host ports, no secrets, no region list. An overlay (overlays/kind) adds
-# those. Files are shared with compose (../../docker, ../../observability),
+# host ports, no secrets, no region list, no databases. An overlay
+# (overlays/kind) adds those. Files are shared with compose (../../docker, ../../observability),
 # so builds need `--load-restrictor LoadRestrictionsNone` (scripts/apply.sh).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -8,7 +8,7 @@ namespace: mmoexile
 labels:
   - pairs: { app.kubernetes.io/part-of: mmoexile }
 resources:
-  - data.yaml
+  - migrate.yaml
   - account-api.yaml
   - social.yaml
   - orchestrator.yaml
@@ -24,10 +24,10 @@ generatorOptions:
   labels: { app.kubernetes.io/component: config }
 configMapGenerator:
   # Shared by the Node services (like x-realm-env in compose). Secrets
-  # (keys, the database URL with its password) come from the overlay.
+  # (keys, the database and Redis URLs with their passwords) and the
+  # databases' CA (ConfigMap database-ca) come from the overlay.
   - name: realm
     literals:
-      - REDIS_URL=redis://redis:6379
       - SOCIAL_URL=http://social:3002
       - ORCHESTRATOR_URL=http://orchestrator:3003
   - name: gateway-nginx

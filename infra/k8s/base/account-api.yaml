@@ -44,6 +44,11 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 192Mi }
             limits: { memory: 768Mi }
+          volumeMounts:
+            - { name: database-ca, mountPath: /etc/mmoexile/database-ca, readOnly: true }
+      volumes:
+        # The CA the databases' certificates are signed by (from the overlay)
+        - { name: database-ca, configMap: { name: database-ca } }
 ---
 apiVersion: v1
 kind: Service

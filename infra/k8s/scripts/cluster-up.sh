@@ -20,6 +20,7 @@ inotify=$(cat /proc/sys/fs/inotify/max_user_instances)
 (( inotify >= 512 )) || fail "fs.inotify.max_user_instances is $inotify, kind needs 512 (see docs/DEVELOPMENT_SETUP.md)"
 
 "$K8S/scripts/cluster-init.sh"
+"$K8S/scripts/cluster-db-up.sh"
 
 step "Cluster $CLUSTER"
 if cluster_exists; then

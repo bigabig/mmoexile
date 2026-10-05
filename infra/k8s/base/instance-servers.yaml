@@ -48,6 +48,8 @@ spec:
                 - { name: PORT, value: "7777" }
                 - { name: INTERNAL_PORT, value: "9001" }
                 - { name: DRAIN_TIMEOUT_SEC, value: "60" }
+                - name: REDIS_URL
+                  valueFrom: { secretKeyRef: { name: realm-secrets, key: REDIS_URL } }
                 # Downward API: the pod's (= GameServer's) name and IP
                 - name: SERVER_ID
                   valueFrom: { fieldRef: { fieldPath: metadata.name } }
@@ -63,6 +65,11 @@ spec:
               resources:
                 requests: { cpu: 250m, memory: 256Mi }
                 limits: { memory: 1Gi }
+              volumeMounts:
+                - { name: database-ca, mountPath: /etc/mmoexile/database-ca, readOnly: true }
+          volumes:
+            # The CA the databases' certificates are signed by (from the overlay)
+            - { name: database-ca, configMap: { name: database-ca } }
 ---
 apiVersion: agones.dev/v1
 kind: Fleet
@@ -110,6 +117,8 @@ spec:
                 - { name: PORT, value: "7777" }
                 - { name: INTERNAL_PORT, value: "9001" }
                 - { name: DRAIN_TIMEOUT_SEC, value: "60" }
+                - name: REDIS_URL
+                  valueFrom: { secretKeyRef: { name: realm-secrets, key: REDIS_URL } }
                 # Downward API: the pod's (= GameServer's) name and IP
                 - name: SERVER_ID
                   valueFrom: { fieldRef: { fieldPath: metadata.name } }
@@ -125,6 +134,11 @@ spec:
               resources:
                 requests: { cpu: 250m, memory: 256Mi }
                 limits: { memory: 1Gi }
+              volumeMounts:
+                - { name: database-ca, mountPath: /etc/mmoexile/database-ca, readOnly: true }
+          volumes:
+            # The CA the databases' certificates are signed by (from the overlay)
+            - { name: database-ca, configMap: { name: database-ca } }
 ---
 apiVersion: autoscaling.agones.dev/v1
 kind: FleetAutoscaler

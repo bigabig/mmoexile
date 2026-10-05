@@ -1,5 +1,5 @@
 import { prisma, disconnectDatabase } from "@mmoexile/db";
-import { RedisBroker, Redis } from "@mmoexile/messaging";
+import { createRedis, RedisBroker } from "@mmoexile/messaging";
 import { assertNotDevSecrets } from "@mmoexile/auth";
 import { createLogger, handleShutdownSignals } from "@mmoexile/service-kit";
 import { readConfig } from "./config.js";
@@ -9,7 +9,7 @@ const config = readConfig();
 assertNotDevSecrets(config.NODE_ENV, [config.TICKET_PUBLIC_KEY]);
 
 const logger = createLogger(`instance-server-${config.SERVER_ID}`, config.LOG_LEVEL);
-const redis = new Redis(config.REDIS_URL);
+const redis = createRedis({ url: config.REDIS_URL, caFile: config.REDIS_CA_FILE });
 const broker = new RedisBroker({ redis });
 
 let trigger: ((signal?: NodeJS.Signals) => Promise<void>) | undefined;

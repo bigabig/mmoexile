@@ -5,6 +5,7 @@ nameReference:
     fieldSpecs:
       - { kind: Fleet, path: spec/template/spec/template/spec/containers/envFrom/configMapRef/name }
       - { kind: Fleet, path: spec/template/spec/template/spec/containers/env/valueFrom/configMapKeyRef/name }
+      - { kind: Fleet, path: spec/template/spec/template/spec/volumes/configMap/name }
   - kind: Secret
     fieldSpecs:
       - { kind: Fleet, path: spec/template/spec/template/spec/containers/env/valueFrom/secretKeyRef/name }

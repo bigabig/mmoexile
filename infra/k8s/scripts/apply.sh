@@ -5,10 +5,16 @@ source "$(dirname "$0")/lib.sh"
 
 step "Manifests"
 [[ -s "$SECRETS/session-secret" ]] || fail "No secrets in $SECRETS (pnpm cluster:init)"
-# The connection URLs, with the generated passwords
+db_ready || fail "The databases don't answer (pnpm cluster-db:up)"
+# The connection URLs with the generated passwords. Prisma verifies the
+# server's certificate (CA and host name) only with sslaccept=strict;
+# sslcert is the CA to verify against.
+ca=/etc/mmoexile/database-ca/ca.crt
+tls="sslmode=require&sslcert=$ca&sslaccept=strict"
 cat >"$SECRETS/connections.env" <<END
-POSTGRES_PASSWORD=$(secret postgres-migrate-password)
-DATABASE_URL=postgresql://mmoexile:$(secret postgres-migrate-password)@postgres:5432/mmoexile
+DATABASE_URL=postgresql://mmoexile_app:$(secret postgres-app-password)@pgbouncer:6432/mmoexile?$tls
+MIGRATE_DATABASE_URL=postgresql://mmoexile_migrate:$(secret postgres-migrate-password)@postgres:5432/mmoexile?$tls
+REDIS_URL=rediss://mmoexile:$(secret redis-password)@redis:6380
 END
 chmod 600 "$SECRETS/connections.env"
 
@@ -18,12 +24,12 @@ rendered=$(mktemp)
 trap 'rm -f "$rendered"' EXIT
 kubectl kustomize --load-restrictor LoadRestrictionsNone "$K8S/overlays/kind" >"$rendered"
 
-# 1. Configuration, Postgres, Redis and the migration. A Job can't be
-#    changed once created, so the previous run is deleted first.
+# 1. Configuration, the databases' Services and addresses, the migration.
+#    A Job can't be changed once created, so the previous run is deleted
+#    first.
 k -n "$NAMESPACE" delete job migrate --ignore-not-found >/dev/null
 k apply -f "$rendered" -l 'app.kubernetes.io/component in (config,data)'
-k -n "$NAMESPACE" rollout status statefulset/postgres --timeout=180s
-k -n "$NAMESPACE" rollout status deployment/redis --timeout=180s
+apply_db_endpoints
 k -n "$NAMESPACE" wait --for=condition=complete job/migrate --timeout=300s
 
 # 2. Everything else

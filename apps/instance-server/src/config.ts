@@ -10,6 +10,8 @@ export const configSchema = baseConfigSchema.extend({
   /** Ed25519 public key tickets are verified with (base64 PEM body). */
   TICKET_PUBLIC_KEY: z.string().min(1).default(DEV_TICKET_PUBLIC_KEY),
   REDIS_URL: z.string().default("redis://localhost:6379"),
+  /** CA for TLS to Redis (rediss://) with a private CA, e.g. in the cluster */
+  REDIS_CA_FILE: z.string().optional(),
   /** apps/social, for party commands. */
   SOCIAL_URL: z.string().default("http://localhost:3002"),
   LEASE_TTL_MS: z.coerce.number().int().positive().default(30_000),

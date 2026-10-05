@@ -26,6 +26,37 @@ db_address() {
   docker inspect -f "{{(index .NetworkSettings.Networks \"$DB_NETWORK\").IPAddress}}" "$(db_container "$1")"
 }
 
+# Points the cluster's database Services (overlays/kind/databases.yaml) at
+# the containers' current addresses: one EndpointSlice per Service
+apply_db_endpoints() {
+  local ip_postgres ip_redis
+  ip_postgres=$(db_address postgres)
+  ip_redis=$(db_address redis)
+  {
+    endpoint_slice pgbouncer "$ip_postgres" 6432  # in Postgres' network namespace
+    endpoint_slice postgres "$ip_postgres" 5432
+    endpoint_slice redis "$ip_redis" 6380
+  } | k apply -f - >/dev/null
+  echo "pgbouncer → $ip_postgres:6432, postgres → $ip_postgres:5432, redis → $ip_redis:6380"
+}
+endpoint_slice() {
+  cat <<END
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: $1-external
+  namespace: $NAMESPACE
+  labels:
+    kubernetes.io/service-name: $1
+    endpointslice.kubernetes.io/managed-by: cluster-db.mmoexile.dev
+    app.kubernetes.io/part-of: mmoexile
+addressType: IPv4
+ports: [{ name: $( [[ $1 == redis ]] && echo redis || echo postgres ), port: $3, protocol: TCP }]
+endpoints: [{ addresses: ["$2"], conditions: { ready: true } }]
+---
+END
+}
+
 # Removes kind's Docker network once neither a kind cluster nor a database
 # container uses it
 remove_unused_network() {

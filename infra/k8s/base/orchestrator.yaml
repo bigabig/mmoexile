@@ -23,6 +23,8 @@ spec:
             - configMapRef: { name: realm }
           env:
             - { name: PORT, value: "3003" }
+            - name: REDIS_URL
+              valueFrom: { secretKeyRef: { name: realm-secrets, key: REDIS_URL } }
             - name: TICKET_PRIVATE_KEY
               valueFrom: { secretKeyRef: { name: realm-secrets, key: TICKET_PRIVATE_KEY } }
           ports: [{ name: http, containerPort: 3003 }]
@@ -43,6 +45,11 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 192Mi }
             limits: { memory: 768Mi }
+          volumeMounts:
+            - { name: database-ca, mountPath: /etc/mmoexile/database-ca, readOnly: true }
+      volumes:
+        # The CA the databases' certificates are signed by (from the overlay)
+        - { name: database-ca, configMap: { name: database-ca } }
 ---
 apiVersion: v1
 kind: Service
