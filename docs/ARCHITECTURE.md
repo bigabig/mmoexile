@@ -61,7 +61,7 @@ Every instance server runs in one region (`REGION`, e.g. `eu`, `us`); its instan
 
 - **Choosing**: the client loads the regions from the directory, pings each region's gateway five times (median of the last four) and preselects the fastest. `/play { characterId, region }` makes that region the player's **home region** for the session. It is not stored anywhere: it travels in every ticket, and instance servers pass it on with every allocation.
 - **Placement** (`targetRegion()` in `placement.ts`): public zones (hubs) are placed in the home region only, so there are separate hub shards per region. A party's private instance is created in the **leader's** home region (looked up via presence) and joined from any region. A `portal_bound` instance follows the region of its portal. Without capacity in the target region the orchestrator answers `503 { reason: "region_unavailable" }`; there is no silent spill-over, the client asks the player to pick another region.
-- **Distance**: in Docker, `region-us` owns the US services' network namespace and delays everything they send with `tc netem` (`US_LATENCY_MS`, default 40); in the Kubernetes cluster the whole `us` node is delayed the same way. Every sequential trip from a US server to Redis or Postgres costs that much, so admission is kept to two (see "Ownership and players").
+- **Distance**: in Docker, `region-us` owns the US services' network namespace and delays everything they send with `tc netem` (`US_LATENCY_MS`, default 40); in Kubernetes the whole `us` cluster (its node) is delayed the same way. Every sequential trip from a US server to Redis or Postgres costs that much, so admission is kept to two (see "Ownership and players").
 
 ### Server lifecycle and draining
 
@@ -77,7 +77,7 @@ Every instance server runs in one region (`REGION`, e.g. `eu`, `us`); its instan
 | :--- | :--- | :--- |
 | Local processes | `pnpm dev` | pnpm, one of each service, region `local` |
 | Docker Compose | `pnpm realm:up` | Docker: three instance servers in two regions, gateways, Prometheus/Grafana |
-| Kubernetes + Agones | `pnpm cluster:up` | a kind cluster: Deployments for the central services, an Agones Fleet per region with autoscaling, kube-prometheus-stack; Postgres (behind PgBouncer) and Redis next to the cluster like managed databases (`pnpm cluster-db:up`) |
+| Kubernetes + Agones + Linkerd | `pnpm cluster:up` | three kind clusters: `central` (Deployments for the central services, Prometheus and Grafana) and one per region (an Agones Fleet with autoscaling, a Prometheus agent), connected by the Linkerd service mesh; Postgres (behind PgBouncer) and Redis next to the clusters like managed databases (`pnpm cluster-db:up`) |
 
 Compose and Kubernetes use the same images and environment variables; only the plumbing differs (see `infra/compose` and `infra/k8s`). In the cluster the connections are TLS-verified against a local CA (`DATABASE_URL` with `sslaccept=strict`, `REDIS_URL=rediss://…` with `REDIS_CA_FILE`), the services use a database user that can't change the schema (migrations run as another), and each process has an explicit pool size (`DATABASE_POOL_SIZE`).
 
@@ -98,6 +98,22 @@ There is one Postgres and one Redis per realm (no high availability). A short ou
 4. Once empty the server stops (saving and releasing everything that is left) and exits with 0.
 
 SIGINT (Ctrl-C in development), or a second signal during a drain, skips draining and shuts down immediately.
+
+### Clusters and the service mesh
+
+In Kubernetes (Stage 7, [`infra/k8s/README.md`](../infra/k8s/README.md)) each region is its own cluster, and services call each other across clusters through **Linkerd**: every pod has a proxy, calls between proxies are mutual TLS with the pod's ServiceAccount as its identity, and policies allow only the intended calls (deny by default). A cluster reaches another's exported Services as mirrored copies named `<service>-<cluster>` (e.g. `orchestrator-central` in eu), through the clusters' gateways. Players' connections stay outside the mesh. Two things changed for the services, both configuration only:
+- instance servers call `ORCHESTRATOR_URL=http://orchestrator-central:3003` and `SOCIAL_URL=http://social-central:3002`;
+- the orchestrator can't reach a pod in another cluster, so each region's gateway has an **entry point** that forwards `/servers/<id>/…` to that server's internal API, and instance servers register `internalUrl = http://region-gateway-<region>:9000/servers/<id>`.
+
+`pnpm dev`, compose and the tests have no mesh: plain HTTP on one network, as before.
+
+### When a region fails
+
+A region depends on central for placement (the orchestrator) and parties (social); it doesn't need central to keep playing. What happens (`pnpm cluster:smoke` checks both cases):
+- **A region's cluster is lost**: its servers miss their heartbeats and are marked `dead` within ~6 s; logins choosing that region get `503 region_unavailable`; other regions are unaffected. Its players lost their connection. When the cluster is back, new servers register and the region works again on its own.
+- **A region is cut off from central** (both clusters run, the link between them doesn't): players there keep playing and saving (the databases are reachable from both). The orchestrator marks the region's servers dead, so logins into it get `503 region_unavailable`. On the servers, a failed heartbeat means "central unreachable" (`FleetAgent.reachable`): zone changes are refused right away with a chat message, and nobody is kicked (D35: there is no second placement path, a region doesn't decide alone). When the link is back, the first heartbeat revives each server in the registry with its instances; nothing has to be reconciled.
+- **Central is lost**: every region is cut off at once, and nobody can log in (account-api is central); players already in a region keep playing.
+- Party commands fail with "That didn't work. Please try again in a moment." while social is unreachable.
 
 ---
 

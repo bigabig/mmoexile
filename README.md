@@ -43,7 +43,7 @@ mmoexile/
 ├── tools/
 │   ├── bots/             # Headless bots for end-to-end, soak and load tests
 │   └── realm-tests/      # Multi-service tests: orchestrator + instance servers + account-api in one process
-├── infra/                # Dockerfiles, docker-compose, Kubernetes (kind, Agones), Prometheus and Grafana config
+├── infra/                # Dockerfiles, docker-compose, Kubernetes (kind, Agones, Linkerd), Prometheus and Grafana config
 └── docs/                 # Architecture documentation
 ```
 
@@ -58,7 +58,7 @@ The target server infrastructure (realms, gateways, instances, orchestrator) is 
 - **Node.js**: v20+ (tested on v24)
 - **pnpm**: tested on v12 (or `corepack enable pnpm`)
 - **Docker** with Compose: runs Postgres and Redis locally (and the full realm), and the tests start their own throwaway Postgres and Redis via Testcontainers
-- *Optional, only for the Kubernetes target:* **kind**, **kubectl** and **Helm**
+- *Optional, only for the Kubernetes target:* **kind**, **kubectl**, **Helm** and the **Linkerd CLI** (and ~10 GB of memory)
 
 What each tool is for, tested versions and how to install them without `sudo`: [`docs/DEVELOPMENT_SETUP.md`](docs/DEVELOPMENT_SETUP.md).
 
@@ -158,27 +158,28 @@ docker compose -f infra/compose/docker-compose.yml --profile realm restart orche
 
 ### 7. Run the Realm on Kubernetes with Agones (optional)
 
-The same realm on a local kind cluster: one node for the central services and one per region, with [Agones](https://agones.dev/) running the instance servers as Fleets that scale on free player slots. Postgres (behind PgBouncer) and Redis run next to the cluster like a cloud's managed databases: their own lifecycle, TLS with a local CA, generated credentials and least-privilege users, 2 ms away. Needs kind, kubectl, Helm and openssl ([`docs/DEVELOPMENT_SETUP.md`](docs/DEVELOPMENT_SETUP.md)); everything else above works without them. Details and a short primer: [`infra/k8s/README.md`](infra/k8s/README.md).
+The same realm on three local kind clusters, like a multi-region deployment: one for the central services and one per region, with [Agones](https://agones.dev/) running each region's instance servers as a Fleet that scales on free player slots. The services call each other across clusters through the [Linkerd](https://linkerd.io/) service mesh: mutual TLS, an identity per service, and policies that allow only the intended calls. Postgres (behind PgBouncer) and Redis run next to the clusters like a cloud's managed databases: their own lifecycle, TLS with a local CA, generated credentials and least-privilege users, 2 ms away. Needs kind, kubectl, Helm, the Linkerd CLI and openssl ([`docs/DEVELOPMENT_SETUP.md`](docs/DEVELOPMENT_SETUP.md)); everything else above works without them. Details and short primers on Kubernetes, Agones and service meshes: [`infra/k8s/README.md`](infra/k8s/README.md).
 
 ```bash
-# Generate the secrets (once), start the databases, create the cluster, install
-# Agones and monitoring, build and deploy everything
+# Generate the secrets (once), start the databases, create the clusters, install
+# Linkerd (and link the clusters), Agones and monitoring, build and deploy everything
 # (game: http://localhost:8090, Grafana: http://localhost:3040)
 pnpm cluster:up
 
-# What runs where: nodes, pods, fleets, GameServers and their players
+# What runs where: clusters, the links between them, pods, fleets, GameServers and their players
 pnpm cluster:status
 
 # After changing code: rebuild one app and roll it out (instance servers: without kicking anyone)
 pnpm cluster:reload instance-server
 
-# Bots, scale up and down, a rolling update, a crash, TLS and database outages, with checks
+# Bots, scale up and down, a rolling update, a crash, TLS, database outages,
+# a region's cluster lost and cut off, the mesh's policies, with checks
 pnpm cluster:smoke
 
 # Look into the database (as the user that owns the schema)
 pnpm cluster-db:psql
 
-# Delete the cluster; the databases keep running with all data
+# Delete the clusters; the databases keep running with all data
 pnpm cluster:down
 
 # Stop the databases (data and secrets stay); --wipe deletes both

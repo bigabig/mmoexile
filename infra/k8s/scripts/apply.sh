@@ -48,6 +48,19 @@ apply_cluster() {
     apply_db_endpoints "$cluster"
   fi
   kc "$cluster" apply -f "$rendered/$cluster.yaml"
+  # Generated ConfigMaps and Secrets carry a hash of their content in their
+  # name, so every change creates a new one; delete the ones the manifests
+  # no longer name (old passwords, an old dashboard that Grafana would
+  # otherwise still load) once no pod uses them any more (servers of the
+  # old version still run until they are drained: a later apply gets them)
+  local current used old
+  current=$(kubectl create --dry-run=client -o name -f "$rendered/$cluster.yaml" | grep -E '^(configmap|secret)/' || true)
+  used=$(kc "$cluster" -n "$NAMESPACE" get pods -o jsonpath='{range .items[*]}{.spec.volumes[*].configMap.name} {.spec.volumes[*].secret.secretName} {.spec.containers[*].envFrom[*].configMapRef.name} {.spec.containers[*].env[*].valueFrom.configMapKeyRef.name} {.spec.containers[*].env[*].valueFrom.secretKeyRef.name} {end}' | tr ' ' '\n')
+  for old in $(kc "$cluster" -n "$NAMESPACE" get configmaps,secrets -l app.kubernetes.io/component=config -o name); do
+    grep -qx "$old" <<<"$current" && continue
+    grep -qx "${old#*/}" <<<"$used" && continue
+    kc "$cluster" -n "$NAMESPACE" delete "$old"
+  done
   for deployment in $(kc "$cluster" -n "$NAMESPACE" get deployments -o name); do
     kc "$cluster" -n "$NAMESPACE" rollout status "$deployment" --timeout=300s
   done

@@ -31,6 +31,8 @@
  *  11. us cut off from central for 30 s (iptables on both nodes): nobody
  *      in us is kicked, zone changes there are refused with a notice,
  *      logins into us get a clear 503; afterwards everything recovers.
+ *  12. The mesh: calls between services are mTLS; callers outside the mesh
+ *      and meshed callers without permission are refused.
  * Steps 3-11 run with "observer" bots playing in eu the whole time, steps
  * 10-11 also with observers in us.
  * Prints one line per check and exits with 1 if any failed.
@@ -304,7 +306,7 @@ async function script(name: string, ...args: string[]): Promise<number> {
 
 if (mode === "persistence") {
   try {
-    console.log("Data outlives the databases' and the cluster's restart");
+    console.log("Data outlives the databases' and the clusters' restart");
     const saved = await newCharacter();
     console.log(`  character ${saved.characterId}; pnpm cluster-db:down, cluster-db:up`);
     const dbMs = (await script("cluster-db-down.sh")) + (await script("cluster-db-up.sh"));
@@ -313,8 +315,8 @@ if (mode === "persistence") {
     console.log("  pnpm cluster:down, cluster:up");
     const clusterMs = (await script("cluster-down.sh")) + (await script("cluster-up.sh"));
     const afterCluster = await stillThere(saved);
-    record("still there after the cluster was deleted and created again", afterCluster === "found",
-      `${afterCluster} (cluster back after ${seconds(clusterMs)})`);
+    record("still there after the clusters were deleted and created again", afterCluster === "found",
+      `${afterCluster} (clusters back after ${seconds(clusterMs)})`);
   } catch (err) {
     record("persistence check completed", false, (err as Error).message);
   }
@@ -588,8 +590,8 @@ try {
     const during = usObservers.totals();
     const us = disruptions(usObservers, usSince);
     record("nobody in us was kicked while cut off", us.ok, us.text);
-    record("zone changes in us were refused with a message", during.notices > usSince.notices,
-      `${during.notices - usSince.notices} notices, ${during.hops - usSince.hops} zone changes done`);
+    record("zone changes in us were refused with a message", during.refusals > usSince.refusals,
+      `${during.refusals - usSince.refusals} refusals (one message per player every 3 s), ${during.hops - usSince.hops} zone changes done`);
 
     await reconnect();
     const backMs = await waitFor("us servers ready again",
@@ -606,6 +608,27 @@ try {
     record("eu plays on undisturbed", eu.ok, eu.text);
   }
   await usObservers.stop();
+
+  // 12. The mesh
+  if (mode === "realm") {
+    console.log("12. The mesh: mTLS between services, only the intended calls");
+    // Every request the orchestrator's proxy let in on its fleet and
+    // allocation routes, by whether it came with mTLS (Linkerd's metrics)
+    const routes = 'srv_name="orchestrator", route_name=~"orchestrator-(fleet|allocate)"';
+    const mtls = (await prometheus(`sum(inbound_http_authz_allow_total{${routes}, tls="true"})`)) ?? 0;
+    const plain = (await prometheus(`sum(inbound_http_authz_allow_total{${routes}, tls!="true"})`)) ?? 0;
+    record("calls between services are mTLS", mtls > 0 && plain === 0,
+      `orchestrator (register, heartbeat, allocate): ${mtls} requests with mTLS, ${plain} without`);
+    const post = (url: string) =>
+      fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then((r) => r.status);
+    const fromHost = await post(`${orchestratorUrl}/allocate`);
+    record("a caller outside the mesh is refused", fromHost === 403, `POST /allocate from the host: ${fromHost}`);
+    const fromSocial = (await kubectl("central", "exec", "deploy/social", "-c", "social", "--", "node", "-e",
+      'fetch("http://orchestrator:3003/allocate", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then((r) => console.log(r.status))')).trim();
+    record("a meshed caller without permission is refused", fromSocial === "403", `POST /allocate from social: ${fromSocial}`);
+    const drain = await post(`${orchestratorUrl}/servers/any/drain`);
+    record("an operator action is not reachable through the mesh", drain === 404, `POST /servers/<id>/drain from the host: ${drain}`);
+  }
 } catch (err) {
   record("smoke test completed", false, (err as Error).message);
 } finally {

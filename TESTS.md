@@ -301,14 +301,15 @@ docker inspect -f '{{.State.ExitCode}}' mmoexile-instance-server-1-1
 
 ## Cluster Smoke Test
 
-**Purpose:** check the realm on Kubernetes with Agones and its databases next to the cluster (Stages 5 and 6, [`infra/k8s/README.md`](infra/k8s/README.md)): what only exists there, i.e. autoscaling, rolling updates, Agones replacing a crashed server, TLS and least privilege, and database outages, with players online the whole time. `pnpm chaos` stays a compose tool; this is its counterpart for the cluster.
+**Purpose:** check the realm on Kubernetes with Agones, its databases next to the clusters and one cluster per region connected by the Linkerd mesh (Stages 5–7, [`infra/k8s/README.md`](infra/k8s/README.md)): what only exists there, i.e. autoscaling, rolling updates, Agones replacing a crashed server, TLS and least privilege, database outages, a region's cluster lost or cut off from central, and the mesh's mTLS and policies, with players online the whole time. `pnpm chaos` stays a compose tool; this is its counterpart for the cluster.
 
 **Run:**
 
 ```bash
-pnpm cluster:up                          # ~7 min the first time
-pnpm cluster:smoke                       # ~11 min
-pnpm cluster:smoke --mode persistence    # ~8 min: restarts the databases and the cluster
+pnpm cluster:up                          # ~9 min the first time
+pnpm cluster:smoke                       # ~8 min
+pnpm cluster:smoke --mode failures       # ~4 min: only steps 10 and 11
+pnpm cluster:smoke --mode persistence    # ~8 min: restarts the databases and the clusters
 ```
 
 `tools/bots/src/clusterSmoke.ts` prints one line per check and exits with 1 if any failed:
@@ -322,12 +323,17 @@ pnpm cluster:smoke --mode persistence    # ~8 min: restarts the databases and th
 7. **TLS and least privilege:** from a container on kind's network (where the pods' connections come from): connections without TLS are refused by Postgres, PgBouncer and Redis; a certificate check against another CA fails; the services' database user can read but not `DROP TABLE`.
 8. **Postgres outage:** `docker pause` for 30 s: a login during it gets a clear 503; afterwards no save is waiting any more; no observer is kicked.
 9. **Redis outage:** `docker pause` for 10 s: no observer is kicked.
+10. **A region's cluster lost:** `docker kill` of the us node: the orchestrator marks the us servers dead within 10 s, a login into us gets `503 region_unavailable`, eu plays on undisturbed; after `docker start` us recovers on its own (servers register, logins work, its players log in again).
+11. **A region cut off from central:** iptables on the us and central nodes drop each other's traffic (API servers, mesh gateways) for 30 s: logins into us get `503 region_unavailable`, players in us are not kicked and get "zone changes are paused" when they try; afterwards zone changes work again and still nobody was kicked; eu is undisturbed.
+12. **The mesh:** every request the orchestrator accepted on its fleet and allocation routes came with mTLS (Linkerd's metrics); `POST /allocate` from the host (outside the mesh) and from social (meshed, not allowed) gets 403; the drain isn't reachable (404).
 
-10 "observer" bots play in eu from step 3 to the end; steps 3–5, 8 and 9 check that none of them is kicked or disconnected. Step 3 also prints the load bots' failed hops: a burst bigger than the autoscaler's buffer (60 free slots) fills the region for the ~13 s until the new server is up.
+10 "observer" bots play in eu from step 3 to the end (10 more in us in steps 10 and 11); steps 3–5 and 8–11 check that none of them is kicked or disconnected. Step 3 also prints the load bots' failed hops: a burst bigger than the autoscaler's buffer (60 free slots) fills the region for the ~13 s until the new server is up.
 
 **Persistence mode** (`--mode persistence`): creates a character, then `pnpm cluster-db:down` + `cluster-db:up` and `pnpm cluster:down` + `cluster:up`; after each, logs in with the account's refresh secret and finds the character again.
 
-Options: `--load 70`, `--observers 10`, `--api http://localhost:8090/api`, `--orchestrator http://localhost:3013`, `--prometheus http://localhost:9091`, `--context kind-mmoexile`, `--mode realm|persistence`.
+**Failures mode** (`--mode failures`): only steps 10 and 11, with the observers.
+
+Options: `--load 70`, `--observers 10`, `--api http://localhost:8090/api`, `--orchestrator http://localhost:3013`, `--prometheus http://localhost:9091`, `--context-prefix kind-mmoexile-` (+ `central`, `eu`, `us`), `--mode realm|failures|persistence`.
 
 The same runs on GitHub on demand (`.github/workflows/cluster-smoke.yml`, see CI below).
 
@@ -356,6 +362,8 @@ The same runs on GitHub on demand (`.github/workflows/cluster-smoke.yml`, see CI
 | (Stage 6) A new statement could hang forever while Postgres didn't answer (Prisma's timeout doesn't cover preparing it) | `isDatabaseUnavailable.test.ts`: `withDatabaseTimeout`; `outage.integration.test.ts` |
 | (Stage 6) account-api answered 500 after 30 s, then 502 for everything (readiness tied to the database) | `accountApi.test.ts`: "answers 503 with a clear message, and stays ready" |
 | (Stage 6) A Redis restart (empty) dropped every player | `ownership.test.ts`: "takes back a lease that vanished" |
+| (Stage 7) After a node restart, a GameServer pod started before Linkerd's injector and ran without a proxy, outside the mesh: it never reached the orchestrator | `webhookFailurePolicy: Fail` (`infra/k8s/linkerd/values.yaml`); `pnpm cluster:smoke` step 10 |
+| (Stage 7) In a region cut off from central, every zone change waited for a failing allocation | `fleetAgent.test.ts`: "knows whether the orchestrator is reachable"; `outage.integration.test.ts`: "Central unreachable" |
 
 ---
 
@@ -369,7 +377,7 @@ The same runs on GitHub on demand (`.github/workflows/cluster-smoke.yml`, see CI
 
 Every push to GitHub runs `.github/workflows/ci.yml`: install, dependency rules (`pnpm lint:deps`), build, `pnpm test` (unit, integration and multi-service tests) and `pnpm bench`. Smoke, load, soak and chaos tests need the Docker realm and a lot of time, so they are run by hand before finishing a stage (`pnpm chaos` at least once per stage that touches the fleet).
 
-The cluster smoke test runs on demand only (`.github/workflows/cluster-smoke.yml`, ~15 min): it installs kind, kubectl and Helm, then runs `pnpm cluster:up`, `pnpm cluster:smoke`, `pnpm cluster:smoke --mode persistence`, `pnpm cluster:down` and `pnpm cluster-db:down -- --wipe`. Start it from the Actions tab ("Run workflow", once the workflow is on the default branch) or for any commit by pushing a tag:
+The cluster smoke test runs on demand only (`.github/workflows/cluster-smoke.yml`, ~30 min): it installs kind, kubectl, Helm and the Linkerd CLI, then runs `pnpm cluster:up`, `pnpm cluster:smoke`, `pnpm cluster:smoke --mode persistence`, `pnpm cluster:down` and `pnpm cluster-db:down -- --wipe`. Start it from the Actions tab ("Run workflow", once the workflow is on the default branch) or for any commit by pushing a tag:
 
 ```bash
 git tag cluster-smoke-$(git rev-parse --short HEAD) && git push origin cluster-smoke-$(git rev-parse --short HEAD)

@@ -1625,7 +1625,7 @@
         "x": 0,
         "y": 95,
         "w": 12,
-        "h": 8
+        "h": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -1675,7 +1675,7 @@
         "x": 12,
         "y": 95,
         "w": 12,
-        "h": 8
+        "h": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -1723,9 +1723,9 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 103,
+        "y": 105,
         "w": 12,
-        "h": 8
+        "h": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -1773,9 +1773,9 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 103,
+        "y": 105,
         "w": 12,
-        "h": 8
+        "h": 10
       },
       "fieldConfig": {
         "defaults": {

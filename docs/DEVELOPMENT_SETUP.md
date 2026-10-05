@@ -15,17 +15,21 @@ deployment target (Stage 5).
 ## For the Kubernetes target (optional)
 
 `pnpm dev`, `pnpm realm:up`, all tests and CI work without these. They are
-only needed to run the realm on a local Kubernetes cluster with Agones.
+only needed to run the realm on local Kubernetes clusters with Agones and
+Linkerd (three clusters; about 10 GB of memory).
 
 | Tool | Tested with | What it does |
 | :--- | :--- | :--- |
 | [kind](https://kind.sigs.k8s.io/) | v0.33.0 | Creates and deletes local Kubernetes clusters that run inside Docker containers; loads our images into them |
 | [kubectl](https://kubernetes.io/docs/reference/kubectl/) | v1.37.1 | The command-line client for any Kubernetes cluster: apply manifests, list pods, read logs, debug |
-| [Helm](https://helm.sh/) | v4.3.0 | Package manager for Kubernetes; installs Agones into the cluster |
+| [Helm](https://helm.sh/) | v4.3.0 | Package manager for Kubernetes; installs Agones, Linkerd and monitoring into the clusters |
+| [Linkerd CLI](https://linkerd.io/2/reference/cli/) | edge-26.9.3 (exactly; `cluster:up` checks it) | Talks to the service mesh: links the clusters (`multicluster link-gen`), checks them (`check`, `multicluster gateways`), shows a proxy's metrics |
 | [OpenSSL](https://www.openssl.org/) | 3.0 | `pnpm cluster:init` creates the local CA, the databases' certificates, passwords and keys with it; usually preinstalled (`openssl version`) |
 
-Agones itself is not installed on your machine: it is installed *into* the
-cluster and disappears with it. Agones 1.61 supports Kubernetes 1.34–1.36,
+Agones and Linkerd themselves are not installed on your machine: they are
+installed *into* the clusters and disappear with them. Only Linkerd's
+*edge* releases are free builds (stable releases come from Buoyant), so we
+pin one. Agones 1.61 supports Kubernetes 1.34–1.36,
 so the cluster is pinned to 1.36; kubectl may be one minor version newer or
 older than the cluster.
 
@@ -52,12 +56,21 @@ cd /tmp && curl -fsSLo kind https://github.com/kubernetes-sigs/kind/releases/lat
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 \
   | HELM_INSTALL_DIR=$HOME/.local/bin USE_SUDO=false bash
 
+# Linkerd CLI (the version infra/k8s/scripts/lib.sh pins). Linkerd publishes
+# no checksum files; GitHub shows each release asset's SHA-256 digest.
+V=edge-26.9.3; cd /tmp && curl -fsSLo linkerd "https://github.com/linkerd/linkerd2/releases/download/$V/linkerd2-cli-$V-linux-amd64" \
+  && sha256sum linkerd \
+  && install -m 0755 linkerd ~/.local/bin/linkerd && rm linkerd
+# compare the sum with the asset's digest on https://github.com/linkerd/linkerd2/releases/tag/edge-26.9.3
+# (or: gh api repos/linkerd/linkerd2/releases/tags/$V --jq '.assets[] | select(.name | endswith("linux-amd64")) | .digest')
+
 # Check
-kubectl version --client && kind version && helm version
+kubectl version --client && kind version && helm version && linkerd version --client
 ```
 
 For macOS or ARM machines, replace `linux/amd64` / `linux-amd64` with your
-platform (e.g. `darwin/arm64`), or use a package manager (`brew install kind kubectl helm`).
+platform (e.g. `darwin/arm64`), or use a package manager (`brew install kind kubectl helm`;
+Linkerd's CLI in the pinned version from its GitHub releases).
 
 ### One system setting: inotify instances (needs sudo once)
 
@@ -73,12 +86,12 @@ echo 'fs.inotify.max_user_instances = 512' | sudo tee /etc/sysctl.d/99-kind.conf
 ```
 
 The kubelet also can't read disk statistics when Docker stores its data on
-ZFS or btrfs; `infra/k8s/kind.yaml` works around that itself, nothing to do.
+ZFS or btrfs; `infra/k8s/kind-*.yaml` work around that themselves, nothing to do.
 
 ### Uninstalling
 
 ```bash
-rm ~/.local/bin/{kubectl,kind,helm}
+rm ~/.local/bin/{kubectl,kind,helm,linkerd}
 rm -rf ~/.kube ~/.cache/helm ~/.config/helm   # created once the tools were used
 sudo rm /etc/sysctl.d/99-kind.conf            # the inotify setting (back to the default after a reboot)
 ```

@@ -75,10 +75,10 @@ export class Swarm {
         kicks: t.kicks + b.stats.kicks,
         errors: t.errors + b.stats.errors,
         disconnects: t.disconnects + b.stats.disconnects,
-        notices: t.notices + b.stats.notices,
+        refusals: t.refusals + b.stats.refusals,
         hops: t.hops + b.stats.hops,
       }),
-      { welcomes: 0, reconnects: 0, kicks: 0, errors: 0, disconnects: 0, notices: 0, hops: 0 },
+      { welcomes: 0, reconnects: 0, kicks: 0, errors: 0, disconnects: 0, refusals: 0, hops: 0 },
     );
   }
 

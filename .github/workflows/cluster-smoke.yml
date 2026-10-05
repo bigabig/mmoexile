@@ -1,11 +1,13 @@
 name: Cluster smoke test
 
-# The realm on a kind cluster with Agones and the databases next to it
-# (Stages 5 and 6): pnpm cluster:up, then pnpm cluster:smoke (scaling,
-# rolling update, crash, TLS, database outages) and its persistence mode
-# (the data outlives the databases' and the cluster's restart). Takes
-# ~15 min, so it runs on demand only; the regular CI on every push doesn't
-# need Kubernetes.
+# The realm on three kind clusters (central, eu, us) with Agones, the
+# Linkerd mesh between them and the databases next to them (Stages 5-7):
+# pnpm cluster:up, then pnpm cluster:smoke (scaling, rolling update,
+# crash, TLS, database outages, a region's cluster lost, a region cut off,
+# the mesh's mTLS and policies) and its persistence mode (the data
+# outlives the databases' and the clusters' restart). Takes ~30 min, so
+# it runs on demand only; the regular CI on every push doesn't need
+# Kubernetes.
 #   - Actions → "Cluster smoke test" → Run workflow (GitHub offers this once
 #     the workflow is on the default branch), or
 #   - for any commit: git tag cluster-smoke-<name> && git push origin cluster-smoke-<name>
@@ -17,11 +19,12 @@ on:
 jobs:
   cluster-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       KIND_VERSION: v0.33.0
       KUBECTL_VERSION: v1.37.1
       HELM_VERSION: v4.3.0
+      LINKERD_VERSION: edge-26.9.3  # LINKERD_CLI_VERSION in infra/k8s/scripts/lib.sh
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -32,7 +35,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # The same tools and versions as docs/DEVELOPMENT_SETUP.md
-      - name: Install kind, kubectl and Helm
+      - name: Install kind, kubectl, Helm and the Linkerd CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$HOME/.local/bin" && cd /tmp
           curl -fsSLo kind "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-amd64"
@@ -45,7 +50,13 @@ jobs:
           curl -fsSLO "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz.sha256sum"
           sha256sum --check "helm-$HELM_VERSION-linux-amd64.tar.gz.sha256sum"
           tar -xzf "helm-$HELM_VERSION-linux-amd64.tar.gz" linux-amd64/helm
-          install -m 0755 kind kubectl linux-amd64/helm "$HOME/.local/bin/"
+          # Linkerd publishes no checksum files; GitHub records each release
+          # asset's digest
+          linkerd="linkerd2-cli-$LINKERD_VERSION-linux-amd64"
+          curl -fsSLo linkerd "https://github.com/linkerd/linkerd2/releases/download/$LINKERD_VERSION/$linkerd"
+          digest=$(gh api "repos/linkerd/linkerd2/releases/tags/$LINKERD_VERSION" --jq ".assets[] | select(.name == \"$linkerd\") | .digest")
+          echo "${digest#sha256:}  linkerd" | sha256sum --check
+          install -m 0755 kind kubectl linux-amd64/helm linkerd "$HOME/.local/bin/"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # kind's nodes share root's inotify instances (DEVELOPMENT_SETUP.md)
@@ -53,6 +64,8 @@ jobs:
 
       # Also creates the secrets (cluster:init) and starts the databases
       - run: pnpm cluster:up
+      - name: Memory and CPU of the clusters
+        run: docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}' && free -m
       - run: pnpm cluster:smoke
       - run: pnpm cluster:smoke --mode persistence
 
@@ -60,8 +73,13 @@ jobs:
         if: failure()
         run: |
           pnpm cluster:status || true
-          kubectl --context kind-mmoexile -n mmoexile get events --sort-by=.lastTimestamp | tail -50 || true
-          kubectl --context kind-mmoexile -n mmoexile logs deploy/orchestrator --tail=200 || true
+          for cluster in central eu us; do
+            echo "::group::$cluster"
+            kubectl --context "kind-mmoexile-$cluster" get pods -A | grep -v Running || true
+            kubectl --context "kind-mmoexile-$cluster" -n mmoexile get events --sort-by=.lastTimestamp | tail -40 || true
+            echo "::endgroup::"
+          done
+          kubectl --context kind-mmoexile-central -n mmoexile logs deploy/orchestrator -c orchestrator --tail=200 || true
           docker ps -a --filter label=mmoexile.dev/database || true
           for c in postgres pgbouncer redis; do docker logs --tail=50 "mmoexile-db-$c" || true; done
 

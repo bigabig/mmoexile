@@ -51,8 +51,8 @@ export class Bot {
   /** The connection dropped without a kick or reconnect (server died). */
   disconnected = false;
   readonly packets: ServerPacket[] = [];
-  /** notices: system messages in chat (e.g. a zone change refused); hops: zone changes done (by a Swarm) */
-  readonly stats = { welcomes: 0, reconnects: 0, kicks: 0, errors: 0, disconnects: 0, notices: 0, hops: 0 };
+  /** refusals: zone changes the server refused with a message; hops: zone changes done (by a Swarm) */
+  readonly stats = { welcomes: 0, reconnects: 0, kicks: 0, errors: 0, disconnects: 0, refusals: 0, hops: 0 };
   /** Welcomes per server URL: where this bot was placed. */
   readonly servers = new Map<string, number>();
 
@@ -232,7 +232,9 @@ export class Bot {
         void this.connect(packet.url, packet.ticket).catch(() => this.stats.errors++);
         break;
       case "s2c_chat":
-        if (packet.sender === "System") this.stats.notices++;
+        if (packet.sender === "System" && /zone changes are paused|not available right now/.test(packet.text)) {
+          this.stats.refusals++;
+        }
         // Deaths are only announced in chat (permadeath), not as a packet.
         if (packet.sender === "Graveyard" && packet.text.startsWith(`${this.name} was slain`)) {
           this.hp = 0;
