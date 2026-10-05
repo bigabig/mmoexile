@@ -14,5 +14,10 @@ RUN pnpm install --offline --frozen-lockfile \
   && pnpm --filter @mmoexile/client build
 
 FROM nginx:1.29-alpine
-COPY infra/docker/client.nginx.conf /etc/nginx/conf.d/default.conf
+# Rendered to /etc/nginx/conf.d/default.conf at startup, substituting only
+# these variables (nginx's own $variables are left alone)
+COPY infra/docker/client.nginx.conf /etc/nginx/templates/default.conf.template
+ENV NGINX_RESOLVER=127.0.0.11 \
+    ACCOUNT_API_UPSTREAM=account-api:3000 \
+    DIRECTORY_UPSTREAM=directory:3004
 COPY --from=build /repo/apps/client/dist /usr/share/nginx/html

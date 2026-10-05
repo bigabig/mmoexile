@@ -1,0 +1,63 @@
+# The realm on the local kind cluster (infra/k8s/kind.yaml): which node runs
+# what, which ports reach the host, the local keys and the region list.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mmoexile
+resources:
+  - ../../base
+
+# Generated ConfigMaps/Secrets are applied with the data (scripts/apply.sh)
+generatorOptions:
+  labels: { app.kubernetes.io/component: config }
+configMapGenerator:
+  # The realm's regions as the browser reaches them: each gateway's host
+  # port on its region's node (kind.yaml)
+  - name: realm-regions
+    literals:
+      - REGIONS=eu=Europe=http://localhost:7350/ping,us=North America=http://localhost:7450/ping
+
+secretGenerator:
+  # The same local-only keys as compose (committed on purpose). Not the
+  # development defaults in the code, which NODE_ENV=production refuses.
+  - name: realm-secrets
+    literals:
+      - POSTGRES_PASSWORD=mmoexile
+      - DATABASE_URL=postgresql://mmoexile:mmoexile@postgres:5432/mmoexile
+      - SESSION_SECRET=compose-local-session-secret-change-me-0001
+      - TICKET_PUBLIC_KEY=MCowBQYDK2VwAyEA5x4WebokiBgXkMaoYISP5jTRPohe07UOHtwHccapyJw=
+      - TICKET_PRIVATE_KEY=MC4CAQAwBQYDK2VwBCIEIOHkkKV+F4K0ZaOGcbZMuTdQefvVi0gcF9rNxIfS7wBZ
+
+patches:
+  # Central services and data on the central node
+  - target: { kind: "(Deployment|StatefulSet|Job)", labelSelector: "app.kubernetes.io/component in (central,data)" }
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { mmoexile.dev/role: central }
+  # Each gateway on its region's node, with a host port: a ping then takes
+  # the same network path as the region's game traffic
+  - target: { kind: Deployment, name: gateway-eu }
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { mmoexile.dev/region: eu }
+      - op: add
+        path: /spec/template/spec/containers/0/ports/0/hostPort
+        value: 7350
+  - target: { kind: Deployment, name: gateway-us }
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { mmoexile.dev/region: us }
+      - op: add
+        path: /spec/template/spec/containers/0/ports/0/hostPort
+        value: 7450
+  # Reachable from the host through the central node's port mappings
+  - target: { kind: Service, name: client }
+    patch: |
+      - { op: add, path: /spec/type, value: NodePort }
+      - { op: add, path: /spec/ports/0/nodePort, value: 30090 }
+  - target: { kind: Service, name: orchestrator }
+    patch: |
+      - { op: add, path: /spec/type, value: NodePort }
+      - { op: add, path: /spec/ports/0/nodePort, value: 30013 }

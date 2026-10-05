@@ -1,0 +1,114 @@
+# Postgres (characters, accounts) and Redis (leases, presence, parties).
+# Labelled component=data: scripts/apply.sh starts these and the migration
+# first, then the services.
+
+# Postgres: a StatefulSet, so its volume (PersistentVolumeClaim, kind's
+# default storage class) stays with it across restarts.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels: { app.kubernetes.io/name: postgres, app.kubernetes.io/component: data }
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: postgres }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: postgres, app.kubernetes.io/component: data }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            - { name: POSTGRES_USER, value: mmoexile }
+            - { name: POSTGRES_DB, value: mmoexile }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: realm-secrets, key: POSTGRES_PASSWORD } }
+            # A subdirectory: the volume's root contains lost+found
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ name: postgres, containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: [pg_isready, -U, mmoexile, -d, mmoexile] }
+            periodSeconds: 2
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 2Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels: { app.kubernetes.io/name: postgres, app.kubernetes.io/component: data }
+spec:
+  selector: { app.kubernetes.io/name: postgres }
+  ports: [{ name: postgres, port: 5432 }]
+---
+# Redis: only short-lived state (leases expire, presence and parties are
+# rebuilt), like in compose, so no volume and a plain Deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels: { app.kubernetes.io/name: redis, app.kubernetes.io/component: data }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: redis }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: redis, app.kubernetes.io/component: data }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7
+          ports: [{ name: redis, containerPort: 6379 }]
+          readinessProbe:
+            exec: { command: [redis-cli, ping] }
+            periodSeconds: 2
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels: { app.kubernetes.io/name: redis, app.kubernetes.io/component: data }
+spec:
+  selector: { app.kubernetes.io/name: redis }
+  ports: [{ name: redis, port: 6379 }]
+---
+# Applies Prisma migrations once (the migrate image, as in compose). A Job
+# can't be changed after it was created, so scripts/apply.sh deletes the
+# previous one first; it waits for this one before starting the services.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  labels: { app.kubernetes.io/name: migrate, app.kubernetes.io/component: data }
+spec:
+  backoffLimit: 10  # retries while Postgres is still starting
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: migrate }
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: mmoexile/migrate:dev
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: realm-secrets, key: DATABASE_URL } }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 512Mi }

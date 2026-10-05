@@ -1,0 +1,55 @@
+# Accounts, characters, play tickets (via the orchestrator).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-api
+  labels: { app.kubernetes.io/name: account-api, app.kubernetes.io/component: central }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: account-api }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: account-api, app.kubernetes.io/component: central }
+    spec:
+      containers:
+        - name: account-api
+          image: mmoexile/account-api:dev
+          imagePullPolicy: IfNotPresent  # loaded into the nodes, never pulled
+          envFrom:
+            - configMapRef: { name: realm }
+          env:
+            - { name: PORT, value: "3000" }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: realm-secrets, key: DATABASE_URL } }
+            - name: SESSION_SECRET
+              valueFrom: { secretKeyRef: { name: realm-secrets, key: SESSION_SECRET } }
+            - name: REGIONS
+              valueFrom: { configMapKeyRef: { name: realm-regions, key: REGIONS } }
+          ports: [{ name: http, containerPort: 3000 }]
+          # Restarted if it stops answering; gets traffic only when ready
+          # (its dependencies are reachable)
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            periodSeconds: 3
+          # tsx compiles the TypeScript sources on start, which takes a few seconds
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 768Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: account-api
+  labels: { app.kubernetes.io/name: account-api }
+spec:
+  selector: { app.kubernetes.io/name: account-api }
+  ports: [{ name: http, port: 3000, targetPort: http }]
