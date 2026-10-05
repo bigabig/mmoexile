@@ -22,6 +22,7 @@ const KICK_MESSAGES: Record<KickReason, string> = {
   invalid_ticket: "Your session expired. Please join again.",
   version_mismatch: "The game was updated. Please reload the page.",
   character_unavailable: "This character can't be played (dead or deleted).",
+  service_unavailable: "The realm couldn't save your character in time. Please join again in a moment.",
 };
 import { PermadeathModal } from "./components/PermadeathModal.js";
 import { CharacterSheetModal } from "./components/CharacterSheetModal.js";

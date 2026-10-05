@@ -168,11 +168,9 @@ export class WebSocketGateway implements ITransportGateway {
         }
       } else {
         // Global messages (logins, deaths) reach every server via the broker.
-        void this.social.broker.publish(channels.chatGlobal, {
-          senderName: sender,
-          text,
-          kind,
-        });
+        this.social.broker
+          .publish(channels.chatGlobal, { senderName: sender, text, kind })
+          .catch((err) => console.error("[WebSocketGateway] Global chat failed:", err));
       }
       },
     );
@@ -488,7 +486,9 @@ export class WebSocketGateway implements ITransportGateway {
             session.playerId,
             session.nickname ?? "A member",
           );
-          void this.lifecycle.leave(session.playerId);
+          this.lifecycle
+            .leave(session.playerId)
+            .catch((err) => console.error("[WebSocketGateway] Leaving failed:", err));
         }
         this.sessionManager.removeSession(socket);
       });

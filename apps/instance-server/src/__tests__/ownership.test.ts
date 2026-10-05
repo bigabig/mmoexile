@@ -140,4 +140,21 @@ describe("LeaseKeeper", () => {
     expect(lost).toEqual([id]);
     expect(keeper.get(id)).toBeUndefined();
   });
+
+  it("takes back a lease that vanished (Redis restarted empty) instead of dropping the player", async () => {
+    const id = await newCharacter();
+    const ownership = ownershipFor();
+    const lost: string[] = [];
+    const keeper = new LeaseKeeper(ownership, (characterId) => lost.push(characterId));
+    const a = await ownership.acquire(id, A);
+    if (!a.ok) throw new Error("expected lease");
+    keeper.track(a.ownership);
+
+    await redis.del(`lease:char:${id}`);
+    await keeper.renewAll();
+    expect(lost).toEqual([]);
+    expect(await redis.get(`lease:char:${id}`)).toBe(a.ownership.leaseValue);
+    // Still fenced by the epoch: writes as the owner go through
+    expect(await ownership.writeFenced(a.ownership, { hp: 77 })).toBe(true);
+  });
 });

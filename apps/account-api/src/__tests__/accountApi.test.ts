@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { prisma } from "@mmoexile/db";
+import { prisma, Prisma, type PrismaClient } from "@mmoexile/db";
 import { HttpError, MAX_CHARACTERS_PER_ACCOUNT, type AllocateRequest } from "@mmoexile/contracts";
 import { createLogger } from "@mmoexile/service-kit";
 import { readConfig } from "../config.js";
-import { buildApp } from "../app.js";
+import { buildApp, DATABASE_UNAVAILABLE } from "../app.js";
 
 let app: FastifyInstance;
 /** What the fake orchestrator was asked; set `fleetFull` to answer 503. */
@@ -168,5 +168,28 @@ describe("play", () => {
     const dead = await play(ann.sessionToken);
     expect(dead.statusCode).toBe(409);
     expect(dead.json().error).toMatch(/dead/);
+  });
+});
+
+describe("database outage", () => {
+  it("answers 503 with a clear message, and stays ready", async () => {
+    const unreachable = new Prisma.PrismaClientKnownRequestError("Can't reach database server at `pgbouncer:6432`", {
+      code: "P1001",
+      clientVersion: "6",
+    });
+    const fail = async () => {
+      throw unreachable;
+    };
+    const down = buildApp({
+      config: readConfig({ REGIONS: "eu=Europe=http://eu/ping" }),
+      logger: createLogger("test", "silent"),
+      db: { account: { create: fail } } as unknown as PrismaClient,
+    });
+    const res = await down.inject({ method: "POST", url: "/auth/guest", payload: { nickname: "Ann" } });
+    expect(res.statusCode).toBe(503);
+    expect(res.headers["retry-after"]).toBe("5");
+    expect(res.json()).toEqual({ error: DATABASE_UNAVAILABLE });
+    expect((await down.inject({ method: "GET", url: "/ready" })).statusCode).toBe(200);
+    await down.close();
   });
 });

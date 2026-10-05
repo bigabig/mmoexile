@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Redis } from "@mmoexile/messaging";
-import type { Character, PrismaClient, Prisma } from "@mmoexile/db";
+import { withDatabaseTimeout, type Character, type PrismaClient, type Prisma } from "@mmoexile/db";
 import { redisKeys } from "@mmoexile/contracts";
 
 /**
@@ -63,6 +63,8 @@ export interface CharacterOwnershipOptions {
   redis: Redis;
   db: PrismaClient;
   leaseTtlMs?: number;
+  /** Longest wait for a database statement (default 6 s) before it counts as unavailable. */
+  dbTimeoutMs?: number;
   /** For metrics: someone else held the lease / a write was fenced. */
   onLeaseConflict?: () => void;
   onFencedWrite?: () => void;
@@ -79,12 +81,22 @@ if redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2], "NX") then
 end
 return 0`;
 
-// Renew/release only if the lease still holds exactly our value.
+// Renew only if the lease still holds exactly our value, or is gone
+// altogether (Redis restarted empty, or it ran out while Redis was
+// unreachable): then nobody else holds it and we take it back. Safe because
+// the fencing epoch, not the lease, protects the data: had someone taken
+// over meanwhile, our next write would be refused.
 const RENEW_IF_OURS = `
-if redis.call("GET", KEYS[1]) == ARGV[1] then
+local current = redis.call("GET", KEYS[1])
+if current == ARGV[1] then
   return redis.call("PEXPIRE", KEYS[1], ARGV[2])
 end
+if not current then
+  redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2])
+  return 1
+end
 return 0`;
+// Release only if the lease still holds exactly our value.
 const RELEASE_IF_OURS = `
 if redis.call("GET", KEYS[1]) == ARGV[1] then
   return redis.call("DEL", KEYS[1])
@@ -95,6 +107,7 @@ export class CharacterOwnership {
   public readonly leaseTtlMs: number;
   private readonly redis: Redis;
   private readonly db: PrismaClient;
+  private readonly dbTimeoutMs: number;
   private readonly onLeaseConflict: () => void;
   private readonly onFencedWrite: () => void;
 
@@ -102,6 +115,7 @@ export class CharacterOwnership {
     this.redis = options.redis;
     this.db = options.db;
     this.leaseTtlMs = options.leaseTtlMs ?? 30_000;
+    this.dbTimeoutMs = options.dbTimeoutMs ?? 6000;
     this.onLeaseConflict = options.onLeaseConflict ?? (() => {});
     this.onFencedWrite = options.onFencedWrite ?? (() => {});
   }
@@ -158,7 +172,7 @@ export class CharacterOwnership {
     return { ownership: { characterId, epoch: character.ownerEpoch, leaseValue }, character };
   }
 
-  /** Extends the lease; false means we no longer own the character. */
+  /** Extends (or takes back a vanished) lease; false means someone else holds it now. */
   async renew(ownership: Ownership): Promise<boolean> {
     const result = await this.redis.eval(
       RENEW_IF_OURS,
@@ -203,10 +217,13 @@ export class CharacterOwnership {
       assignments.push(`"${column}" = $${values.length}${JSON_COLUMNS.has(column) ? "::jsonb" : ""}`);
     }
     values.push(ownership.characterId, ownership.epoch);
-    const count = await this.db.$executeRawUnsafe(
-      `UPDATE "Character" SET ${[...assignments, `"updatedAt" = NOW()`].join(", ")}
-       WHERE "id" = $${values.length - 1} AND "ownerEpoch" = $${values.length}`,
-      ...values,
+    const count = await withDatabaseTimeout(
+      this.db.$executeRawUnsafe(
+        `UPDATE "Character" SET ${[...assignments, `"updatedAt" = NOW()`].join(", ")}
+         WHERE "id" = $${values.length - 1} AND "ownerEpoch" = $${values.length}`,
+        ...values,
+      ),
+      this.dbTimeoutMs,
     );
     if (count !== 1) this.onFencedWrite();
     return count === 1;
@@ -226,12 +243,15 @@ export class CharacterOwnership {
 
   /** Bumps the fencing epoch and returns the character with its account's nickname, in one statement. */
   private async takeOver(characterId: string): Promise<OwnedCharacter | undefined> {
-    const rows = await this.db.$queryRaw<OwnedCharacter[]>`
-      UPDATE "Character" AS c
-      SET "ownerEpoch" = c."ownerEpoch" + 1, "updatedAt" = NOW()
-      FROM "Account" AS a
-      WHERE c."id" = ${characterId} AND a."id" = c."accountId"
-      RETURNING c.*, a."nickname" AS "nickname"`;
+    const rows = await withDatabaseTimeout(
+      this.db.$queryRaw<OwnedCharacter[]>`
+        UPDATE "Character" AS c
+        SET "ownerEpoch" = c."ownerEpoch" + 1, "updatedAt" = NOW()
+        FROM "Account" AS a
+        WHERE c."id" = ${characterId} AND a."id" = c."accountId"
+        RETURNING c.*, a."nickname" AS "nickname"`,
+      this.dbTimeoutMs,
+    );
     return rows[0];
   }
 }

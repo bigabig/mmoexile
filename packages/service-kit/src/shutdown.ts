@@ -86,3 +86,15 @@ export function handleShutdownSignals(
   process.on("SIGTERM", () => void trigger("SIGTERM"));
   return trigger;
 }
+
+/**
+ * Logs promise rejections nobody handled instead of crashing (Node's
+ * default). A forgotten `.catch` on a background call, e.g. a presence
+ * update while Redis restarts, must not take down a server with all its
+ * players. Every such log line is a bug to fix at its source.
+ */
+export function logUnhandledRejections(logger: Logger): void {
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ err: reason }, "Unhandled promise rejection");
+  });
+}

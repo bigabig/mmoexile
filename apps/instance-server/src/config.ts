@@ -15,6 +15,8 @@ export const configSchema = baseConfigSchema.extend({
   /** apps/social, for party commands. */
   SOCIAL_URL: z.string().default("http://localhost:3002"),
   LEASE_TTL_MS: z.coerce.number().int().positive().default(30_000),
+  /** Longest wait for a database statement (also read by @mmoexile/db for Prisma's timeouts) */
+  DATABASE_TIMEOUT_SEC: z.coerce.number().int().positive().default(5),
   /** Client-facing WebSocket URL; defaults to ws://localhost:<port>/ws. */
   PUBLIC_URL: z.string().optional(),
   /** Internal HTTP API (orchestrator calls, metrics); never exposed to clients. */

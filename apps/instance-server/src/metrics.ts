@@ -18,8 +18,14 @@ export class InstanceServerMetrics {
   readonly ticketRejections: Counter<"reason">;
   readonly leaseConflicts: Counter;
   readonly fencedWrites: Counter;
+  readonly saveFailures: Counter<"kind" | "retrying">;
 
-  constructor(serverId: string, region: string, host: InstanceHost) {
+  constructor(
+    serverId: string,
+    region: string,
+    host: InstanceHost,
+    persistence?: { readonly pending: number },
+  ) {
     this.registry = createMetrics("instance-server");
     this.registry.setDefaultLabels({ service: "instance-server", server: serverId, region });
     const registers = [this.registry];
@@ -93,6 +99,20 @@ export class InstanceServerMetrics {
       name: "mmoexile_fenced_writes_total",
       help: "Character writes refused because another server took ownership",
       registers,
+    });
+    this.saveFailures = new Counter({
+      name: "mmoexile_character_save_failures_total",
+      help: "Failed character writes by kind (periodic, final, death); retrying=true while the database is unavailable",
+      labelNames: ["kind", "retrying"],
+      registers,
+    });
+    new Gauge({
+      name: "mmoexile_character_saves_pending",
+      help: "Character writes waiting for the database",
+      registers,
+      collect() {
+        this.set(persistence?.pending ?? 0);
+      },
     });
   }
 }

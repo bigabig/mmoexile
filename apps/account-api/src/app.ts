@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PrismaClient } from "@mmoexile/db";
+import { isDatabaseUnavailable, type PrismaClient } from "@mmoexile/db";
 import {
   generateSecret,
   hashSecret,
@@ -38,6 +38,9 @@ declare module "fastify" {
 /** Where every login starts (see plan S1.9). */
 const LOGIN_ZONE = "nexus";
 
+/** What players see when logging in while the database is down. */
+export const DATABASE_UNAVAILABLE = "The realm's database is unavailable right now. Please try again in a moment.";
+
 export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInstance {
   const sessionKey = secretKey(config.SESSION_SECRET);
   const orchestrator = createHttpClient({ baseUrl: config.ORCHESTRATOR_URL });
@@ -57,17 +60,21 @@ export function buildApp({ config, logger, db, allocate }: AppDeps): FastifyInst
     registers: [metrics],
   });
 
-  const app = createHttpService({
-    logger,
-    metrics,
-    isReady: async () => {
-      await db.$queryRaw`SELECT 1`;
-      return true;
-    },
-  });
+  // Ready as soon as it listens. Not tied to the database: when the shared
+  // database is down, every pod would be unready at once and the load
+  // balancer would answer 502 for everything; instead, requests that need
+  // the database get a clear 503 below.
+  const app = createHttpService({ logger, metrics });
 
   // Every error leaves the service as { error: string } (ErrorResponse).
   app.setErrorHandler((error: Error & { statusCode?: number; validation?: unknown }, _request, reply) => {
+    if (isDatabaseUnavailable(error)) {
+      logger.warn({ err: error }, "Database unavailable");
+      return reply
+        .code(503)
+        .header("retry-after", "5")
+        .send({ error: DATABASE_UNAVAILABLE });
+    }
     const status = error.statusCode ?? (error.validation ? 400 : 500);
     if (status >= 500) logger.error({ err: error }, "Request failed");
     return reply

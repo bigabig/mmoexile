@@ -1,10 +1,11 @@
 import { createRedis, RedisBroker } from "@mmoexile/messaging";
-import { createLogger, handleShutdownSignals } from "@mmoexile/service-kit";
+import { createLogger, handleShutdownSignals, logUnhandledRejections } from "@mmoexile/service-kit";
 import { readConfig } from "./config.js";
 import { buildApp } from "./app.js";
 
 const config = readConfig();
 const logger = createLogger("social", config.LOG_LEVEL);
+logUnhandledRejections(logger);
 const redis = createRedis({ url: config.REDIS_URL, caFile: config.REDIS_CA_FILE });
 const broker = new RedisBroker({ redis });
 const app = buildApp({ logger, redis, broker });

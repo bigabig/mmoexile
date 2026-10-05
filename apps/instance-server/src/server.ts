@@ -1,6 +1,6 @@
 import http from "http";
 import type { AddressInfo } from "net";
-import type { PrismaClient } from "@mmoexile/db";
+import { isDatabaseUnavailable, type PrismaClient } from "@mmoexile/db";
 import type { Broker, Redis } from "@mmoexile/messaging";
 import { ticketVerificationKey } from "@mmoexile/auth";
 import type { Logger } from "@mmoexile/service-kit";
@@ -56,6 +56,8 @@ export interface InstanceServerDeps {
 export interface InstanceServer {
   readonly host: InstanceHost;
   readonly lifecycle: PlayerLifecycle;
+  /** Character saves (retried while the database is unavailable). */
+  readonly persistence: PersistenceService;
   readonly gateway: WebSocketGateway;
   /** Link to the orchestrator; unset if ORCHESTRATOR_URL is empty. */
   readonly fleet: FleetAgent | undefined;
@@ -96,6 +98,8 @@ export async function createInstanceServer({
     redis,
     db,
     leaseTtlMs: config.LEASE_TTL_MS,
+    // A little longer than Prisma's own timeouts, which usually fire first
+    dbTimeoutMs: (config.DATABASE_TIMEOUT_SEC + 1) * 1000,
     onLeaseConflict: () => metrics.leaseConflicts.inc(),
     onFencedWrite: () => metrics.fencedWrites.inc(),
   });
@@ -111,6 +115,13 @@ export async function createInstanceServer({
     new FencedCharacterWriter(ownership, leases, (characterId) =>
       lifecycle.dropFenced(characterId),
     ),
+    {
+      isTransient: isDatabaseUnavailable,
+      onWriteFailed: (kind, err, retrying) => {
+        metrics?.saveFailures.inc({ kind, retrying: String(retrying) });
+        logger[retrying ? "warn" : "error"]({ err, kind }, retrying ? "Save failed, will retry" : "Save failed");
+      },
+    },
   );
 
   const partyCache = new PartyCache(broker);
@@ -150,7 +161,7 @@ export async function createInstanceServer({
     },
   });
 
-  metrics = new InstanceServerMetrics(config.SERVER_ID, config.REGION, host);
+  metrics = new InstanceServerMetrics(config.SERVER_ID, config.REGION, host, persistence);
 
   lifecycle = new PlayerLifecycle({
     serverId: config.SERVER_ID,
@@ -161,6 +172,7 @@ export async function createInstanceServer({
     broker,
     ownership,
     leases,
+    persistence,
     ticketKey,
     allocator,
     getPartyId: (characterId) => partyCache.getPartyId(characterId),
@@ -180,7 +192,7 @@ export async function createInstanceServer({
         },
         Math.max(0, Date.now() - ticket.issuedAt) / 1000,
       );
-      void presence.set(player);
+      presence.set(player).catch((err) => logger.warn({ err }, "Presence update failed"));
       void agones?.sync();
       parties
         .getParty(player.characterId)
@@ -189,7 +201,7 @@ export async function createInstanceServer({
     },
     onRejected: (reason) => metrics.ticketRejections.inc({ reason }),
     onDeparted: (characterId, name) => {
-      void presence.remove(characterId, name);
+      presence.remove(characterId, name).catch((err) => logger.warn({ err }, "Presence update failed"));
       void agones?.sync();
     },
     sendReconnect: (...args) => gateway.sendReconnect(...args),
@@ -220,7 +232,7 @@ export async function createInstanceServer({
   // Keep presence entries of local players alive.
   const presenceTimer = setInterval(() => {
     for (const player of lifecycle.all()) {
-      void presence.set(player);
+      presence.set(player).catch((err) => logger.warn({ err }, "Presence update failed"));
     }
   }, 20_000);
   presenceTimer.unref();
@@ -269,7 +281,7 @@ export async function createInstanceServer({
       onDrainRequested: () => {
         logger.info("The orchestrator asked this server to drain");
         if (onDrainRequested) onDrainRequested();
-        else void drain();
+        else drain().catch((err) => logger.error({ err }, "Drain failed"));
       },
       onHeartbeatAnswer: ({ hold }) => void agones?.setOrchestratorHold(hold),
       log: (level, message, extra) => logger[level](extra ?? {}, message),
@@ -281,6 +293,7 @@ export async function createInstanceServer({
   return {
     host,
     lifecycle,
+    persistence,
     gateway,
     get fleet() {
       return fleet;
@@ -308,7 +321,6 @@ export async function createInstanceServer({
       clearInterval(presenceTimer);
       // No new allocations while players are saved and kicked.
       await fleet?.setState("draining");
-      leases.stop();
       await gracefulShutdown({
         gateway,
         host,
@@ -321,6 +333,8 @@ export async function createInstanceServer({
           }),
         disconnectDatabase: async () => {},
       });
+      // Only now: leases stay renewed while final saves wait for the database
+      leases.stop();
       await fleet?.stop();
       await internalApi.close();
       // Agones deletes the GameServer (a Fleet then starts a fresh one)

@@ -1,4 +1,4 @@
-import type { Character, PrismaClient } from "@mmoexile/db";
+import { isDatabaseUnavailable, type Character, type PrismaClient } from "@mmoexile/db";
 import type { Redis, Broker } from "@mmoexile/messaging";
 import { channels, redisKeys, RegionId } from "@mmoexile/contracts";
 import {
@@ -14,7 +14,7 @@ import {
   type KickReason,
 } from "@mmoexile/protocol";
 import type { InstanceHost, InstanceId } from "../cluster/index.js";
-import { CharacterMapper } from "../persistence/index.js";
+import { CharacterMapper, type PersistenceService } from "../persistence/index.js";
 import type {
   CharacterOwnership,
   OwnedCharacter,
@@ -58,6 +58,18 @@ export interface PlayerLifecycleDeps {
   broker: Broker;
   ownership: CharacterOwnership;
   leases: LeaseKeeper;
+  /** Final saves, retried while the database is unavailable. */
+  persistence: Pick<PersistenceService, "available" | "saveFinal">;
+  /** True if a database error may go away (default: Prisma's "unavailable" errors). */
+  isTransient?: (err: unknown) => boolean;
+  /**
+   * How long a zone change waits (the character frozen) for its final save
+   * while the database is unavailable, before giving up and asking the
+   * player to join again (default 60 s).
+   */
+  handoffSaveWaitMs?: number;
+  /** A zone change whose save took longer than this gets a fresh ticket (default 10 s). */
+  ticketRefreshMs?: number;
   /** Public key for verifying tickets; only the orchestrator can sign. */
   ticketKey: TicketKey;
   /** Where zone changes are placed (the orchestrator). */
@@ -95,10 +107,16 @@ export class PlayerLifecycle {
   private players = new Map<string, AdmittedPlayer>();
   private handingOff = new Set<string>();
   private readonly takeoverWaitMs: number;
+  private readonly isTransient: (err: unknown) => boolean;
+  private readonly handoffSaveWaitMs: number;
+  private readonly ticketRefreshMs: number;
   private readonly log: NonNullable<PlayerLifecycleDeps["log"]>;
 
   constructor(private readonly deps: PlayerLifecycleDeps) {
     this.takeoverWaitMs = deps.takeoverWaitMs ?? 5000;
+    this.isTransient = deps.isTransient ?? isDatabaseUnavailable;
+    this.handoffSaveWaitMs = deps.handoffSaveWaitMs ?? 60_000;
+    this.ticketRefreshMs = deps.ticketRefreshMs ?? 10_000;
     this.log = deps.log ?? (() => {});
   }
 
@@ -106,7 +124,9 @@ export class PlayerLifecycle {
   async start(): Promise<void> {
     await this.deps.broker.subscribe(channels.sessionKick, (message) => {
       if (this.players.has(message.characterId)) {
-        void this.kick(message.characterId, message.reason);
+        this.kick(message.characterId, message.reason).catch((err) =>
+          this.log("Kick failed", { characterId: message.characterId, err: String(err) }),
+        );
       }
     });
   }
@@ -263,34 +283,27 @@ export class PlayerLifecycle {
       return false;
     }
     this.handingOff.add(characterId);
+    const notify = (text: string) =>
+      this.deps.host.messageBus.publishChat({ sender: "System", text, kind: "system", targetPlayerIds: [characterId] });
     try {
+      // 0. The final save needs the database: while it is known to be
+      // unavailable, the player stays where they are
+      if (!this.deps.persistence.available) {
+        if (options.notifyOnFailure !== false) {
+          notify("The realm can't save right now, so zone changes are paused. Try again in a moment.");
+        }
+        return false;
+      }
+
       // 1. Where to? (the target instance is created if needed)
+      const allocate = () => this.allocateFor(player, targetZoneId, via, options.excludeThisServer);
       let allocation;
       try {
-        const leaderRegion =
-          getZone(targetZoneId)?.access.kind === "party_private"
-            ? await this.deps.getLeaderRegion?.(characterId).catch(() => undefined)
-            : undefined;
-        allocation = await this.deps.allocator.allocate({
-          zoneId: targetZoneId,
-          characterId,
-          accountId: player.accountId,
-          region: player.homeRegion,
-          leaderRegion,
-          fromRegion: this.deps.region,
-          partyId: this.deps.getPartyId(characterId),
-          via,
-          excludeServerId: options.excludeThisServer ? this.deps.serverId : undefined,
-        });
+        allocation = await allocate();
       } catch (err) {
         this.log("Allocation failed", { characterId, targetZoneId, err: String(err) });
         if (options.notifyOnFailure === false) return false;
-        this.deps.host.messageBus.publishChat({
-          sender: "System",
-          text: "That zone is not available right now. Try again in a moment.",
-          kind: "system",
-          targetPlayerIds: [characterId],
-        });
+        notify("That zone is not available right now. Try again in a moment.");
         return false;
       }
       if (this.players.get(characterId) !== player) return false; // left meanwhile
@@ -302,15 +315,30 @@ export class PlayerLifecycle {
       if (!detached || !ownership) return false;
 
       // 3. Final save, only if we still own the character. It must land
-      // before the target loads the character, so it comes first.
-      const saved = await this.deps.ownership.writeFenced(
-        ownership,
-        CharacterMapper.toPersistenceUpdate(detached.state),
-      );
-      if (!saved) {
-        await this.deps.ownership.release(ownership);
+      // before the target loads the character, so it comes first; if the
+      // database fails right now, the character waits (frozen) for it.
+      const savedAt = Date.now();
+      const saved = await this.saveForHandoff(ownership, detached.state);
+      if (saved === "fenced") {
+        await this.releaseQuietly(ownership);
         this.deps.kickSession(characterId, "logged_in_elsewhere");
         return false;
+      }
+      if (saved === "unavailable") {
+        // Saved later in the background; the lease is kept until then
+        this.deps.kickSession(characterId, "service_unavailable");
+        return false;
+      }
+      // Waited long for the database: the ticket may have expired meanwhile
+      if (Date.now() - savedAt > this.ticketRefreshMs) {
+        try {
+          allocation = await allocate();
+        } catch (err) {
+          this.log("Allocation failed after a delayed save", { characterId, targetZoneId, err: String(err) });
+          await this.releaseQuietly(ownership);
+          this.deps.kickSession(characterId, "service_unavailable");
+          return false;
+        }
       }
 
       // 4. Send the client to the target with the orchestrator's ticket, and
@@ -319,7 +347,7 @@ export class PlayerLifecycle {
       // for the lease, the release one. If it were ever late, the target
       // just retries (see takeOwnership).
       this.deps.sendReconnect(characterId, allocation.url, allocation.ticket, targetZoneId);
-      await this.deps.ownership.release(ownership);
+      await this.releaseQuietly(ownership);
       this.log("Handed off", {
         characterId,
         targetZoneId,
@@ -339,11 +367,13 @@ export class PlayerLifecycle {
   async leave(characterId: string): Promise<void> {
     this.depart(characterId);
     const detached = this.deps.host.detachPlayer(characterId);
-    const ownership = this.deps.leases.untrack(characterId);
+    // Still tracked (its lease renewed) until the final save is written
+    const ownership = this.deps.leases.get(characterId);
     if (ownership && detached) {
       await this.saveAndRelease(ownership, detached.state);
     } else if (ownership) {
-      await this.deps.ownership.release(ownership);
+      this.deps.leases.untrack(characterId);
+      await this.releaseQuietly(ownership);
     }
   }
 
@@ -371,15 +401,87 @@ export class PlayerLifecycle {
     );
   }
 
-  private async saveAndRelease(
+  /**
+   * Final save, then release the lease. While the database is unavailable
+   * the save is retried in the background and the lease kept (renewed)
+   * until it is written: nobody else can load the character's older state
+   * meanwhile.
+   */
+  private async saveAndRelease(ownership: Ownership, state: PlayerPersistenceSnapshot): Promise<void> {
+    const release = async () => {
+      if (this.deps.leases.get(ownership.characterId) === ownership) {
+        this.deps.leases.untrack(ownership.characterId);
+      }
+      await this.releaseQuietly(ownership);
+    };
+    const landed = await this.deps.persistence.saveFinal(ownership.characterId, state, () => void release());
+    if (landed) {
+      await release();
+    } else {
+      this.log("Final save pending: database unavailable", { characterId: ownership.characterId });
+    }
+  }
+
+  /**
+   * The final save of a zone change, written directly (fenced) while the
+   * character is frozen. Retries while the database is unavailable, up to
+   * handoffSaveWaitMs; then hands the save to the background retries
+   * (keeping the lease) and reports "unavailable".
+   */
+  private async saveForHandoff(
     ownership: Ownership,
     state: PlayerPersistenceSnapshot,
-  ): Promise<boolean> {
-    const saved = await this.deps.ownership.writeFenced(
-      ownership,
-      CharacterMapper.toPersistenceUpdate(state),
-    );
-    await this.deps.ownership.release(ownership);
-    return saved;
+  ): Promise<"saved" | "fenced" | "unavailable"> {
+    const update = CharacterMapper.toPersistenceUpdate(state);
+    const deadline = Date.now() + this.handoffSaveWaitMs;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return (await this.deps.ownership.writeFenced(ownership, update)) ? "saved" : "fenced";
+      } catch (err) {
+        if (!this.isTransient(err)) throw err;
+        const waitMs = Math.min(500 * 2 ** attempt, 5000);
+        if (Date.now() + waitMs > deadline) {
+          this.log("Zone change save gave up: database unavailable", { characterId: ownership.characterId });
+          this.deps.leases.track(ownership);
+          await this.saveAndRelease(ownership, state);
+          return "unavailable";
+        }
+        this.log("Zone change save failed, retrying", { characterId: ownership.characterId, attempt, err: String(err) });
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+    }
+  }
+
+  private async allocateFor(
+    player: AdmittedPlayer,
+    targetZoneId: ZoneId,
+    via: { sourceInstanceId: InstanceId; portalId: string } | undefined,
+    excludeThisServer: boolean | undefined,
+  ) {
+    const { characterId } = player;
+    const leaderRegion =
+      getZone(targetZoneId)?.access.kind === "party_private"
+        ? await this.deps.getLeaderRegion?.(characterId).catch(() => undefined)
+        : undefined;
+    return this.deps.allocator.allocate({
+      zoneId: targetZoneId,
+      characterId,
+      accountId: player.accountId,
+      region: player.homeRegion,
+      leaderRegion,
+      fromRegion: this.deps.region,
+      partyId: this.deps.getPartyId(characterId),
+      via,
+      excludeServerId: excludeThisServer ? this.deps.serverId : undefined,
+    });
+  }
+
+  /** Releases a lease; if Redis is unavailable it simply runs out (LEASE_TTL_MS). */
+  private async releaseQuietly(ownership: Ownership): Promise<void> {
+    try {
+      await this.deps.ownership.release(ownership);
+    } catch (err) {
+      this.log("Lease release failed, it will expire", { characterId: ownership.characterId, err: String(err) });
+    }
   }
 }

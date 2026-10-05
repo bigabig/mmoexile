@@ -190,7 +190,9 @@ export type KickReason =
   | "server_shutdown"
   | "invalid_ticket"
   | "version_mismatch"
-  | "character_unavailable";
+  | "character_unavailable"
+  /** The database was unavailable during a zone change (the save is retried). */
+  | "service_unavailable";
 
 /** The server ends the session; the socket closes right after. */
 export interface S2C_KickedPacket {

@@ -83,10 +83,11 @@ export function createOrchestrator({
   });
   let sweepTimer: NodeJS.Timeout | undefined;
 
+  // Ready as soon as it listens, not tied to Redis: a shared dependency's
+  // outage would take every pod out of the load balancer at once
   const app = createHttpService({
     logger,
     metrics: metrics.registry,
-    isReady: async () => (await redis.ping()) === "PONG",
   });
 
   app.setErrorHandler(

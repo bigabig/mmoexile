@@ -3,7 +3,7 @@ export interface ShutdownSteps {
   host: { prepareShutdown(): void; stop(): void };
   /** Saves and releases every character (fenced), and kicks the sessions. */
   players: { shutdown(): Promise<void> };
-  persistence: { stop(): Promise<void> };
+  persistence: { stop(): Promise<unknown> };
   closeHttpServer(): Promise<void>;
   disconnectDatabase(): Promise<void>;
 }
