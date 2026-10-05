@@ -27,4 +27,5 @@ configMapGenerator:
       - ORCHESTRATOR_URL=http://orchestrator-central:3003
   - name: gateway-nginx
     files:
-      - default.conf=../../../docker/gateway.nginx.conf  # the same file as compose
+      - default.conf=../../../docker/gateway.nginx.conf  # the ping, the same file as compose
+      - entry-point.conf=entry-point.nginx.conf

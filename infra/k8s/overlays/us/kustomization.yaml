@@ -49,6 +49,9 @@ patches:
       - op: replace
         path: /spec/template/spec/template/spec/containers/0/env/1
         value: { name: REGION, value: us }
+      - op: replace
+        path: /spec/template/spec/template/spec/containers/0/env/7
+        value: { name: INTERNAL_URL, value: "http://region-gateway-us:9000/servers/$(SERVER_ID)" }
       - { op: replace, path: /spec/template/spec/counters/players/capacity, value: 60 }
       - op: add
         path: /spec/template/spec/template/spec/containers/0/env/-

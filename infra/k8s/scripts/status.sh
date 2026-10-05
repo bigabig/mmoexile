@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# pnpm cluster:status — what runs where: the clusters and their pods, the
-# fleets and their GameServers, and the fleet as the orchestrator sees it.
+# pnpm cluster:status — what runs where: the clusters, the links between
+# them, their pods, the fleets and their GameServers, and the fleet as the
+# orchestrator sees it.
 source "$(dirname "$0")/lib.sh"
 require_clusters
 
@@ -11,6 +12,14 @@ done
 kc central get svc -A --field-selector spec.type=LoadBalancer -o wide 2>/dev/null | tail -n +2 | sed 's/^/central /' || true
 for cluster in "${REGIONS[@]}"; do
   kc "$cluster" get svc -A --field-selector spec.type=LoadBalancer -o wide 2>/dev/null | tail -n +2 | sed "s/^/$cluster /" || true
+done
+
+step "Mesh: links between the clusters (gateways, mirrored services)"
+for cluster in "${CLUSTERS[@]}"; do
+  echo "$cluster mirrors:"
+  linkerd --context "$(context "$cluster")" multicluster gateways 2>/dev/null | sed 's/^/  /'
+  kc "$cluster" -n "$NAMESPACE" get svc -l mirror.linkerd.io/mirrored-service=true --no-headers \
+    -o custom-columns='NAME:.metadata.name,PORTS:.spec.ports[*].port' 2>/dev/null | sed 's/^/  /'
 done
 
 for cluster in "${CLUSTERS[@]}"; do

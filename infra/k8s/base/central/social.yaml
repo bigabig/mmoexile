@@ -46,11 +46,13 @@ spec:
         # The CA the databases' certificates are signed by (from the overlay)
         - { name: database-ca, configMap: { name: database-ca } }
 ---
+# Exported to the regions' clusters (parties): mirrored there as
+# social-central by Linkerd multicluster
 apiVersion: v1
 kind: Service
 metadata:
   name: social
-  labels: { app.kubernetes.io/name: social }
+  labels: { app.kubernetes.io/name: social, mirror.linkerd.io/exported: "true" }
 spec:
   selector: { app.kubernetes.io/name: social }
   ports: [{ name: http, port: 3002, targetPort: http }]

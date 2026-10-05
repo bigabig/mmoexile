@@ -51,11 +51,13 @@ spec:
         # The CA the databases' certificates are signed by (from the overlay)
         - { name: database-ca, configMap: { name: database-ca } }
 ---
+# Exported to the regions' clusters (register, heartbeat and allocate): mirrored there as
+# orchestrator-central by Linkerd multicluster
 apiVersion: v1
 kind: Service
 metadata:
   name: orchestrator
-  labels: { app.kubernetes.io/name: orchestrator }
+  labels: { app.kubernetes.io/name: orchestrator, mirror.linkerd.io/exported: "true" }
 spec:
   selector: { app.kubernetes.io/name: orchestrator }
   ports: [{ name: http, port: 3003, targetPort: http }]

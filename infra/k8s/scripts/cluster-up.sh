@@ -38,7 +38,7 @@ for cluster in "${CLUSTERS[@]}"; do
   # The node is control plane and worker at once; kubeadm marks control
   # plane nodes as unsuitable for load balancers, which would leave our
   # LoadBalancer Services without a backend
-  kc "$cluster" label node "$(node "$cluster")" node.kubernetes.io/exclude-from-external-load-balancers- >/dev/null 2>&1 || true
+  kc "$cluster" label node "$(node_container "$cluster")" node.kubernetes.io/exclude-from-external-load-balancers- >/dev/null 2>&1 || true
 done
 
 step "Load balancers: cloud-provider-kind"
@@ -58,8 +58,8 @@ step "Simulated distance: us cluster +${US_LATENCY_MS} ms"
 # Everything the us node sends (to players on the host, to the other
 # clusters, to the databases) leaves through its container's eth0, so one
 # netem qdisc there delays the whole region, like region-us does in compose.
-docker exec "$(node us)" tc qdisc replace dev eth0 root netem delay "${US_LATENCY_MS}ms"
-docker exec "$(node us)" tc qdisc show dev eth0
+docker exec "$(node_container us)" tc qdisc replace dev eth0 root netem delay "${US_LATENCY_MS}ms"
+docker exec "$(node_container us)" tc qdisc show dev eth0
 
 step "Service mesh: Linkerd $LINKERD_CLI_VERSION"
 install_linkerd() {
@@ -77,9 +77,7 @@ install_linkerd() {
     --set-file identity.issuer.tls.crtPEM="$SECRETS/linkerd-issuer-$cluster.crt" \
     --set-file identity.issuer.tls.keyPEM="$SECRETS/linkerd-issuer-$cluster.key" \
     --wait --timeout 5m >/dev/null
-  local check
-  check=$(linkerd --context "$(context "$cluster")" check --wait 2m 2>&1) || { echo "$check"; return 1; }
-  echo "$check" | grep -E "^Status|‼" || true
+  linkerd_check "$cluster"
   # The realm's namespace: every pod gets a proxy
   kc "$cluster" apply -f - >/dev/null <<END
 apiVersion: v1
@@ -90,6 +88,54 @@ metadata:
 END
 }
 for_clusters install_linkerd "${CLUSTERS[@]}"
+
+step "Multicluster: gateways and links"
+install_multicluster() {
+  local cluster=$1 controllers=() i=0 target ip
+  # One service mirror ("controller") per cluster this one links to
+  for target in $(linked_clusters "$cluster"); do
+    controllers+=(--set "controllers[$i].link.ref.name=$target")
+    i=$((i + 1))
+  done
+  hc "$cluster" upgrade --install linkerd-multicluster linkerd-multicluster --repo "$LINKERD_CHART_REPO" --version "$LINKERD_VERSION" \
+    --namespace linkerd-multicluster --create-namespace --values "$K8S/linkerd/multicluster.yaml" "${controllers[@]}" >/dev/null
+  kc "$cluster" -n linkerd-multicluster rollout status deploy/linkerd-gateway --timeout=180s >/dev/null
+  for _ in $(seq 60); do
+    ip=$(kc "$cluster" -n linkerd-multicluster get svc linkerd-gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+    [[ -n "$ip" ]] && break
+    sleep 2
+  done
+  [[ -n "$ip" ]] || { echo "the gateway got no load balancer address" >&2; return 1; }
+  echo "gateway $ip:4143"
+}
+for_clusters install_multicluster "${CLUSTERS[@]}"
+# A link lets <source> mirror <target>'s exported Services: the target
+# generates a Link (its gateway's address, its API server, credentials of a
+# ServiceAccount that may only read Services) that is applied in the
+# source. The API server is addressed by the node's name on kind's network.
+for source in "${CLUSTERS[@]}"; do
+  for target in $(linked_clusters "$source"); do
+    linkerd --context "$(context "$target")" multicluster link-gen --cluster-name "$target" \
+      --api-server-address "https://$(node_container "$target"):6443" | kc "$source" apply -f - >/dev/null
+    echo "$source mirrors $target"
+  done
+done
+# Every link alive: the service mirror probes the target's gateway through
+# the mesh. (`linkerd multicluster check` would also try to reach the
+# targets' API servers from this host, which doesn't resolve the nodes'
+# names on kind's network.)
+wait_for_gateways() {
+  local cluster=$1 gateways
+  for _ in $(seq 60); do
+    gateways=$(linkerd --context "$(context "$cluster")" multicluster gateways 2>/dev/null | tail -n +2)
+    [[ -n "$gateways" ]] && ! grep -qv " True " <<<"$gateways" &&
+      (( $(wc -l <<<"$gateways") == $(wc -w <<<"$(linked_clusters "$cluster")") )) && break
+    sleep 3
+  done
+  linkerd --context "$(context "$cluster")" multicluster gateways 2>/dev/null
+  ! grep -qv " True " <<<"$gateways" || { echo "a linked cluster's gateway isn't reachable" >&2; return 1; }
+}
+for_clusters wait_for_gateways "${CLUSTERS[@]}"
 
 step "Monitoring: kube-prometheus-stack $MONITORING_VERSION"
 # First, so that Agones' ServiceMonitor (its controller metrics) has its CRD

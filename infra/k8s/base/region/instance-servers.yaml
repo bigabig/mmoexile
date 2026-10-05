@@ -44,6 +44,11 @@ spec:
             # through the mesh; the internal API (9001) is meshed
             config.linkerd.io/skip-inbound-ports: "7777"
         spec:
+          # A DNS name per server: Agones sets the pod's hostname to the
+          # GameServer's name, the headless Service below adds the domain:
+          # <name>.instance-servers.mmoexile.svc.cluster.local (used by the
+          # region's entry point)
+          subdomain: instance-servers
           # SIGTERM starts the drain (DRAIN_TIMEOUT_SEC plus moving players)
           terminationGracePeriodSeconds: 120
           containers:
@@ -60,12 +65,13 @@ spec:
                 - { name: DRAIN_TIMEOUT_SEC, value: "60" }
                 - name: REDIS_URL
                   valueFrom: { secretKeyRef: { name: realm-secrets, key: REDIS_URL } }
-                # Downward API: the pod's (= GameServer's) name and IP
+                # Downward API: the pod's (= GameServer's) name
                 - name: SERVER_ID
                   valueFrom: { fieldRef: { fieldPath: metadata.name } }
-                - name: POD_IP
-                  valueFrom: { fieldRef: { fieldPath: status.podIP } }
-                - { name: INTERNAL_URL, value: "http://$(POD_IP):9001" }
+                # How the orchestrator (central cluster) reaches this
+                # server: through the region's entry point (the overlay
+                # names the region)
+                - { name: INTERNAL_URL, value: "http://region-gateway-REGION:9000/servers/$(SERVER_ID)" }
                 - name: DATABASE_URL
                   valueFrom: { secretKeyRef: { name: realm-secrets, key: DATABASE_URL } }
                 # Connections per server (Prisma's pool): periodic saves and
@@ -84,6 +90,18 @@ spec:
           volumes:
             # The CA the databases' certificates are signed by (from the overlay)
             - { name: database-ca, configMap: { name: database-ca } }
+---
+# Headless (no virtual IP): DNS answers with the pods themselves, and each
+# pod gets its own name (see subdomain above)
+apiVersion: v1
+kind: Service
+metadata:
+  name: instance-servers
+  labels: { app.kubernetes.io/name: instance-server }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: instance-server }
+  ports: [{ name: internal, port: 9001 }]
 ---
 apiVersion: autoscaling.agones.dev/v1
 kind: FleetAutoscaler

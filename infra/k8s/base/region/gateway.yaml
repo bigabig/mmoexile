@@ -1,6 +1,10 @@
-# The region's gateway: answers GET /ping from the region's network
-# position, so the browser measures its latency to that region (Stage 4).
-# The overlay gives it a host port on the region's node.
+# The region's gateway:
+# - port 80: answers GET /ping from the region's network position, so the
+#   browser measures its latency to that region (Stage 4); the overlay
+#   gives it a host port on the region's node;
+# - port 9000: the entry point for calls from the central cluster to the
+#   region's instance servers (entry-point.nginx.conf), exported to the
+#   central cluster through the mesh.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,7 +25,9 @@ spec:
       containers:
         - name: nginx
           image: nginx:1.29-alpine
-          ports: [{ name: http, containerPort: 80 }]
+          ports:
+            - { name: http, containerPort: 80 }
+            - { name: entry-point, containerPort: 9000 }
           readinessProbe:
             httpGet: { path: /ping, port: http }
             periodSeconds: 5
@@ -32,3 +38,14 @@ spec:
             - { name: config, mountPath: /etc/nginx/conf.d }
       volumes:
         - { name: config, configMap: { name: gateway-nginx } }
+---
+# The entry point, mirrored into the central cluster as
+# region-gateway-<region> (the label exports it, Linkerd multicluster)
+apiVersion: v1
+kind: Service
+metadata:
+  name: region-gateway
+  labels: { app.kubernetes.io/name: region-gateway, mirror.linkerd.io/exported: "true" }
+spec:
+  selector: { app.kubernetes.io/name: region-gateway }
+  ports: [{ name: entry-point, port: 9000, targetPort: entry-point }]

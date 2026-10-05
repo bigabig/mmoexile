@@ -1,0 +1,18 @@
+# Helm values for Linkerd's multicluster extension (linkerd-multicluster,
+# version as the control plane), in every cluster:
+#
+# - the gateway: a LoadBalancer Service (an address from
+#   cloud-provider-kind) through which other clusters reach this one's
+#   exported Services (label mirror.linkerd.io/exported=true), with mTLS
+#   end to end;
+# - service mirrors ("controllers", set by cluster-up.sh): one per linked
+#   cluster, which watches that cluster's exported Services and creates a
+#   local copy named <service>-<cluster>, whose endpoint is the other
+#   cluster's gateway.
+#
+# Links (cluster-up.sh): eu → central and us → central (the regions see
+# orchestrator-central and social-central), central → eu and central → us
+# (central sees region-gateway-eu and region-gateway-us).
+gateway:
+  enabled: true
+  serviceType: LoadBalancer

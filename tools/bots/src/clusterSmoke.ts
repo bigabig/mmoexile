@@ -53,7 +53,8 @@ function arg(name: string, fallback: string): string {
 
 const apiUrl = arg("api", "http://localhost:8090/api");
 const orchestratorUrl = arg("orchestrator", "http://localhost:3013");
-const context = arg("context", "kind-mmoexile");
+// kubectl context of a cluster: <prefix><cluster>, e.g. kind-mmoexile-eu
+const contextPrefix = arg("context-prefix", "kind-mmoexile-");
 const loadBots = Number(arg("load", "70"));
 const observerBots = Number(arg("observers", "10"));
 const prometheusUrl = arg("prometheus", "http://localhost:9091");
@@ -66,8 +67,9 @@ const secret = (name: string) => readFileSync(path.join(k8sDir, ".secrets", name
 
 const run = promisify(execFile);
 
-async function kubectl(...args: string[]): Promise<string> {
-  const { stdout } = await run("kubectl", ["--context", context, "-n", "mmoexile", ...args], {
+/** kubectl in the realm's namespace of one cluster (central, eu, us). */
+async function kubectl(cluster: string, ...args: string[]): Promise<string> {
+  const { stdout } = await run("kubectl", ["--context", contextPrefix + cluster, "-n", "mmoexile", ...args], {
     maxBuffer: 64 * 1024 * 1024,
   });
   return stdout;
@@ -79,8 +81,9 @@ interface FleetStatus {
   allocated: number;
 }
 
-async function fleetStatus(name: string): Promise<FleetStatus> {
-  const fleet = JSON.parse(await kubectl("get", "fleet", name, "-o", "json")) as {
+/** A region's Fleet (instance-server-<region>, in the region's cluster). */
+async function fleetStatus(region: string): Promise<FleetStatus> {
+  const fleet = JSON.parse(await kubectl(region, "get", "fleet", `instance-server-${region}`, "-o", "json")) as {
     spec: { replicas: number };
     status?: { readyReplicas?: number; allocatedReplicas?: number };
   };
@@ -92,12 +95,12 @@ async function fleetStatus(name: string): Promise<FleetStatus> {
 }
 
 /** The FleetAutoscaler's bounds, e.g. "120-240". */
-async function autoscalerBounds(name: string): Promise<string> {
-  return kubectl("get", "fleetautoscaler", name, "-o", "jsonpath={.spec.policy.counter.minCapacity}-{.spec.policy.counter.maxCapacity}");
+async function autoscalerBounds(region: string): Promise<string> {
+  return kubectl(region, "get", "fleetautoscaler", `instance-server-${region}`, "-o", "jsonpath={.spec.policy.counter.minCapacity}-{.spec.policy.counter.maxCapacity}");
 }
 
-async function gameServerNames(fleet: string): Promise<string[]> {
-  const out = await kubectl("get", "gameservers", "-l", `agones.dev/fleet=${fleet}`, "-o", "jsonpath={.items[*].metadata.name}");
+async function gameServerNames(region: string): Promise<string[]> {
+  const out = await kubectl(region, "get", "gameservers", "-l", `agones.dev/fleet=instance-server-${region}`, "-o", "jsonpath={.items[*].metadata.name}");
   return out.split(/\s+/).filter(Boolean);
 }
 
@@ -280,7 +283,7 @@ try {
   observers = new Swarm({ apiUrl, region: "eu", bots: observerBots, route: ["nexus", "overworld"] });
   observers.start();
   await waitFor("observers online", () => observers!.online() === observerBots, 60_000);
-  const initial = await fleetStatus("instance-server-eu");
+  const initial = await fleetStatus("eu");
 
   // 3. Scale up
   {
@@ -290,11 +293,11 @@ try {
     load.start();
     const ms = await waitFor(
       "eu fleet scaled up",
-      async () => (await fleetStatus("instance-server-eu")).replicas > initial.replicas,
+      async () => (await fleetStatus("eu")).replicas > initial.replicas,
       240_000,
       2000,
     );
-    const now = await fleetStatus("instance-server-eu");
+    const now = await fleetStatus("eu");
     record("the eu fleet scaled up", true, `${initial.replicas} → ${now.replicas} servers after ${seconds(ms)}`);
     await sleep(15_000);
     const loadTotals = load.totals();
@@ -314,11 +317,11 @@ try {
     const since = observers.totals();
     const ms = await waitFor(
       "eu fleet back to its size",
-      async () => (await fleetStatus("instance-server-eu")).replicas <= initial.replicas,
+      async () => (await fleetStatus("eu")).replicas <= initial.replicas,
       300_000,
       2000,
     );
-    record("the eu fleet scaled back down", true, `${(await fleetStatus("instance-server-eu")).replicas} servers after ${seconds(ms)}`);
+    record("the eu fleet scaled back down", true, `${(await fleetStatus("eu")).replicas} servers after ${seconds(ms)}`);
     await sleep(10_000); // the removed servers drain and stop
     const observed = disruptions(observers, since);
     record("players stayed connected", observed.ok, observed.text);
@@ -328,14 +331,14 @@ try {
   {
     console.log("5. Rolling update (pnpm cluster:reload instance-server)");
     const since = observers.totals();
-    const before = new Set([...(await gameServerNames("instance-server-eu")), ...(await gameServerNames("instance-server-us"))]);
-    const bounds = [await autoscalerBounds("instance-server-eu"), await autoscalerBounds("instance-server-us")];
+    const before = new Set([...(await gameServerNames("eu")), ...(await gameServerNames("us"))]);
+    const bounds = [await autoscalerBounds("eu"), await autoscalerBounds("us")];
     const started = Date.now();
     await run("bash", [reloadScript, "instance-server"], { maxBuffer: 64 * 1024 * 1024 });
-    const after = [...(await gameServerNames("instance-server-eu")), ...(await gameServerNames("instance-server-us"))];
+    const after = [...(await gameServerNames("eu")), ...(await gameServerNames("us"))];
     record("every instance server replaced", after.length > 0 && after.every((name) => !before.has(name)),
       `${before.size} old → ${after.length} new in ${seconds(Date.now() - started)}`);
-    const boundsAfter = [await autoscalerBounds("instance-server-eu"), await autoscalerBounds("instance-server-us")];
+    const boundsAfter = [await autoscalerBounds("eu"), await autoscalerBounds("us")];
     record("the autoscalers' bounds are back", boundsAfter.join() === bounds.join(), `eu ${boundsAfter[0]}, us ${boundsAfter[1]} slots`);
     await sleep(5_000);
     const observed = disruptions(observers, since);
@@ -351,7 +354,7 @@ try {
     console.log(`6. Crash: kill -9 in ${target.serverId} (${target.players} players)`);
     const killedAt = Date.now();
     // Every process of the container except PID 1 (tsx), which then exits too
-    await kubectl("exec", target.serverId, "-c", "instance-server", "--", "sh", "-c", "kill -9 -1").catch(() => {});
+    await kubectl("eu", "exec", target.serverId, "-c", "instance-server", "--", "sh", "-c", "kill -9 -1").catch(() => {});
     const deadMs = await waitFor(
       `${target.serverId} marked dead`,
       async () => (await servers()).find((s) => s.serverId === target.serverId)?.state === "dead",
@@ -363,8 +366,8 @@ try {
     const replacedMs = await waitFor(
       "Agones replaced it",
       async () => {
-        const fleet = await fleetStatus("instance-server-eu");
-        const names = await gameServerNames("instance-server-eu");
+        const fleet = await fleetStatus("eu");
+        const names = await gameServerNames("eu");
         return !names.includes(target.serverId) && fleet.ready + fleet.allocated >= fleet.replicas;
       },
       180_000,
